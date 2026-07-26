@@ -1,0 +1,6 @@
+@KT2000.Api_HostAddress = http://localhost:5039
+
+GET {{KT2000.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

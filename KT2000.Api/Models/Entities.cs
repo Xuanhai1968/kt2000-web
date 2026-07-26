@@ -1,0 +1,56 @@
+namespace KT2000.Api.Models
+{
+    public class User
+    {
+        public Guid Id { get; set; }
+        public string LoginName { get; set; } = "";
+        public string PasswordHash { get; set; } = "";
+        public string? RealName { get; set; }
+        public bool IsAdmin { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    public class Tenant
+    {
+        public Guid Id { get; set; }
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string DbName { get; set; } = "";
+        public string TenantType { get; set; } = "headquarter";
+        public Guid? ParentId { get; set; }
+        public string? TaxCode { get; set; }
+        public string? Address { get; set; }
+        public bool IsActive { get; set; }
+        public decimal? VonDK { get; set; }
+        public string? Email { get; set; }
+        public string? SortName { get; set; }
+        public string? TkCongNo { get; set; }
+        public int? NamQuyetToan { get; set; }
+        public bool KhaiQuy { get; set; }
+        public List<FiscalYear> FiscalYears { get; set; } = new();
+    }
+
+    public class UserTenantAccess
+    {
+        public Guid UserId { get; set; }
+        public Guid TenantId { get; set; }
+        public string Role { get; set; } = "accountant";
+        public User? User { get; set; }
+        public Tenant? Tenant { get; set; }
+    }
+
+    public class FiscalYear
+    {
+        public Guid TenantId { get; set; }
+        public int Year { get; set; }
+        public bool IsClosed { get; set; }
+    }
+
+    public class UserPreference
+    {
+        public Guid UserId { get; set; }
+        public string Key { get; set; } = "";
+        public string? Value { get; set; }
+    }
+}

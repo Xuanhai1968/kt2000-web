@@ -1,0 +1,14 @@
+# Rac build .NET
+bin/
+obj/
+
+# Kho thu vien frontend
+node_modules/
+dist/
+
+# File chua bi mat - KHONG BAO GIO len repo
+KT2000.Api/appsettings.json
+
+# Linh tinh
+*.user
+.vscode/
