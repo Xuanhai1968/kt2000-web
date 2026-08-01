@@ -48,7 +48,6 @@ function ConsoleLayHoaDon() {
         rowKey="id"
         size="small"
         loading={loading}
-        // dataSource={tenants}
         dataSource={tenants.filter((t) => t.isActive)}
         rowSelection={{ selectedRowKeys: selected, onChange: setSelected }}
         pagination={{ pageSize: 20 }}
@@ -68,7 +67,9 @@ function ConsoleLayHoaDon() {
         }
       >
         Lấy HĐ điện tử ({selected.length} đơn vị)
-        <Card size="small" title="Nạp từ thư mục job (đường chạy lại / nạp tay)"
+      </Button>
+
+      <Card size="small" title="Nạp từ thư mục job (đường chạy lại / nạp tay)"
             style={{ marginTop: 16 }}>
         <Space wrap>
           <Select
@@ -113,7 +114,6 @@ function ConsoleLayHoaDon() {
           </div>
         )}
       </Card>
-      </Button>
     </Card>
   );
 }

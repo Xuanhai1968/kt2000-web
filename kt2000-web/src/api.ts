@@ -1,6 +1,7 @@
 import axios from "axios";
 
-// const api = axios.create({ baseURL: "http://localhost:5000/api" });
+// Đường dẫn tương đối: dev thì Vite proxy sang backend (vite.config.ts),
+// còn bản publish backend tự phục vụ frontend nên cùng gốc, không phải sửa gì.
 const api = axios.create({ baseURL: "/api" });
 
 // Gan token vao moi request sau khi login
@@ -29,12 +30,6 @@ export const login = (payload: {
 }) => api.post("/auth/login", payload);
 
 export default api;
-// export interface AdminTenant {
-//   id: string;
-//   code: string;
-//   name: string;
-//   taxCode: string | null;
-// }
 export interface AdminTenant {
   id: string;
   code: string;
@@ -84,7 +79,5 @@ export interface ImportJobResult {
   errors: { maHd: string; reason: string }[];
 }
 
-// export const importJob = (tenantId: string, nam: number, thang: number) =>
-//   api.post<ImportJobResult>("/admin/import-job", { tenantId, nam, thang });
-export const importJob = (tenantId: string, nam: number, thang: number, xoaTruocKhiGhi = false) =>
+export const importJob =(tenantId: string, nam: number, thang: number, xoaTruocKhiGhi = false) =>
   api.post<ImportJobResult>("/admin/import-job", { tenantId, nam, thang, xoaTruocKhiGhi });

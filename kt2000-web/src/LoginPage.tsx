@@ -29,7 +29,6 @@ export default function LoginPage() {
         onTenantChange(lastTenant.id, data.tenants);
         if (last.fiscalYear) form.setFieldValue("fiscalYear", last.fiscalYear);
       }
-    // } catch { /* im lang — khong lo username ton tai hay khong */ }
     } catch {
       // Username sai → backend vẫn trả 200 rỗng (không rơi vào đây).
       // Rơi vào đây = KHÔNG GỌI ĐƯỢC server → phải nói cho người dùng biết.
@@ -57,8 +56,7 @@ export default function LoginPage() {
         getChiNhanh: !!v.getChiNhanh,
       });
       signIn(data);
-      //nav("/dashboard");
-      nav("/app")
+      nav("/app");
     } catch (e: any) {
       message.error(e?.response?.data?.message ?? "Đăng nhập thất bại");
     } finally {

@@ -1,5 +1,6 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 using KT2000.Api.Data;
 using KT2000.Api.Models;
 
@@ -118,49 +119,63 @@ namespace KT2000.Api.Services
             return new { message = "Đã lưu", changes };
         }
         // ============ Tạo database vật lý ============
+        // Trước 01/08: chỉ dựng SCHEMA_VERSION rỗng, 6 bảng nghiệp vụ phải chạy tay
+        // 004/005/007/009 từng database — quên là Importer chết "Invalid object name
+        // 'HOA_DON'". Nay dựng đủ khuôn ngay, từ 010_tenant_template_v6.sql nhúng trong .dll.
         private bool CreateTenantDatabase(string code, int year)
         {
-            var dbName = _resolver.BuildDbName(code, year);
+            var dbName = _resolver.BuildDbName(code, year);   // đã qua BR-DB-01
             using var conn = new SqlConnection(_resolver.GetMasterConnection());
             conn.Open();
+
+            bool existed;
             using (var check = new SqlCommand("SELECT DB_ID(@n)", conn))
             {
                 check.Parameters.AddWithValue("@n", dbName);
-                if (check.ExecuteScalar() != DBNull.Value) return false;  // đã có
+                existed = check.ExecuteScalar() != DBNull.Value;
             }
-            using (var create = new SqlCommand($"CREATE DATABASE [{dbName}]", conn))
+
+            if (existed)
+            {
+                // Database có sẵn nhưng RỖNG RUỘT (di sản của bản cũ) → vá nốt khuôn.
+                // Chỉ đụng database chưa có HOA_DON, nên không bao giờ chạm dữ liệu sống.
+                using var probe = new SqlCommand($"SELECT OBJECT_ID('[{dbName}]..HOA_DON')", conn);
+                if (probe.ExecuteScalar() != DBNull.Value) return false;   // đã đủ khuôn
+            }
+            else
+            {
+                using var create = new SqlCommand($"CREATE DATABASE [{dbName}]", conn);
                 create.ExecuteNonQuery();
-            using var init = new SqlCommand($@"
-                USE [{dbName}];
-                CREATE TABLE SCHEMA_VERSION (
-                    Ver INT NOT NULL, AppliedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME());
-                INSERT INTO SCHEMA_VERSION (Ver) VALUES (1);", conn);
-            init.ExecuteNonQuery();
-            return true;  // vừa tạo mới
+            }
+
+            ApplyTenantTemplate(conn, dbName);
+            return !existed;   // true = vừa tạo mới database
         }
-        // private void CreateTenantDatabase(string code, int year)
-        // {
-        //     var dbName = _resolver.BuildDbName(code, year); // đã qua BR-DB-01
-        //     using var conn = new SqlConnection(_resolver.GetMasterConnection());
-        //     conn.Open();
 
-        //     using (var check = new SqlCommand("SELECT DB_ID(@n)", conn))
-        //     {
-        //         check.Parameters.AddWithValue("@n", dbName);
-        //         if (check.ExecuteScalar() != DBNull.Value) return; // đã có → thôi
-        //     }
-        //     using (var create = new SqlCommand($"CREATE DATABASE [{dbName}]", conn))
-        //         create.ExecuteNonQuery();
+        // Chạy khuôn schema lên đúng 1 database. SqlCommand không nuốt được "GO"
+        // (đó là lệnh của SSMS, không phải của T-SQL) nên phải tự cắt từng mẻ.
+        private static void ApplyTenantTemplate(SqlConnection conn, string dbName)
+        {
+            foreach (var batch in SplitSqlBatches(ReadTenantTemplate()))
+            {
+                using var cmd = new SqlCommand($"USE [{dbName}];\n{batch}", conn);
+                cmd.CommandTimeout = 120;
+                cmd.ExecuteNonQuery();
+            }
+        }
 
-        //     // Khuôn schema tối thiểu: bảng đánh dấu phiên bản.
-        //     // WP-02 sẽ nâng template này lên đủ 6 bảng nghiệp vụ.
-        //     using var init = new SqlCommand($@"
-        //         USE [{dbName}];
-        //         CREATE TABLE SCHEMA_VERSION (
-        //             Ver INT NOT NULL, AppliedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME());
-        //         INSERT INTO SCHEMA_VERSION (Ver) VALUES (1);", conn);
-        //     init.ExecuteNonQuery();
-        // }
+        private static string ReadTenantTemplate()
+        {
+            using var s = typeof(AdminService).Assembly
+                .GetManifestResourceStream("KT2000.Api.tenant_template.sql")
+                ?? throw new InvalidOperationException(
+                    "Thiếu khuôn schema nhúng (KT2000.Api.tenant_template.sql) — build lại backend");
+            using var r = new StreamReader(s);
+            return r.ReadToEnd();
+        }
+
+        private static IEnumerable<string> SplitSqlBatches(string sql) =>
+            Regex.Split(sql, @"^\s*GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase)
+                 .Where(b => !string.IsNullOrWhiteSpace(b));
     }
-    
 }

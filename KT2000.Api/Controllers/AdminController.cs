@@ -15,8 +15,6 @@ namespace KT2000.Api.Controllers
     {
         private readonly AppDbContext _db;
         private readonly AdminService _admin;
-        // public AdminController(AppDbContext db, AdminService admin)
-        // { _db = db; _admin = admin; }
         private readonly ImportService _import;
         public AdminController(AppDbContext db, AdminService admin, ImportService import)
         { _db = db; _admin = admin; _import = import; }
@@ -27,9 +25,6 @@ namespace KT2000.Api.Controllers
                           StringComparison.OrdinalIgnoreCase);
         private string CurrentLoginName() =>
             User.FindFirst("login_name")?.Value ?? "?";
-        // private Guid CurrentUserId() =>
-        //     Guid.Parse(User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
-        //                ?? User.FindFirst("sub")!.Value);
         private Guid CurrentUserId()
         {
             // Tùy cấu hình, claim 'sub' có thể xuất hiện dưới 1 trong 3 tên này
@@ -70,19 +65,6 @@ namespace KT2000.Api.Controllers
             catch (ArgumentException ex)
             { return BadRequest(new { message = ex.Message }); }
         }
-        // [HttpGet("tenants")]
-        // public async Task<IActionResult> GetTenants()
-        // {
-        //     if (!IsInternal())
-        //         return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
-        //     var list = await _db.Tenants
-        //         .Where(t => t.TenantType != "internal" && t.IsActive)
-        //         .OrderBy(t => t.SortName ?? t.Name)
-        //         .Select(t => new { id = t.Id, code = t.Code, name = t.Name, taxCode = t.TaxCode })
-        //         .ToListAsync();
-        //     return Ok(list);
-        // }
-
         // POST api/admin/tenants — Thêm đơn vị mới
         [HttpPost("tenants")]
         public async Task<IActionResult> CreateTenant([FromBody] CreateTenantRequest req)
