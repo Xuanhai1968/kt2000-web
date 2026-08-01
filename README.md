@@ -11,3 +11,16 @@ kt2000-web/
 └── README.md
 Cách chạy Backend C#: Mở Cmd → cd /d D:\WebAPP\kt2000-web\KT2000.Api\ → dotnet run (có thể phải chạy dotnet build trước)
 Cách chạy Frontend React: Mở Cmd → cd /d D:\WebAPP\kt2000-web\kt2000-web\ → npm run dev
+Chạy Backend ở Terminal: Mở Terminal → cd /d D:\WebAPP\kt2000-web\KT2000.Api\ → dotnet run cũng được
+Chạy Frontend ở Terminal: Mở Terminal → cd /d D:\WebAPP\kt2000-web\kt2000-web\ → npm run dev cũng được nhưng nếu gặp lỗi :
+####
+    npm : File C:\Program Files\nodejs\npm.ps1 cannot be loaded because running scripts is disabled on this system. For more information, see about_Execution_Policies at 
+    https:/go.microsoft.com/fwlink/?LinkID=135170.
+    At line:1 char:1
+    + npm run dev
+    + ~~~
+        + CategoryInfo          : SecurityError: (:) [], PSSecurityException
+        + FullyQualifiedErrorId : UnauthorizedAccess
+#####
+thì mở Terminal của VSCode chạy "Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" để loại bỏ lỗi trên . Bây giừo có thể chạy Backend và Frontend ở Terminal.
+Sau khi xong trang web chính của ứng dụng là : http://localhost:5173/

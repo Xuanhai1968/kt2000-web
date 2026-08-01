@@ -1,6 +1,7 @@
 import axios from "axios";
 
-const api = axios.create({ baseURL: "http://localhost:5000/api" });
+// const api = axios.create({ baseURL: "http://localhost:5000/api" });
+const api = axios.create({ baseURL: "/api" });
 
 // Gan token vao moi request sau khi login
 api.interceptors.request.use((config) => {
@@ -28,3 +29,62 @@ export const login = (payload: {
 }) => api.post("/auth/login", payload);
 
 export default api;
+// export interface AdminTenant {
+//   id: string;
+//   code: string;
+//   name: string;
+//   taxCode: string | null;
+// }
+export interface AdminTenant {
+  id: string;
+  code: string;
+  name: string;
+  taxCode: string | null;
+  address: string | null;
+  isActive: boolean;
+  fiscalYears: number[];
+}
+
+export interface UpdateTenantPayload {
+  name: string;
+  taxCode?: string;
+  address?: string;
+  isActive: boolean;
+}
+
+export const updateTenant = (id: string, p: UpdateTenantPayload) =>
+  api.put(`/admin/tenants/${id}`, p);
+
+export const getAdminTenants = () => api.get<AdminTenant[]>("/admin/tenants");
+export interface CreateTenantPayload {
+  code: string;
+  name: string;
+  taxCode?: string;
+  address?: string;
+  firstYear: number;
+}
+
+export interface OpenYearResult {
+  code: string;
+  status: "ok" | "skip" | "error";
+  message: string;
+}
+
+export const createTenant = (p: CreateTenantPayload) =>
+  api.post("/admin/tenants", p);
+
+export const openFiscalYears = (year: number, tenantIds: string[]) =>
+  api.post<OpenYearResult[]>("/admin/fiscal-years", { year, tenantIds });
+export interface ImportJobResult {
+  inserted: number;
+  updated: number;
+  skippedYear: number;
+  skippedNoDate: number;
+  moved: number;
+  errors: { maHd: string; reason: string }[];
+}
+
+// export const importJob = (tenantId: string, nam: number, thang: number) =>
+//   api.post<ImportJobResult>("/admin/import-job", { tenantId, nam, thang });
+export const importJob = (tenantId: string, nam: number, thang: number, xoaTruocKhiGhi = false) =>
+  api.post<ImportJobResult>("/admin/import-job", { tenantId, nam, thang, xoaTruocKhiGhi });

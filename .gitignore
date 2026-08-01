@@ -12,3 +12,6 @@ KT2000.Api/appsettings.json
 # Linh tinh
 *.user
 .vscode/
+
+*.xlsx
+*.xls

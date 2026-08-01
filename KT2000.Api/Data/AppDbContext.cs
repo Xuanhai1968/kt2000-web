@@ -12,7 +12,7 @@ namespace KT2000.Api.Data
         public DbSet<UserTenantAccess> UserTenantAccess => Set<UserTenantAccess>();
         public DbSet<FiscalYear> FiscalYears => Set<FiscalYear>();
         public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
-
+        public DbSet<TenantChangeLog> TenantChangeLog => Set<TenantChangeLog>();
         protected override void OnModelCreating(ModelBuilder mb)
         {
             mb.Entity<User>().HasIndex(u => u.LoginName).IsUnique();

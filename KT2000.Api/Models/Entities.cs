@@ -53,4 +53,12 @@ namespace KT2000.Api.Models
         public string Key { get; set; } = "";
         public string? Value { get; set; }
     }
+    public class TenantChangeLog
+    {
+        public int Id { get; set; }
+        public Guid TenantId { get; set; }
+        public string ChangedBy { get; set; } = "";
+        public DateTime ChangedAt { get; set; }
+        public string Changes { get; set; } = "";
+    }
 }

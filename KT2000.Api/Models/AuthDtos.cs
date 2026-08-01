@@ -52,4 +52,32 @@ namespace KT2000.Api.Models
         public List<object> Branches { get; set; } = new();  // khi GetChiNhanh = true
         public int FiscalYear { get; set; }
     }
+    public class CreateTenantRequest
+    {
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string? TaxCode { get; set; }
+        public string? Address { get; set; }
+        public int FirstYear { get; set; }
+    }
+
+    public class OpenYearsRequest
+    {
+        public int Year { get; set; }
+        public List<string> TenantIds { get; set; } = new();
+    }
+    public class UpdateTenantRequest
+    {
+        public string Name { get; set; } = "";
+        public string? TaxCode { get; set; }
+        public string? Address { get; set; }
+        public bool IsActive { get; set; }
+    }
+    public class ImportJobRequest
+    {
+        public Guid TenantId { get; set; }
+        public int Nam { get; set; }
+        public int Thang { get; set; }
+        public bool XoaTruocKhiGhi { get; set; } = false;
+    }
 }

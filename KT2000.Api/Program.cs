@@ -1,14 +1,43 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 using KT2000.Api.Data;
 using KT2000.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseWindowsService();   // chạy được như Windows Service (dev không ảnh hưởng)
 
+// builder.Services.AddDbContext<AppDbContext>(o =>
+//     o.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddDbContext<AppDbContext>(o =>
-    o.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    o.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"),
+        sql => sql.EnableRetryOnFailure()));
 
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddControllers();
+builder.Services.AddSingleton<TenantDbResolver>();
+builder.Services.AddScoped<AdminService>();
+builder.Services.AddScoped<ImportService>();
+
+// ---- MỚI: dạy backend cách KIỂM TRA JWT (trước giờ mới chỉ biết PHÁT) ----
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(o =>
+    {
+        o.MapInboundClaims = false;   // giữ nguyên tên claim như lúc phát
+        o.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            ValidateAudience = true,
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)),
+            ValidateLifetime = true
+        };
+    });
+builder.Services.AddAuthorization();
 
 builder.Services.AddCors(o => o.AddPolicy("AllowReact", p =>
     p.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
@@ -21,6 +50,12 @@ var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI();
 app.UseCors("AllowReact");
-app.MapControllers();
 
-app.Run("http://localhost:5000");
+app.UseAuthentication();   // MỚI: soát "con dấu" trên JWT của mỗi request
+app.UseAuthorization();    // MỚI: đối chiếu yêu cầu [Authorize] của endpoint
+app.UseDefaultFiles();   // vào / thì trả index.html
+app.UseStaticFiles();    // phục vụ file trong wwwroot (bản build React)
+app.MapControllers();
+app.MapFallbackToFile("index.html");  // URL kiểu /app/don-vi (route React) → trả index.html
+// app.Run("http://localhost:5000");
+app.Run();

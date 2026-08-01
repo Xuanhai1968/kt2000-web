@@ -103,8 +103,11 @@ class EventWriter:
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(data, ensure_ascii=False) + "\n")
 def make_job_paths(base_dir, job_id, MA_DONVI):
-    job_dir = os.path.join(base_dir, MA_DONVI, job_id)
-
+    # job_dir = os.path.join(base_dir, MA_DONVI, job_id)
+    # Va #7a: chen tang NAM<nam> (doc nam tu job_id dang T{m}_{yyyy}_...)
+    m_nam = re.search(r'_(20\d{2})_', str(job_id) + "_")
+    nam_dir = f"NAM{m_nam.group(1)}" if m_nam else ""
+    job_dir = os.path.join(base_dir, MA_DONVI, nam_dir, job_id)
     paths = {
         "job_id": job_id,
         "job_dir": job_dir,
@@ -395,87 +398,87 @@ def an_toan_du_lieu(text, max_bytes=254):
     b = text.encode("utf-8")[:max_bytes]
     return b.decode("utf-8", "ignore")
 
-def excel_to_exact_dbf(excel_path, output_dir):
-    """
-    Chuyen tung sheet trong Excel sang DBF.
-    Ten field DBF lay theo header Excel.
-    Vi field_name trong map da duoc quy chuan DBF, ham nay se:
-      - giu toi da ten field goc
-      - chi chuan hoa nhe de tranh loi
-      - dam bao khong trung ten field
-    """
-    def normalize_dbf_field_name(name, used_names):
-        name = safe_str(name).upper()
+# def excel_to_exact_dbf(excel_path, output_dir):
+#     """
+#     Chuyen tung sheet trong Excel sang DBF.
+#     Ten field DBF lay theo header Excel.
+#     Vi field_name trong map da duoc quy chuan DBF, ham nay se:
+#       - giu toi da ten field goc
+#       - chi chuan hoa nhe de tranh loi
+#       - dam bao khong trung ten field
+#     """
+#     def normalize_dbf_field_name(name, used_names):
+#         name = safe_str(name).upper()
 
-        # Bo dau neu co
-        name = unicodedata.normalize('NFD', name)
-        name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
-        name = name.replace('Đ', 'D').replace('đ', 'd')
+#         # Bo dau neu co
+#         name = unicodedata.normalize('NFD', name)
+#         name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
+#         name = name.replace('Đ', 'D').replace('đ', 'd')
 
-        # Chi giu A-Z 0-9 _
-        name = re.sub(r'[^A-Z0-9_]', '_', name)
-        name = re.sub(r'_+', '_', name).strip('_')
+#         # Chi giu A-Z 0-9 _
+#         name = re.sub(r'[^A-Z0-9_]', '_', name)
+#         name = re.sub(r'_+', '_', name).strip('_')
 
-        if not name:
-            name = "FIELD"
+#         if not name:
+#             name = "FIELD"
 
-        # DBF an toan <= 10 ky tu
-        base = name[:10]
-        candidate = base
-        i = 1
+#         # DBF an toan <= 10 ky tu
+#         base = name[:10]
+#         candidate = base
+#         i = 1
 
-        while candidate in used_names:
-            suffix = str(i)
-            candidate = base[:10 - len(suffix)] + suffix
-            i += 1
+#         while candidate in used_names:
+#             suffix = str(i)
+#             candidate = base[:10 - len(suffix)] + suffix
+#             i += 1
 
-        used_names.add(candidate)
-        return candidate
+#         used_names.add(candidate)
+#         return candidate
 
-    try:
-        xl = pd.ExcelFile(excel_path)
-        sheet_names = xl.sheet_names
-        #print(f"---sheet processing... : {sheet_names} ---")
+#     try:
+#         xl = pd.ExcelFile(excel_path)
+#         sheet_names = xl.sheet_names
+#         #print(f"---sheet processing... : {sheet_names} ---")
 
-        for sheet in sheet_names:
-            df = pd.read_excel(excel_path, sheet_name=sheet)
-            df = df.fillna('')
+#         for sheet in sheet_names:
+#             df = pd.read_excel(excel_path, sheet_name=sheet)
+#             df = df.fillna('')
 
-            dbf_filename = sheet.upper() + ".DBF"
-            dbf_path = os.path.join(output_dir, dbf_filename)
+#             dbf_filename = sheet.upper() + ".DBF"
+#             dbf_path = os.path.join(output_dir, dbf_filename)
 
-            original_cols = list(df.columns)
-            used_names = set()
-            final_cols = [normalize_dbf_field_name(col, used_names) for col in original_cols]
-            df.columns = final_cols
+#             original_cols = list(df.columns)
+#             used_names = set()
+#             final_cols = [normalize_dbf_field_name(col, used_names) for col in original_cols]
+#             df.columns = final_cols
 
-            specs = [f"{col} C(254)" for col in df.columns]
-            table_spec = "; ".join(specs)
+#             specs = [f"{col} C(254)" for col in df.columns]
+#             table_spec = "; ".join(specs)
 
-            # Xoa file DBF cu neu ton tai
-            if os.path.exists(dbf_path):
-                try:
-                    os.remove(dbf_path)
-                except Exception:
-                    pass
+#             # Xoa file DBF cu neu ton tai
+#             if os.path.exists(dbf_path):
+#                 try:
+#                     os.remove(dbf_path)
+#                 except Exception:
+#                     pass
 
-            # codepage utf8 (byte header 0xf0) de giu tieng Viet co dau day du nhu Excel.
-            # Luu y: app doc DBF (vd VFP) phai ho tro doc UTF-8 thi moi hien dung.
-            table = dbf.Table(dbf_path, table_spec, codepage='utf8', dbf_type='vfp')
-            table.open(mode=dbf.READ_WRITE)
+#             # codepage utf8 (byte header 0xf0) de giu tieng Viet co dau day du nhu Excel.
+#             # Luu y: app doc DBF (vd VFP) phai ho tro doc UTF-8 thi moi hien dung.
+#             table = dbf.Table(dbf_path, table_spec, codepage='utf8', dbf_type='vfp')
+#             table.open(mode=dbf.READ_WRITE)
 
-            for _, row in df.iterrows():
-                data = tuple(an_toan_du_lieu(str(val).strip()) for val in row)
-                table.append(data)
+#             for _, row in df.iterrows():
+#                 data = tuple(an_toan_du_lieu(str(val).strip()) for val in row)
+#                 table.append(data)
 
-            table.close()
-            #print(f"Done: {dbf_filename}")
+#             table.close()
+#             #print(f"Done: {dbf_filename}")
     
-    except Exception as e:
-        #print(f"System error: {repr(e)}")
-        raise
-    finally:
-        table.close()   # luôn chạy, kể cả khi append lỗi
+#     except Exception as e:
+#         #print(f"System error: {repr(e)}")
+#         raise
+#     finally:
+#         table.close()   # luôn chạy, kể cả khi append lỗi
 
 # =========================
 # EXCEL FALLBACK + CAP NHAT TTHAI_HD TU EXCEL TONG HOP
@@ -759,8 +762,12 @@ def build_rows_from_excel_without_xml(excel_path, huong_default="", ma_donvi="",
         tthai_hd = value_from_row(row, col_tthai_hd)
         kq_kiemtra = value_from_row(row, col_kq_kiemtra)
 
-        ma_hd = f"{ma_donvi_norm}_{mst_norm}_{khhd}_{shd}"
-
+        # ma_hd = f"{ma_donvi_norm}_{mst_norm}_{khhd}_{shd}"
+        # MỚI: mst người bán ở nhánh này lấy từ biến MST người bán có sẵn trong cùng hàm
+        #      (tên kiểu mst_nban / nbmst — nhìn 15 dòng phía trên); fallback mst_norm
+        mst_ph = str(mst_ban or mst_norm).strip()
+        ma_hd = f"{huong_norm}_{mst_ph}_{khhd}_{shd}"
+        # ma_hd = f"{huong_norm}_{(mst_ban or mst_norm)}_{khhd}_{shd}"
         master_row = {
             "MA_HD": ma_hd,
             "MA_DONVI": ma_donvi_norm,
@@ -1835,7 +1842,11 @@ class tra_cuu_hdt:
                                 thanh_cong += 1
                                 if kq.get("xml_path"):
                                     xml_paths_cho_excel[(str(hd['khhdon']), str(hd['shdon']))] = kq["xml_path"]
-                                    ma_hd = f"{MA_DONVI}_{mst_value}_{hd['khhdon']}_{hd['shdon']}"
+                                    # ma_hd = f"{MA_DONVI}_{mst_value}_{hd['khhdon']}_{hd['shdon']}"
+                                    # MỚI:
+                                    mst_ph = str(hd.get('nbmst') or mst_value).strip()
+                                    # ma_hd = f"{huong}_{mst_ph}_{hd['khhdon']}_{hd['shdon']}"
+                                    ma_hd = f"{loai['huong']}_{mst_ph}_{hd['khhdon']}_{hd['shdon']}"
                                     xml_queue.put((
                                         kq["xml_path"], ma_hd, MA_DONVI, mst_value,
                                         loai["huong"], thang, nam, hd['khhdon'], hd['shdon'],
@@ -1875,8 +1886,10 @@ class tra_cuu_hdt:
                                         if kq["ok"]:
                                             thanh_cong += 1
                                             if kq.get("xml_path"):
-                                                xml_paths_cho_excel[(str(hd_retry['khhdon']), str(hd_retry['shdon']))] = kq["xml_path"]
-                                                ma_hd = f"{MA_DONVI}_{mst_value}_{hd_retry['khhdon']}_{hd_retry['shdon']}"
+                                                # xml_paths_cho_excel[(str(hd_retry['khhdon']), str(hd_retry['shdon']))] = kq["xml_path"]
+                                                # ma_hd = f"{MA_DONVI}_{mst_value}_{hd_retry['khhdon']}_{hd_retry['shdon']}"
+                                                mst_ph = str(hd_retry.get('nbmst') or mst_value).strip()
+                                                ma_hd = f"{loai['huong']}_{mst_ph}_{hd_retry['khhdon']}_{hd_retry['shdon']}"
                                                 xml_queue.put((
                                                     kq["xml_path"], ma_hd, MA_DONVI, mst_value,
                                                     loai["huong"], thang, nam, hd_retry['khhdon'], hd_retry['shdon'],
@@ -1997,7 +2010,7 @@ class tra_cuu_hdt:
                             events.log("EXCEL_TONG_WRITTEN", path=excel_path, master=len(masters_h), lines=len(lines_h), huong=h)
                             append_run_log(run_log, f"WRITE_EXCEL_DONE path={excel_path}")
                             append_run_log(run_log, f"TO_DBF_STAGE_START excel={excel_path} stage_dir={stage_dir}")
-                            excel_to_exact_dbf(excel_path, stage_dir)
+                            # excel_to_exact_dbf(excel_path, stage_dir)
                             append_run_log(run_log, f"TO_DBF_STAGE_DONE excel={excel_path}")
                             excel_tong_list.append(excel_path)
                                        
@@ -2022,7 +2035,7 @@ class tra_cuu_hdt:
                         #print(f"Da ghi xong: {excel_tong}")
                         events.log("EXCEL_TONG_WRITTEN", path=excel_tong, master=len(all_master_rows), lines=len(all_line_rows))
                         append_run_log(run_log, f"TO_DBF_STAGE_START excel={excel_tong} stage_dir={stage_dir}")
-                        excel_to_exact_dbf(excel_tong, stage_dir)
+                        # excel_to_exact_dbf(excel_tong, stage_dir)
                         append_run_log(run_log, f"TO_DBF_STAGE_DONE excel={excel_tong}")
 
                 status.write({
@@ -2175,8 +2188,12 @@ def parse_args(argv):
     p.add_argument("--xml_map", required=False, help="Duong dan file XML_MAP.xlsx")
     p.add_argument("--tu_ngay", required=False, help="Tu ngay")
     p.add_argument("--den_ngay", required=False, help="Den ngay")
-
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    # Va #1: uu tien bien moi truong HDDT_PASSWORD (tham so dong lenh lo trong Task Manager)
+    if not args.password:
+        args.password = os.environ.get("HDDT_PASSWORD", "")
+    return args
+    # return p.parse_args(argv)
 
 def run_cli(args):
     # Co gang tao run_log som nhat co the
@@ -2238,7 +2255,7 @@ def run_cli(args):
                     append_run_log(run_log, f"TO_DBF_START excel={excel_path}")
                     #print(f"Dang chuyen DBF: {excel_path} -> {out_dir}")
                     try:
-                        excel_to_exact_dbf(excel_path, out_dir)
+                        # excel_to_exact_dbf(excel_path, out_dir)
                         append_run_log(run_log, f"TO_DBF_DONE excel={excel_path}")
                     except Exception as e:
                         append_run_log(run_log, f"TO_DBF_ERROR {short_exc(e)}")
