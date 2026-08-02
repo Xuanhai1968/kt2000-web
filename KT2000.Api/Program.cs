@@ -8,8 +8,6 @@ using KT2000.Api.Services;
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService();   // chạy được như Windows Service (dev không ảnh hưởng)
 
-// builder.Services.AddDbContext<AppDbContext>(o =>
-//     o.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddDbContext<AppDbContext>(o =>
     o.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"),
         sql => sql.EnableRetryOnFailure()));
@@ -57,5 +55,6 @@ app.UseDefaultFiles();   // vào / thì trả index.html
 app.UseStaticFiles();    // phục vụ file trong wwwroot (bản build React)
 app.MapControllers();
 app.MapFallbackToFile("index.html");  // URL kiểu /app/don-vi (route React) → trả index.html
-// app.Run("http://localhost:5000");
+// Cổng KHÔNG ghim ở đây: lấy từ khóa "Urls" trong appsettings.json (hiện là 5000),
+// nhờ vậy bản publish chạy Windows Service đổi cổng được mà không phải build lại.
 app.Run();

@@ -39,7 +39,7 @@ namespace KT2000.Api.Services
 
             using var conn = new SqlConnection(
                 _resolver.GetTenantConnection(tenant.Code, req.Nam));
-            conn.Open();
+            await conn.OpenAsync();
 
             foreach (var huong in new[] { "VAO", "RA" })
             {
@@ -105,6 +105,7 @@ namespace KT2000.Api.Services
                         continue;
                     }
 
+                    bool ghiXong = false;
                     using var tx = conn.BeginTransaction();
                     try
                     {
@@ -120,13 +121,26 @@ namespace KT2000.Api.Services
                         ReplaceLines(conn, tx, maHd, lines, L, userName);
                         tx.Commit();
                         if (existed) updated++; else inserted++;
-                        moved += MoveArtifacts(jobDir, huong, req.Thang, req.Nam,
-                                               scanDir, S(r, M, "XML_PATH"), maHd);
+                        ghiXong = true;
                     }
                     catch (Exception ex)
                     {
                         tx.Rollback();
                         errors.Add(new { maHd, reason = ex.Message });
+                    }
+
+                    // Dời file NGOÀI transaction: đã Commit rồi thì đừng để lỗi dời file rơi
+                    // vào catch ở trên — Rollback một transaction đã commit sẽ ném tiếp và
+                    // giết cả vòng nạp. Hỏng khâu này thì HĐ vẫn vào DB, chỉ báo để dời tay.
+                    if (!ghiXong) continue;
+                    try
+                    {
+                        moved += MoveArtifacts(jobDir, huong, req.Thang, req.Nam,
+                                               scanDir, S(r, M, "XML_PATH"), maHd);
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(new { maHd, reason = $"Đã ghi DB nhưng không dời được file: {ex.Message}" });
                     }
                 }
             }

@@ -28,18 +28,6 @@ export default function MoNamLamViec() {
         setRunning(false);
         }
     };
-//   const run = async () => {
-//     setRunning(true);
-//     try {
-//       const r = await openFiscalYears(year, selected as string[]);
-//       setResults(r.data);
-//       message.success("Chạy xong — xem kết quả từng đơn vị bên dưới");
-//     } catch (e: any) {
-//       message.error(e?.response?.data?.message ?? "Lỗi khi mở năm");
-//     } finally {
-//       setRunning(false);
-//     }
-//   };
 
   const colorOf = (s: string) => (s === "ok" ? "green" : s === "skip" ? "orange" : "red");
 

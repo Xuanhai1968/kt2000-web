@@ -60,7 +60,9 @@ namespace KT2000.Api.Services
                 LastPreferences = new LastPrefs
                 {
                     TenantCode = lastTenant,
-                    FiscalYear = lastYear != null ? int.Parse(lastYear) : null
+                    // TryParse chứ không Parse: prefs bẩn (sửa tay, dữ liệu cũ) chỉ nên làm
+                    // mất gợi ý "năm lần trước", không được làm sập cả màn hình đăng nhập
+                    FiscalYear = int.TryParse(lastYear, out var y) ? y : null
                 }
             };
         }

@@ -58,7 +58,6 @@ export default function AppShell() {
         <Layout.Sider width={260} theme="light">
           <Menu
             mode="inline"
-            //items={menuItems}
             items={[
             ...menuItems,
             ...(isInternal

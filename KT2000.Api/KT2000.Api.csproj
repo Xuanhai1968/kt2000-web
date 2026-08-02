@@ -7,6 +7,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Khuôn schema đơn vị-năm: nhúng thẳng vào .dll để bản publish (xcopy) không
+         bao giờ thiếu file, và không ai sửa được schema trên server mà không build lại. -->
+    <EmbeddedResource Include="..\database\010_tenant_template_v6.sql"
+                      LogicalName="KT2000.Api.tenant_template.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
     <PackageReference Include="ClosedXML" Version="0.105.1" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
