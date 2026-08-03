@@ -5,7 +5,7 @@ Làm theo mẫu của VFP cũ cho các USER khác quen dùng :
 
     1.2 Khi lấy chia làm 2 bước, bước 1 : Lấy HĐ từ TCT , bước 2 : Đưa HĐ và HOA_DON và HOA_DON_LINE (Đã có code sẵn tham khảo và sửa), khi lấy về để theo path chuẩn như sau :\\Severnew\data_hddt\TUAN_NGA\NAM2026\T1_2026_TUAN_NGA\raw\VAO\TUAN_NGA_VAO_0109120136_T1_C26TAP_181.xml và .html (Lưu ý phần MST trong tên - code đã có trong bản lấy từ Git ban đầu)
 
-    1.3 Đối với 1 HĐ sau khi ghi dữ liệu sẽ 
+    1.3 Đối với 1 HĐ sau khi ghi dữ liệu sẽ tạm thời thay servernew bằng C:\test
         1 - Move file .html vào mẫu sau : \\Severnew\scan_doc\TUAN_NGA\NAM2026\VAO_T1_2026\v_tuan_nga_0103753943_t1_2026_0000005.html để user có thể xem HĐ gốc (Có bao gồm MST của người bán với HĐ vào, người bán với HĐ ra tránh trùng và bị ghi đè như tháng 1 nhà HUY_THANH)
         2 - Move file .xml vào mẫu sau \\Severnew\scan_doc\TUAN_NGA\NAM2026\xmls_only\vao\t1\v_tuan_nga_0103753943_t1_2026_0000005.xml (giống với file .html)
         3 - Những file lỗi do lệch line và Master sẽ nằm lại \\Severnew\data_hddt\TUAN_NGA\NAM2026\T1_2026_TUAN_NGA\raw\VAO\ và cho hiển thị lên 1 cột trong giao diện danh sách đơn vị lấy HĐ (FRM_LAY_HDDT) - Có thêm nút chạy bằng tay (Bước 2 : Đưa HĐ và HOA_DON và HOA_DON_LINE)
@@ -19,7 +19,7 @@ Làm theo mẫu của VFP cũ cho các USER khác quen dùng :
 
     1.5 Hiển thị Progress bar đang lấy đơn vị nào đến đâu (giống VFP cũ)
 
-    1.6 Hiện tai code cho việc đưa dữ liệu từ xml vào HOA_DON và HOA_DON_LINE , nếu thêm mới thì như trên, trong trường hợp bấm nút lấy nhưng có dữ liệu cũ (Lấy lại trong 1 số trường hợp) máy sẽ sử lý như sau, không xóa HĐ đi như VFP đang làm mà update những gì có từ xml , có nghĩa là các trường như ghi chú của user là không bị mất (áp dụng cho cả HOA_DON và HOA_DON_LINE).
+    1.6 Hiện tai code cho việc đưa dữ liệu từ xml vào HOA_DON và HOA_DON_LINE , nếu thêm mới thì như trên, trong trường hợp bấm nút lấy nhưng có dữ liệu cũ (Lấy lại trong 1 số trường hợp) máy sẽ sử lý như sau, không xóa HĐ đi như VFP đang làm mà update những gì có từ xml , có nghĩa là các trường như ghi chú của user là không bị mất (áp dụng cho HOA_DON và không áp dụng cho HOA_DON_LINE).
 
 2 -  Trong giao diện FRM_LAY_HDDT
     - Đánh dấu bằng mầu đỏ nhưng đơn vị khai tháng

@@ -53,6 +53,16 @@ namespace KT2000.Api.Models
         public string Key { get; set; } = "";
         public string? Value { get; set; }
     }
+    // Dòng kết quả đếm lỗi nạp theo (đơn vị × tháng × loại lỗi) — không phải bảng,
+    // chỉ là khuôn hứng GROUP BY của ImportError (xem 011_master_import_errors.sql)
+    public class ImportErrorRow
+    {
+        public Guid TenantId { get; set; }
+        public int Thang { get; set; }
+        public string LoaiLoi { get; set; } = "";
+        public int SoLuong { get; set; }
+    }
+
     public class TenantChangeLog
     {
         public int Id { get; set; }

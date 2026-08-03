@@ -10,6 +10,10 @@ namespace KT2000.Api.Services
     //  * ô ngày là CHUỖI ('2025-01-02' / '02/01/2025') → tự parse nhiều định dạng
     //  * sheet RA không có bộ cột chuẩn hóa → mọi phép đọc có FALLBACK sang bộ _G
     //  * đếm riêng "không đọc được ngày" khỏi "lệch năm" để chẩn bệnh nhanh
+    // Một dòng lỗi nạp, có PHÂN LOẠI — nhờ LoaiLoi mà FRM_LAY_HDDT tách được
+    // "lệch Σ line phải xử lý tay" khỏi các loại hỏng khác.
+    public record LoiNap(string MaHd, string Huong, string LoaiLoi, string LyDo);
+
     public class ImportService
     {
         private readonly AppDbContext _db;
@@ -34,14 +38,22 @@ namespace KT2000.Api.Services
             string scanDir = Path.Combine(scanRoot, tenant.Code, $"NAM{req.Nam}");
             Directory.CreateDirectory(scanDir);
 
-            var errors = new List<object>();
+            var errors = new List<LoiNap>();
             int inserted = 0, updated = 0, skippedYear = 0, skippedNoDate = 0, moved = 0;
+            // HĐ đặc biệt (điện, viễn thông, ngân hàng): không có bản gốc trên TCT, chỉ
+            // nằm trong Excel. Vẫn nạp bình thường, chỉ không có file để dời — đếm riêng
+            // để khỏi bị hiểu nhầm là "thiếu file" (spec 1.3.4).
+            int khongCoGoc = 0;
 
             using var conn = new SqlConnection(
                 _resolver.GetTenantConnection(tenant.Code, req.Nam));
             await conn.OpenAsync();
 
-            foreach (var huong in new[] { "VAO", "RA" })
+            // Theo đúng lựa chọn trên màn hình: "Chỉ đầu vào" thì đừng đụng tới file RA
+            var cacHuongNap = req.Huong.Equals("all", StringComparison.OrdinalIgnoreCase)
+                ? new[] { "VAO", "RA" } : new[] { "VAO" };
+
+            foreach (var huong in cacHuongNap)
             {
                 string file = Path.Combine(outDir, $"HOA_DON_{huong}_{tenant.Code}.xlsx");
                 if (!File.Exists(file)) continue;
@@ -84,13 +96,18 @@ namespace KT2000.Api.Services
                     // Ngày: chuẩn hóa → fallback _G (đều có thể là CHUỖI)
                     DateTime? ngay = D2(r, M, "NGAY_HD", "NGAY_HD_G");
                     if (ngay == null) { skippedNoDate++;
-                        errors.Add(new { maHd, reason = "Không đọc được NGAY_HD/NGAY_HD_G" }); continue; }
+                        errors.Add(new LoiNap(maHd, huong, "KHONG_RO_NGAY",
+                            "Không đọc được NGAY_HD/NGAY_HD_G")); continue; }
                     if (ngay.Value.Year != req.Nam) { skippedYear++; continue; }  // BR-IMP-01 lớp DÒNG
 
                     var lines = linesByHd.GetValueOrDefault(maHd) ?? new List<IXLRow>();
 
                     // ---- Kiểm Σ line = master: ưu tiên cặp chuẩn hóa, trống thì cặp _G ----
-                    decimal tol = 1m;
+                    // Sai số cho phép DƯỚI 10 đồng (chốt với Trường 03/08). Lý do: XML gốc
+                    // của TCT có HĐ ghi đơn giá lẻ tới phần thập phân, cộng lại lệch vài
+                    // hào so với tổng đã làm tròn — vd HUY_THANH T1/2026 lệch 0,4đ và 0,25đ.
+                    // Từ 10 đồng trở lên là sai thật, phải để lại raw\ xử lý tay.
+                    const decimal SAI_SO_CHO_PHEP = 10m;
                     decimal mNorm = N(r, M, "TIEN_HANG");
                     decimal sNorm = lines.Sum(x => N(x, L, "THANH_TIEN"));
                     decimal mG    = N(r, M, "TT_HD_G");
@@ -98,10 +115,27 @@ namespace KT2000.Api.Services
                     bool useNorm  = mNorm != 0 || sNorm != 0;
                     decimal masterVal = useNorm ? mNorm : mG;
                     decimal sumLine   = useNorm ? sNorm : sG;
-                    if ((masterVal != 0 || sumLine != 0) && Math.Abs(masterVal - sumLine) > tol)
+
+                    // HĐ đặc biệt không có gốc trên TCT (điện, viễn thông, ngân hàng —
+                    // NGUON_DL = EXCEL_NO_XML): THANH_TIEN của line là tiền ĐÃ GỒM VAT,
+                    // trong khi TIEN_HANG của master là tiền CHƯA VAT. So thẳng hai cái đó
+                    // là so nhầm cặp — mọi HĐ loại này đều bị đá ra oan, chênh đúng bằng
+                    // số tiền VAT. Đo bằng dữ liệu HUY_THANH T1/2026: 22/22 dòng như vậy.
+                    // Với nhóm này phải so TONG_TIEN (đã gồm VAT) với Σ THANH_TIEN.  [spec 1.3.4]
+                    if (S(r, M, "NGUON_DL").Equals("EXCEL_NO_XML", StringComparison.OrdinalIgnoreCase))
                     {
-                        errors.Add(new { maHd, reason =
-                            $"Σ line ({sumLine:N0}) ≠ master ({masterVal:N0}) — để lại raw\\ xử lý tay" });
+                        decimal tongTien = N(r, M, "TONG_TIEN");
+                        if (tongTien == 0) tongTien = mNorm + N(r, M, "TIEN_VAT");
+                        masterVal = tongTien;
+                        sumLine   = sNorm;
+                    }
+
+                    decimal chenh = masterVal - sumLine;
+                    if ((masterVal != 0 || sumLine != 0) && Math.Abs(chenh) >= SAI_SO_CHO_PHEP)
+                    {
+                        errors.Add(new LoiNap(maHd, huong, "LECH_TONG",
+                            $"Σ line ({sumLine}) ≠ master ({masterVal}), chênh {chenh}"
+                          + $" — quá ngưỡng {SAI_SO_CHO_PHEP}đ, để lại raw\\ xử lý tay"));
                         continue;
                     }
 
@@ -126,21 +160,23 @@ namespace KT2000.Api.Services
                     catch (Exception ex)
                     {
                         tx.Rollback();
-                        errors.Add(new { maHd, reason = ex.Message });
+                        errors.Add(new LoiNap(maHd, huong, "LOI_GHI", ex.Message));
                     }
 
                     // Dời file NGOÀI transaction: đã Commit rồi thì đừng để lỗi dời file rơi
                     // vào catch ở trên — Rollback một transaction đã commit sẽ ném tiếp và
                     // giết cả vòng nạp. Hỏng khâu này thì HĐ vẫn vào DB, chỉ báo để dời tay.
                     if (!ghiXong) continue;
+                    string xmlPath = S(r, M, "XML_PATH");
+                    if (string.IsNullOrWhiteSpace(xmlPath)) { khongCoGoc++; continue; }
                     try
                     {
-                        moved += MoveArtifacts(jobDir, huong, req.Thang, req.Nam,
-                                               scanDir, S(r, M, "XML_PATH"), maHd);
+                        moved += MoveArtifacts(jobDir, huong, req.Thang, req.Nam, scanDir, xmlPath);
                     }
                     catch (Exception ex)
                     {
-                        errors.Add(new { maHd, reason = $"Đã ghi DB nhưng không dời được file: {ex.Message}" });
+                        errors.Add(new LoiNap(maHd, huong, "LOI_DOI_FILE",
+                            $"Đã ghi DB nhưng không dời được file: {ex.Message}"));
                     }
                 }
             }
@@ -148,10 +184,92 @@ namespace KT2000.Api.Services
             await UpsertTaskStatus(tenant.Id, req.Nam, req.Thang, "NAP_HD",
                 errors.Count == 0 ? "done" : "done_thieu",
                 inserted + updated,
-                $"Mới {inserted}, cập nhật {updated}, lệch năm {skippedYear}, không rõ ngày {skippedNoDate}, lỗi {errors.Count}",
+                $"Mới {inserted}, cập nhật {updated}, lệch năm {skippedYear}, không rõ ngày {skippedNoDate}, "
+              + $"không có gốc {khongCoGoc}, lỗi {errors.Count}",
                 userName);
 
-            return new { inserted, updated, skippedYear, skippedNoDate, moved, errors };
+            await LuuLoiNap(tenant.Id, req.Nam, req.Thang, errors, userName);
+
+            int lechTong = errors.Count(e => e.LoaiLoi == "LECH_TONG");
+            return new
+            {
+                inserted, updated, skippedYear, skippedNoDate, khongCoGoc, moved, lechTong,
+                errors = errors.Select(e => new { maHd = e.MaHd, loaiLoi = e.LoaiLoi, reason = e.LyDo })
+            };
+        }
+
+        // Ghi đè danh sách lỗi của đúng (đơn vị × năm × tháng) này bằng kết quả lần chạy
+        // mới nhất — bảng luôn là hiện trạng, chạy lại 5 lần không đẻ ra 5 bộ lỗi chồng nhau.
+        private async Task LuuLoiNap(Guid tenantId, int nam, int thang,
+                                     List<LoiNap> ds, string userName)
+        {
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM ImportError WHERE TenantId={0} AND Nam={1} AND Thang={2}",
+                tenantId, nam, thang);
+
+            foreach (var e in ds)
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"INSERT INTO ImportError (TenantId, Nam, Thang, Huong, MaHd, LoaiLoi, LyDo, TaoBoi)
+                      VALUES ({0}, {1}, {2}, {3}, {4}, {5}, {6}, {7})",
+                    tenantId, nam, thang, e.Huong, e.MaHd, e.LoaiLoi,
+                    e.LyDo.Length > 500 ? e.LyDo[..500] : e.LyDo, userName);
+        }
+
+        // Spec 1.3.3: HĐ lệch Σ line vs master thì file gốc NẰM LẠI raw\ chờ xử lý tay.
+        // Đếm số file còn lại theo (đơn vị × khoảng tháng) để FRM_LAY_HDDT hiện thành cột.
+        // Chỉ đếm .xml — .html luôn đi cặp nên đếm cả hai sẽ ra số gấp đôi, dễ hiểu nhầm.
+        // huong: "vao" = chỉ đếm raw\VAO, "all" = cả raw\VAO lẫn raw\RA. Phải theo đúng
+        // lựa chọn trên màn hình, không thì chọn "chỉ đầu vào" mà cột lại cộng cả đầu ra.
+        public async Task<List<object>> DemFileConLai(List<Tenant> dsTenant, int nam,
+                                                     int thangBd, int thangKt, string huong)
+        {
+            var cacHuong = huong.Equals("all", StringComparison.OrdinalIgnoreCase)
+                ? new[] { "VAO", "RA" } : new[] { "VAO" };
+
+            string jobsRoot = _config["Paths:JobsRoot"]
+                ?? throw new ArgumentException("Chưa cấu hình Paths:JobsRoot trong appsettings.json");
+
+            // Lỗi đã ghi lúc nạp — chỉ có bảng này mới phân biệt được "lệch Σ line phải
+            // xử lý tay" với "chưa nạp", vì nhìn thư mục thì hai thứ đó y hệt nhau.
+            var ids = dsTenant.Select(t => t.Id).ToList();
+            var loi = await _db.Set<ImportErrorRow>()
+                .FromSqlRaw(@"SELECT TenantId, Thang, LoaiLoi, COUNT(*) AS SoLuong
+                              FROM ImportError
+                              WHERE Nam={0} AND Thang BETWEEN {1} AND {2}
+                                AND ({3} = 1 OR Huong = N'VAO')
+                              GROUP BY TenantId, Thang, LoaiLoi",
+                            nam, thangBd, thangKt, cacHuong.Length > 1 ? 1 : 0)
+                .ToListAsync();
+
+            var kq = new List<object>();
+            foreach (var t in dsTenant)
+            {
+                var loiCuaDv = loi.Where(x => x.TenantId == t.Id).ToList();
+                int tong = 0; var chiTiet = new List<object>();
+                for (int thang = thangBd; thang <= thangKt; thang++)
+                {
+                    string rawDir = Path.Combine(jobsRoot, t.Code, $"NAM{nam}",
+                                                 $"T{thang}_{nam}_{t.Code}", "raw");
+                    if (!Directory.Exists(rawDir)) continue;
+                    int n = 0;
+                    foreach (var h in cacHuong)
+                    {
+                        string d = Path.Combine(rawDir, h);
+                        if (Directory.Exists(d)) n += Directory.GetFiles(d, "*.xml").Length;
+                    }
+                    if (n > 0) { tong += n; chiTiet.Add(new { thang, soFile = n }); }
+                }
+                kq.Add(new
+                {
+                    tenantId = t.Id, code = t.Code, soFileConLai = tong, chiTiet,
+                    soLechTong = loiCuaDv.Where(x => x.LoaiLoi == "LECH_TONG").Sum(x => x.SoLuong),
+                    soLoiKhac  = loiCuaDv.Where(x => x.LoaiLoi != "LECH_TONG").Sum(x => x.SoLuong),
+                    lechTheoThang = loiCuaDv.Where(x => x.LoaiLoi == "LECH_TONG")
+                        .OrderBy(x => x.Thang)
+                        .Select(x => new { thang = x.Thang, soFile = x.SoLuong }).ToList(),
+                });
+            }
+            return kq;
         }
 
         private bool UpsertMaster(SqlConnection c, SqlTransaction tx, IXLRow r,
@@ -241,30 +359,32 @@ namespace KT2000.Api.Services
             }
         }
 
+        // Dời bản gốc sang kho SCAN_DOC. GIỮ NGUYÊN TÊN FILE (chốt với Trường 03/08):
+        // tên do bên tải HĐ đặt đã có MST + ký hiệu + số HĐ nên tự nó đủ phân biệt,
+        // đổi tên ở đây chỉ tạo thêm một quy ước nữa để sai.
+        //   .html → SCAN_DOC\<MA>\NAM<năm>\<HUONG>_T<tháng>_<năm>\        (user xem HĐ gốc)
+        //   .xml  → SCAN_DOC\<MA>\NAM<năm>\xmls_only\<huong>\t<tháng>\    (kho XML để máy đọc)
         private int MoveArtifacts(string jobDir, string huong, int thang, int nam,
-                                  string scanTenantYearDir, string xmlPath, string maHd)
+                                  string scanTenantYearDir, string xmlPath)
         {
-            if (string.IsNullOrWhiteSpace(xmlPath)) return 0;   // HĐ không XML (điện, viễn thông…)
-
             // XML_PATH trong Excel là đường TUYỆT ĐỐI của máy đã tải → không tin nó;
             // tìm theo TÊN FILE trong chính thư mục job đang nạp, trượt mới thử đường gốc
             string fileName = Path.GetFileName(xmlPath);
             string srcXml = Path.Combine(jobDir, "raw", huong, fileName);
             if (!File.Exists(srcXml)) srcXml = xmlPath;
 
-            // Tầng đích theo mẫu Leader: SCAN_DOC\<MA>\NAM<năm>\<HUONG>_T<tháng>_<năm>\
-            string dstDir = Path.Combine(scanTenantYearDir, $"{huong}_T{thang}_{nam}");
-            Directory.CreateDirectory(dstDir);   // chưa có tầng nào thì tự dựng đủ
+            string dstHtmlDir = Path.Combine(scanTenantYearDir, $"{huong}_T{thang}_{nam}");
+            string dstXmlDir  = Path.Combine(scanTenantYearDir, "xmls_only",
+                                             huong.ToLowerInvariant(), $"t{thang}");
 
             int n = 0;
-            foreach (var ext in new[] { ".xml", ".html" })
+            foreach (var (ext, dstDir) in new[] { (".html", dstHtmlDir), (".xml", dstXmlDir) })
             {
                 var src = Path.ChangeExtension(srcXml, ext);
-                if (File.Exists(src))
-                {
-                    File.Move(src, Path.Combine(dstDir, maHd + ext), overwrite: true);
-                    n++;
-                }
+                if (!File.Exists(src)) continue;
+                Directory.CreateDirectory(dstDir);   // chỉ dựng thư mục khi thật sự có file
+                File.Move(src, Path.Combine(dstDir, Path.GetFileName(src)), overwrite: true);
+                n++;
             }
             return n;
         }

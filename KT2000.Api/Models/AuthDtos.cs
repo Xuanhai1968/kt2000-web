@@ -72,6 +72,16 @@ namespace KT2000.Api.Models
         public string? TaxCode { get; set; }
         public string? Address { get; set; }
         public bool IsActive { get; set; }
+        public bool KhaiQuy { get; set; }   // true = khai QUÝ, false = khai THÁNG
+    }
+    // Hỏi: mỗi đơn vị còn bao nhiêu file gốc nằm lại raw\ (HĐ lệch Σ line vs master)
+    public class LeftoverRequest
+    {
+        public List<string> TenantIds { get; set; } = new();
+        public int Nam { get; set; }
+        public int ThangBd { get; set; } = 1;
+        public int ThangKt { get; set; } = 12;
+        public string Huong { get; set; } = "vao";   // vao = chỉ đầu vào, all = cả vào và ra
     }
     public class ImportJobRequest
     {
@@ -79,5 +89,6 @@ namespace KT2000.Api.Models
         public int Nam { get; set; }
         public int Thang { get; set; }
         public bool XoaTruocKhiGhi { get; set; } = false;
+        public string Huong { get; set; } = "vao";   // vao = chỉ đầu vào, all = cả vào và ra
     }
 }

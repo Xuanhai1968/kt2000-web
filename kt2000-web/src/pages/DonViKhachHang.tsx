@@ -37,7 +37,8 @@ export default function DonViKhachHang() {
   const startEdit = (t: AdminTenant) => {
     setEditing(t);
     formEdit.setFieldsValue({ name: t.name, taxCode: t.taxCode,
-                              address: t.address, isActive: t.isActive });
+                              address: t.address, isActive: t.isActive,
+                              khaiQuy: t.khaiQuy });
   };
 
   const onEdit = async (v: any) => {
@@ -45,7 +46,8 @@ export default function DonViKhachHang() {
     setSaving(true);
     try {
       await updateTenant(editing.id, { name: v.name, taxCode: v.taxCode,
-                                       address: v.address, isActive: v.isActive });
+                                       address: v.address, isActive: v.isActive,
+                                       khaiQuy: !!v.khaiQuy });
       message.success("Đã lưu thay đổi");
       setEditing(null); reload();
     } catch (e: any) {
@@ -116,6 +118,10 @@ export default function DonViKhachHang() {
             <Input disabled={!!editing?.taxCode} />
           </Form.Item>
           <Form.Item name="address" label="Địa chỉ"><Input /></Form.Item>
+          {/* FRM_LAY_HDDT tô đỏ đơn vị khai THÁNG và lọc chọn theo cờ này */}
+          <Form.Item name="khaiQuy" label="Kỳ kê khai thuế" valuePropName="checked">
+            <Switch checkedChildren="Quý" unCheckedChildren="Tháng" />
+          </Form.Item>
           <Form.Item name="isActive" label="Trạng thái" valuePropName="checked">
             <Switch checkedChildren="Hoạt động" unCheckedChildren="Ngừng" />
           </Form.Item>

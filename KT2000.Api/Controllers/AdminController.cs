@@ -47,6 +47,7 @@ namespace KT2000.Api.Controllers
                 {
                     id = t.Id, code = t.Code, name = t.Name,
                     taxCode = t.TaxCode, address = t.Address, isActive = t.IsActive,
+                    khaiQuy = t.KhaiQuy,   // false = khai THÁNG → FRM_LAY_HDDT tô đỏ
                     fiscalYears = t.FiscalYears
                         .OrderByDescending(f => f.Year).Select(f => f.Year).ToList()
                 })
@@ -84,6 +85,20 @@ namespace KT2000.Api.Controllers
                 return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
             return Ok(await _admin.OpenYears(req));
         }
+        // POST api/admin/leftover-files — Mỗi đơn vị còn bao nhiêu file gốc nằm lại raw\
+        // (HĐ lệch Σ line vs master, phải xử lý tay) — spec 1.3.3
+        [HttpPost("leftover-files")]
+        public async Task<IActionResult> LeftoverFiles([FromBody] LeftoverRequest req)
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            var ids = req.TenantIds.Select(Guid.Parse).ToList();
+            var ds = await _db.Tenants.Where(t => ids.Contains(t.Id)).ToListAsync();
+            try { return Ok(await _import.DemFileConLai(ds, req.Nam, req.ThangBd, req.ThangKt, req.Huong)); }
+            catch (ArgumentException ex)
+            { return BadRequest(new { message = ex.Message }); }
+        }
+
         // POST api/admin/import-job — Nạp Excel tổng của 1 job vào database đơn vị-năm
         [HttpPost("import-job")]
         public async Task<IActionResult> ImportJob([FromBody] ImportJobRequest req)

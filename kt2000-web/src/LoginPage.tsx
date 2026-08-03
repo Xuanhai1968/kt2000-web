@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, Form, Input, Select, Checkbox, Button, message, Typography } from "antd";
 import { useNavigate } from "react-router-dom";
 import { getTenants, login } from "./api";
@@ -13,6 +13,14 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const { signIn } = useAuth();
   const nav = useNavigate();
+
+  // Bị đá về đây do token hết hạn (api.ts) — nói rõ lý do, đừng để user tưởng app hỏng
+  useEffect(() => {
+    if (sessionStorage.getItem("kt2000_het_phien")) {
+      sessionStorage.removeItem("kt2000_het_phien");
+      message.warning("Phiên làm việc đã hết hạn — mời đăng nhập lại");
+    }
+  }, []);
 
   // Go username xong (blur) -> tai danh sach don vi + nho lua chon lan truoc
   // (thay: TxtUser_Name.Valid + doc [DONVIDAMO] trong KT2000.INI)

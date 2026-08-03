@@ -103,6 +103,7 @@ namespace KT2000.Api.Services
             Track("TaxCode", t.TaxCode, newTax);
             Track("Address", t.Address, req.Address?.Trim());
             Track("IsActive", t.IsActive.ToString(), req.IsActive.ToString());
+            Track("KhaiQuy", t.KhaiQuy.ToString(), req.KhaiQuy.ToString());
 
             if (changes.Count == 0) return new { message = "Không có gì thay đổi" };
 
@@ -110,6 +111,7 @@ namespace KT2000.Api.Services
             t.TaxCode = newTax ?? t.TaxCode;
             t.Address = req.Address?.Trim();
             t.IsActive = req.IsActive;
+            t.KhaiQuy = req.KhaiQuy;
             _db.TenantChangeLog.Add(new TenantChangeLog
             {
                 TenantId = t.Id, ChangedBy = changedBy,
