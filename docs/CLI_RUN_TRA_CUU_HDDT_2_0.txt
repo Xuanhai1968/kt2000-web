@@ -1,0 +1,2 @@
+set HDDT_PASSWORD=<password cổng TCT của TUAN_NGA>
+python D:\KT2000\tools\TRA_CUU_HDDT_2_0.py --run --mst "<MST>" --thang_bd "1" --thang_kt "1" --nam "2025" --tu_ngay "01/01/2025" --den_ngay "05/01/2025" --loai "all" --ma_donvi "TUAN_NGA" --job_id "T1_2025_TUAN_NGA_TEST" --save_dir "E:\DATA_HDDT" --status "E:\DATA_HDDT\TUAN_NGA\T1_2025_TUAN_NGA_TEST\status.json" --events "E:\DATA_HDDT\TUAN_NGA\T1_2025_TUAN_NGA_TEST\events.jsonl" --stagedir "E:\DATA_HDDT\TUAN_NGA\T1_2025_TUAN_NGA_TEST\stage" --xml_map "D:\KT2000\tools\XML_MAP.xlsx"
