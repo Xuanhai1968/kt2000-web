@@ -17,8 +17,10 @@ namespace KT2000.Api.Controllers
         private readonly AppDbContext _db;
         private readonly AdminService _admin;
         private readonly ImportService _import;
-        public AdminController(AppDbContext db, AdminService admin, ImportService import)
-        { _db = db; _admin = admin; _import = import; }
+        private readonly TctFetchService _tct;
+        public AdminController(AppDbContext db, AdminService admin, ImportService import,
+                               TctFetchService tct)
+        { _db = db; _admin = admin; _import = import; _tct = tct; }
         private bool IsInternal() =>
             User.FindFirst("tenant_type")?.Value == "internal";
         private bool IsAdminUser() =>
@@ -98,6 +100,101 @@ namespace KT2000.Api.Controllers
             try { return Ok(await _import.DemFileConLai(ds, req.Nam, req.ThangBd, req.ThangKt, req.Huong)); }
             catch (ArgumentException ex)
             { return BadRequest(new { message = ex.Message }); }
+        }
+
+        // ========== BƯỚC 1: tài khoản cổng TCT + chạy bộ tải ==========
+
+        // GET api/admin/tct-credential?tenantId= — CHỈ cho biết đã khai mật khẩu chưa.
+        // Không có và sẽ không bao giờ có API đọc ngược mật khẩu ra.
+        [HttpGet("tct-credential")]
+        public async Task<IActionResult> TrangThaiMatKhauTct(Guid tenantId)
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            // Chiếu ra ĐÚNG ba trường cần biết — không bao giờ chạm tới chuỗi mã hóa
+            var t = await _db.Tenants.Where(x => x.Id == tenantId)
+                .Select(x => new
+                {
+                    coMatKhau = x.MatKhauHddt != null,
+                    capNhatLuc = x.MkHddtCapNhatLuc,
+                    capNhatBoi = x.MkHddtCapNhatBoi,
+                }).FirstOrDefaultAsync();
+            if (t == null) return BadRequest(new { message = "Không tìm thấy đơn vị" });
+            return Ok(t);
+        }
+
+        // PUT api/admin/tct-credential — khai/đổi mật khẩu (nhập đè, không sửa từng phần)
+        [HttpPut("tct-credential")]
+        public async Task<IActionResult> LuuMatKhauTct([FromBody] LuuMatKhauTctRequest req)
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            if (!IsAdminUser())
+                return StatusCode(403, new { message = "Chỉ quản trị viên được khai mật khẩu cổng thuế" });
+            if (string.IsNullOrWhiteSpace(req.MatKhau))
+                return BadRequest(new { message = "Mật khẩu trống" });
+
+            var t = await _db.Tenants.FindAsync(req.TenantId);
+            if (t == null) return BadRequest(new { message = "Không tìm thấy đơn vị" });
+            if (string.IsNullOrWhiteSpace(t.TaxCode))
+                return BadRequest(new { message = $"Đơn vị {t.Code} chưa có MST — bổ sung trước khi khai mật khẩu" });
+
+            t.MatKhauHddt = _tct.MaHoa(req.MatKhau);
+            t.MkHddtCapNhatLuc = DateTime.Now;
+            t.MkHddtCapNhatBoi = CurrentLoginName();
+            await _db.SaveChangesAsync();
+
+            // Ghi vết việc ĐÃ ĐỔI, tuyệt đối không ghi nội dung mật khẩu
+            await _db.Database.ExecuteSqlRawAsync(
+                @"INSERT INTO ActivityLog (UserName, TenantId, Action, Detail)
+                  VALUES ({0}, {1}, N'DOI_MK_TCT', N'Cập nhật mật khẩu cổng TCT')",
+                CurrentLoginName(), req.TenantId);
+
+            return Ok(new { message = $"Đã lưu mật khẩu cổng TCT cho {t.Code}" });
+        }
+
+        // POST api/admin/fetch-start — bắt đầu phiên lấy HĐ (chạy tuần tự từng đơn vị-tháng)
+        [HttpPost("fetch-start")]
+        public async Task<IActionResult> BatDauLayHd([FromBody] BatDauLayHdRequest req)
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            if (req.TenantIds.Count == 0)
+                return BadRequest(new { message = "Chưa chọn đơn vị nào" });
+            if (req.ThangKt < req.ThangBd)
+                return BadRequest(new { message = "Đến tháng phải ≥ Từ tháng" });
+
+            var ids = req.TenantIds.Select(Guid.Parse).ToList();
+            var ds = await _db.Tenants.Where(t => ids.Contains(t.Id))
+                        .OrderBy(t => t.Code)
+                        .Select(t => new { t.Id, t.Code }).ToListAsync();
+            try
+            {
+                var phien = _tct.BatDauPhien(
+                    ds.Select(x => (x.Id, x.Code)).ToList(),
+                    req.Nam, req.ThangBd, req.ThangKt, req.Huong, CurrentLoginName());
+                return Ok(phien);
+            }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
+        // GET api/admin/fetch-progress — giao diện hỏi tiến độ mỗi vài giây
+        [HttpGet("fetch-progress")]
+        public IActionResult TienDoLayHd()
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            return Ok(_tct.LayTienDo());
+        }
+
+        // POST api/admin/fetch-stop — dừng phiên đang chạy
+        [HttpPost("fetch-stop")]
+        public IActionResult DungLayHd()
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            _tct.DungPhien();
+            return Ok(new { message = "Đã yêu cầu dừng — lượt đang chạy sẽ kết thúc ngay" });
         }
 
         // POST api/admin/raw-files — Chi tiết các hóa đơn còn nằm lại raw\ của 1 đơn vị,

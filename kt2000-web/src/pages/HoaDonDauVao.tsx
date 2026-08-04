@@ -5,11 +5,13 @@ import {
 } from "antd";
 import {
   getAdminTenants, importJob, getLeftoverFiles, getRawFiles, getRawHtml, importOne,
+  getTctCredential, saveTctCredential, fetchStart, fetchProgress, fetchStop,
 } from "../api";
 import type {
-  AdminTenant, ImportJobResult, LeftoverInfo, HuongLay, HoaDonConLai, MatHang,
+  AdminTenant, ImportJobResult, LeftoverInfo, HuongLay, HoaDonConLai, MatHang, PhienLay,
 } from "../api";
 import { useAuth } from "../AuthContext";
+import "./luoi-gon.css";
 
 // Kết quả nạp của MỘT (đơn vị × tháng) — gom lại thành nhật ký phiên chạy
 interface DongKetQua {
@@ -62,6 +64,9 @@ function ConsoleLayHoaDon() {
   const [modalTai, setModalTai] = useState(false);
   const [modalDonVi, setModalDonVi] = useState<AdminTenant | null>(null);
   const [dsConLai, setDsConLai] = useState<HoaDonConLai[]>([]);
+  // Hóa đơn đang chọn ở khung trên — khung dưới hiện mặt hàng của đúng nó
+  const [chonFile, setChonFile] = useState<string | null>(null);
+  const hdDangChon = dsConLai.find((x) => x.tenFile === chonFile) ?? null;
 
   // Nút chỉ sáng khi đang chọn ĐÚNG MỘT đơn vị và đơn vị đó còn file trong raw\
   const donViDangChon = selected.length === 1
@@ -75,9 +80,12 @@ function ConsoleLayHoaDon() {
     setModalMo(true);
     setModalTai(true);
     setDsConLai([]);
+    setChonFile(null);
     try {
       const r = await getRawFiles(donViDangChon.id, namLamViec, tuThang, denThang, huong);
       setDsConLai(r.data);
+      // Chọn sẵn dòng đầu để khung dưới có nội dung ngay, khỏi phải bấm thêm
+      if (r.data.length) setChonFile(r.data[0].tenFile);
     } catch (e: any) {
       message.error(e?.response?.data?.message ?? "Không đọc được thư mục raw\\");
     } finally {
@@ -89,9 +97,21 @@ function ConsoleLayHoaDon() {
   const suaHoaDon = (tenFile: string, thayDoi: Partial<HoaDonConLai>) =>
     setDsConLai((ds) => ds.map((x) => (x.tenFile === tenFile ? { ...x, ...thayDoi } : x)));
 
+  // Thành tiền KHÔNG cho gõ tay: sửa số lượng hoặc đơn giá là nó tự nhân lại.
+  // Người dùng gõ được cả ba thì ba số dễ chỏi nhau, mà chính cái chỏi đó là thứ
+  // làm hóa đơn bị đá ra ở phép kiểm Σ line vs master.
   const suaMatHang = (tenFile: string, stt: number, thayDoi: Partial<MatHang>) =>
     setDsConLai((ds) => ds.map((x) => x.tenFile !== tenFile ? x
-      : { ...x, matHangs: x.matHangs.map((m) => (m.stt === stt ? { ...m, ...thayDoi } : m)) }));
+      : {
+          ...x,
+          matHangs: x.matHangs.map((m) => {
+            if (m.stt !== stt) return m;
+            const moi = { ...m, ...thayDoi };
+            if ("soLuong" in thayDoi || "donGia" in thayDoi)
+              moi.thanhTien = moi.soLuong * moi.donGia;
+            return moi;
+          }),
+        }));
 
   // Xem bản HTML gốc — tải qua axios (có token) rồi mở bằng blob, không mở link thẳng
   const xemHtml = async (hd: HoaDonConLai) => {
@@ -109,6 +129,61 @@ function ConsoleLayHoaDon() {
     }
   };
 
+  // ===== BƯỚC 1: lấy HĐ từ cổng TCT =====
+  const [phien, setPhien] = useState<PhienLay | null>(null);
+  const [dangBatDau, setDangBatDau] = useState(false);
+  const [mkMo, setMkMo] = useState(false);
+  const [mkGiaTri, setMkGiaTri] = useState("");
+  const [mkDaCo, setMkDaCo] = useState<Record<string, boolean>>({});
+
+  // Hỏi tiến độ mỗi 2 giây khi còn phiên chạy — nguồn là status.json của script
+  useEffect(() => {
+    if (!phien?.dangChay) return;
+    const id = setInterval(() => {
+      fetchProgress().then((r) => setPhien(r.data)).catch(() => {});
+    }, 2000);
+    return () => clearInterval(id);
+  }, [phien?.dangChay]);
+
+  // Mở màn hình là hỏi luôn xem phiên trước còn chạy dở không
+  useEffect(() => {
+    fetchProgress().then((r) => { if (r.data.cac?.length) setPhien(r.data); }).catch(() => {});
+  }, []);
+
+  const docTrangThaiMk = (t: AdminTenant) =>
+    getTctCredential(t.id)
+      .then((r) => setMkDaCo((m) => ({ ...m, [t.id]: r.data.coMatKhau })))
+      .catch(() => {});
+
+  useEffect(() => { if (donViDangChon) docTrangThaiMk(donViDangChon); }, [selected]);
+
+  const luuMatKhau = async () => {
+    if (!donViDangChon || !mkGiaTri) return;
+    try {
+      await saveTctCredential(donViDangChon.id, mkGiaTri);
+      message.success(`Đã lưu mật khẩu cổng TCT cho ${donViDangChon.code}`);
+      setMkMo(false); setMkGiaTri("");
+      docTrangThaiMk(donViDangChon);
+    } catch (e: any) {
+      message.error(e?.response?.data?.message ?? "Không lưu được mật khẩu");
+    }
+  };
+
+  const batDauLayHd = async () => {
+    if (selected.length === 0) return;
+    if (denThang < tuThang) { message.error("Đến tháng phải ≥ Từ tháng"); return; }
+    setDangBatDau(true);
+    try {
+      const r = await fetchStart(selected as string[], namLamViec, tuThang, denThang, huong);
+      setPhien(r.data);
+      message.success(`Đã xếp hàng ${r.data.cac.length} lượt (đơn vị × tháng)`);
+    } catch (e: any) {
+      message.error(e?.response?.data?.message ?? "Không bắt đầu được phiên lấy HĐ");
+    } finally {
+      setDangBatDau(false);
+    }
+  };
+
   const [dangNap, setDangNap] = useState<string | null>(null);
 
   const napMotHoaDon = async (hd: HoaDonConLai) => {
@@ -119,6 +194,8 @@ function ConsoleLayHoaDon() {
         tenantId: modalDonVi.id, nam: namLamViec, thang: hd.thang, huong: hd.huong,
         tenFile: hd.tenFile, mauSo: hd.mauSo, khHd: hd.khHd, soHd: hd.soHd, ngay: hd.ngay,
         mst: hd.huong === "VAO" ? hd.mstBan : hd.mstMua,
+        // Người phát hành luôn là NGƯỜI BÁN, kể cả hóa đơn ra (khi đó là chính mình)
+        mstPhatHanh: hd.mstBan,
         tenKh: hd.huong === "VAO" ? hd.tenBan : hd.tenMua,
         diaChi: "", tienHang: hd.tienHang, tienVat: hd.tienVat, tienCk: 0,
         matHangs: hd.matHangs,
@@ -128,7 +205,12 @@ function ConsoleLayHoaDon() {
                     + ` — ${d.soDongHang} dòng hàng, dời ${d.moved} file`);
       if (d.loiDoiFile) message.warning(`Đã ghi DB nhưng không dời được file: ${d.loiDoiFile}`);
       // Hóa đơn đã vào sổ thì bỏ khỏi danh sách và cập nhật lại cột đếm
-      setDsConLai((ds) => ds.filter((x) => x.tenFile !== hd.tenFile));
+      setDsConLai((ds) => {
+        const conLai = ds.filter((x) => x.tenFile !== hd.tenFile);
+        // Nhảy sang hóa đơn kế tiếp để làm liền mạch, hết thì bỏ chọn
+        setChonFile(conLai.length ? conLai[0].tenFile : null);
+        return conLai;
+      });
       docFileLoi(dangHoatDong);
     } catch (e: any) {
       message.error(e?.response?.data?.message ?? "Không nạp được hóa đơn này");
@@ -324,23 +406,89 @@ function ConsoleLayHoaDon() {
       </Card>
 
       <Card title="Bước 1 — Lấy HĐ từ cổng Tổng cục Thuế">
-        <Alert
-          type="warning" showIcon
-          message="Chưa nối vào bộ tải của Tổng cục Thuế"
-          // description={
-          //   <>
-          //     Bước này cần: bảng lưu tài khoản cổng TCT của từng đơn vị, Python + Chrome
-          //     cài trên chính máy chạy backend, và file XML_MAP.xlsx. Xem SPEC-WP03 mục 5
-          //     — còn 4 câu hỏi chờ Leader trả lời. Trong lúc chờ, dùng Bước 2 để nạp từ
-          //     thư mục job đã tải sẵn.
-          //   </>
-          // }
-        />
-        <Button type="primary" style={{ marginTop: 12 }} disabled>
-          Lấy HĐ điện tử ({selected.length} đơn vị, T{tuThang}–T{denThang},
-          {huong === "vao" ? " chỉ đầu vào" : " vào + ra"})
-        </Button>
+        <Space wrap>
+          <Button type="primary" loading={dangBatDau}
+                  disabled={selected.length === 0 || !!phien?.dangChay}
+                  onClick={batDauLayHd}>
+            Lấy HĐ điện tử ({selected.length} đơn vị × {Math.max(0, denThang - tuThang + 1)} tháng,
+            {huong === "vao" ? " chỉ đầu vào" : " vào + ra"})
+          </Button>
+          {phien?.dangChay && (
+            <Popconfirm title="Dừng phiên đang chạy?"
+                        description="Lượt đang tải sẽ bị hủy giữa chừng."
+                        okText="Dừng" cancelText="Thôi" onConfirm={() => fetchStop()}>
+              <Button danger>Dừng</Button>
+            </Popconfirm>
+          )}
+          <Button disabled={!donViDangChon} onClick={() => { setMkGiaTri(""); setMkMo(true); }}>
+            TK Hóa đơn điện tử
+            {donViDangChon
+              ? (mkDaCo[donViDangChon.id] ? " — đã khai" : " — CHƯA khai")
+              : ""}
+          </Button>
+          <Typography.Text type="secondary">
+            Chạy tuần tự từng đơn vị-tháng, mỗi lượt một phiên Chrome
+          </Typography.Text>
+        </Space>
+
+        {donViDangChon && mkDaCo[donViDangChon.id] === false && (
+          <Alert style={{ marginTop: 12 }} type="warning" showIcon
+                 message={`${donViDangChon.code} chưa khai mật khẩu cổng TCT — bấm "TK Hóa đơn điện tử" để nhập`} />
+        )}
+
+        {phien && phien.cac.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <Progress
+              percent={Math.round(
+                (phien.cac.filter((x) => x.trangThai === "xong" || x.trangThai === "loi").length
+                  / phien.cac.length) * 100)}
+              status={phien.dangChay ? "active" : "normal"}
+            />
+            <Table
+              className="luoi-gon" size="small" rowKey={(r) => `${r.tenantId}-${r.thang}`}
+              dataSource={phien.cac} pagination={false}
+              scroll={{ y: 260 }}
+              columns={[
+                { title: "Đơn vị", dataIndex: "code", width: 140 },
+                { title: "Tháng", dataIndex: "thang", width: 70 },
+                { title: "Trạng thái", dataIndex: "trangThai", width: 110,
+                  render: (v: string) => {
+                    const mau: Record<string, string> = {
+                      cho: "default", dang_chay: "blue", xong: "green", loi: "red", huy: "orange",
+                    };
+                    const chu: Record<string, string> = {
+                      cho: "Chờ", dang_chay: "Đang chạy", xong: "Xong", loi: "Lỗi", huy: "Đã hủy",
+                    };
+                    return <Tag color={mau[v]}>{chu[v] ?? v}</Tag>;
+                  } },
+                { title: "Giai đoạn", dataIndex: "giaiDoan", width: 120 },
+                { title: "Tải", width: 110,
+                  render: (_: unknown, r) => r.tong > 0 ? `${r.daTai}/${r.tong}` : "—" },
+                { title: "Diễn biến", dataIndex: "thongDiep", ellipsis: true,
+                  render: (v: string, r) => r.loi
+                    ? <Typography.Text type="danger" title={r.loi}>{r.loi}</Typography.Text>
+                    : v },
+              ]}
+            />
+          </div>
+        )}
       </Card>
+
+      {/* Nhập mật khẩu cổng TCT — chỉ nhập đè, không bao giờ hiển thị lại */}
+      <Modal
+        title={`Tài khoản cổng Tổng cục Thuế — ${donViDangChon?.code ?? ""}`}
+        open={mkMo} onCancel={() => setMkMo(false)} onOk={luuMatKhau}
+        okText="Lưu" cancelText="Thôi" okButtonProps={{ disabled: !mkGiaTri }}
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+          MST lấy sẵn từ hồ sơ đơn vị: <b>{donViDangChon?.taxCode || "(chưa có MST)"}</b>.
+          Chỉ cần nhập mật khẩu. Mật khẩu được mã hóa trước khi lưu và không bao giờ
+          hiển thị lại — muốn đổi thì nhập đè.
+        </Typography.Paragraph>
+        <Input.Password autoFocus placeholder="Mật khẩu cổng hoadondientu.gdt.gov.vn"
+                        value={mkGiaTri} onChange={(e) => setMkGiaTri(e.target.value)}
+                        onPressEnter={luuMatKhau} />
+      </Modal>
 
       <Card title="Bước 2 — Đưa HĐ vào HOA_DON / HOA_DON_LINE (chạy tay)">
         <Space wrap>
@@ -400,93 +548,44 @@ function ConsoleLayHoaDon() {
         open={modalMo}
         onCancel={() => setModalMo(false)}
         footer={null}
-        width="95vw"
-        style={{ top: 24, maxWidth: 1800 }}
-        styles={{ body: { maxHeight: "calc(100vh - 160px)", overflowY: "auto" } }}
+        width="100vw"
+        style={{ top: 0, paddingBottom: 0, maxWidth: "100vw" }}
+        styles={{
+          body: {
+            height: "calc(100vh - 96px)",
+            display: "flex", flexDirection: "column", gap: 8, overflow: "hidden",
+          },
+        }}
       >
+        {/* ---------- KHUNG TRÊN: danh sách hóa đơn ----------
+             Chia đôi cố định 50/50, mỗi khung có thanh trượt riêng. Chiều cao cuộn
+             đặt bằng scroll.y để antd giữ tiêu đề cột đứng yên khi kéo. */}
+        <div style={{ flex: "1 1 50%", minHeight: 0,
+                      display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <Typography.Text strong style={{ marginBottom: 2, fontSize: 13 }}>
+          Hóa đơn còn trong raw\ ({dsConLai.length})
+          <Typography.Text type="secondary" style={{ fontWeight: 400, marginLeft: 8, fontSize: 13 }}>
+            — bấm một dòng để xem mặt hàng bên dưới
+          </Typography.Text>
+        </Typography.Text>
         <Table
+          className="luoi-gon"
           rowKey="tenFile"
           size="small"
           loading={modalTai}
           dataSource={dsConLai}
-          pagination={{ pageSize: 10 }}
+          pagination={false}
+          // KHÔNG dùng sticky: nó ghim tiêu đề theo cửa sổ, chồng chéo với khung cuộn
+          // mà scroll.y tạo ra. Chỉ scroll.y là đủ — antd tự giữ tiêu đề đứng yên.
           locale={{ emptyText: <Empty description="Không đọc được hóa đơn nào trong raw\" /> }}
-          scroll={{ x: 1500 }}
-          // Nút + của antd: bung ra mặt hàng của chính hóa đơn đó, sửa được tại chỗ
-          expandable={{
-            expandedRowRender: (r: HoaDonConLai) => {
-              const sumLine = r.matHangs.reduce((s, x) => s + x.thanhTien, 0);
-              const lech = r.tienHang - sumLine;
-              return (
-                <div style={{ padding: "4px 0 8px 0" }}>
-                  <Space wrap style={{ marginBottom: 8 }}>
-                    <Typography.Text type="secondary">File: {r.tenFile}</Typography.Text>
-                    <Typography.Text type="secondary">
-                      Bán: {r.tenBan} [{r.mstBan}]
-                    </Typography.Text>
-                    <Typography.Text type="secondary">
-                      Mua: {r.tenMua} [{r.mstMua}]
-                    </Typography.Text>
-                  </Space>
-                  {r.matHangs.length === 0
-                    ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Hóa đơn không có dòng hàng" />
-                    : <Table
-                        rowKey="stt" size="small" pagination={false} dataSource={r.matHangs}
-                        columns={[
-                          { title: "STT", dataIndex: "stt", width: 60 },
-                          { title: "Tên hàng hóa / dịch vụ", dataIndex: "tenHang",
-                            render: (v: string, m: MatHang) => (
-                              <Input size="small" value={v}
-                                     onChange={(e) => suaMatHang(r.tenFile, m.stt, { tenHang: e.target.value })} />
-                            ) },
-                          { title: "ĐVT", dataIndex: "dvt", width: 90,
-                            render: (v: string, m: MatHang) => (
-                              <Input size="small" value={v}
-                                     onChange={(e) => suaMatHang(r.tenFile, m.stt, { dvt: e.target.value })} />
-                            ) },
-                          { title: "Số lượng", dataIndex: "soLuong", width: 130,
-                            render: (v: number, m: MatHang) => (
-                              <InputNumber size="small" style={{ width: "100%" }} value={v}
-                                           onChange={(x) => suaMatHang(r.tenFile, m.stt, { soLuong: x ?? 0 })} />
-                            ) },
-                          { title: "Đơn giá", dataIndex: "donGia", width: 150,
-                            render: (v: number, m: MatHang) => (
-                              <InputNumber size="small" style={{ width: "100%" }} value={v}
-                                           onChange={(x) => suaMatHang(r.tenFile, m.stt, { donGia: x ?? 0 })} />
-                            ) },
-                          { title: "Thành tiền", dataIndex: "thanhTien", width: 160,
-                            render: (v: number, m: MatHang) => (
-                              <InputNumber size="small" style={{ width: "100%" }} value={v}
-                                           onChange={(x) => suaMatHang(r.tenFile, m.stt, { thanhTien: x ?? 0 })} />
-                            ) },
-                          { title: "Thuế suất", dataIndex: "thueSuat", width: 100,
-                            render: (v: string, m: MatHang) => (
-                              <Input size="small" value={v}
-                                     onChange={(e) => suaMatHang(r.tenFile, m.stt, { thueSuat: e.target.value })} />
-                            ) },
-                        ]}
-                        summary={() => (
-                          <Table.Summary.Row>
-                            <Table.Summary.Cell index={0} colSpan={5} align="right">
-                              <b>Σ thành tiền</b>
-                            </Table.Summary.Cell>
-                            <Table.Summary.Cell index={1} align="right">
-                              <b style={{ color: lech === 0 ? "#389e0d" : "#cf1322" }}>
-                                {sumLine.toLocaleString("vi-VN")}
-                              </b>
-                            </Table.Summary.Cell>
-                            <Table.Summary.Cell index={2}>
-                              {lech === 0
-                                ? <Tag color="green">khớp</Tag>
-                                : <Tag color="red">lệch {lech.toLocaleString("vi-VN")}</Tag>}
-                            </Table.Summary.Cell>
-                          </Table.Summary.Row>
-                        )}
-                      />}
-                </div>
-              );
+          scroll={{ x: 1600, y: "calc(50vh - 94px)" }}
+          onRow={(r: HoaDonConLai) => ({
+            onClick: () => setChonFile(r.tenFile),
+            style: {
+              cursor: "pointer",
+              background: r.tenFile === chonFile ? "#e6f4ff" : undefined,
             },
-          }}
+          })}
           columns={[
             { title: "Tháng", dataIndex: "thang", width: 70, fixed: "left" },
             { title: "Hướng", dataIndex: "huong", width: 80,
@@ -511,12 +610,12 @@ function ConsoleLayHoaDon() {
                 r.huong === "VAO" ? `${r.tenBan} [${r.mstBan}]` : `${r.tenMua} [${r.mstMua}]` },
             { title: "Tiền hàng", dataIndex: "tienHang", width: 160,
               render: (v: number, r: HoaDonConLai) => (
-                <InputNumber size="small" style={{ width: "100%" }} value={v}
+                <InputNumber size="small" controls={false} style={{ width: "100%" }} value={v}
                              onChange={(x) => suaHoaDon(r.tenFile, { tienHang: x ?? 0 })} />
               ) },
             { title: "VAT", dataIndex: "tienVat", width: 150,
               render: (v: number, r: HoaDonConLai) => (
-                <InputNumber size="small" style={{ width: "100%" }} value={v}
+                <InputNumber size="small" controls={false} style={{ width: "100%" }} value={v}
                              onChange={(x) => suaHoaDon(r.tenFile, { tienVat: x ?? 0 })} />
               ) },
             { title: "Tổng", dataIndex: "tongTien", width: 130, align: "right",
@@ -527,24 +626,123 @@ function ConsoleLayHoaDon() {
                   {v}
                 </Typography.Text>
               ) },
-            { title: "", width: 190, fixed: "right",
-              render: (_: unknown, r: HoaDonConLai) => (
-                <Space size={4}>
-                  <Button size="small" onClick={() => xemHtml(r)}>Xem HTML</Button>
-                  <Popconfirm
-                    title="Nạp hóa đơn này vào database?"
-                    description={`${modalDonVi?.code}_${modalDonVi?.taxCode}_${r.khHd}_${r.soHd.replace(/^0+/, "") || "0"}`}
-                    okText="Nạp" cancelText="Thôi"
-                    onConfirm={() => napMotHoaDon(r)}
-                  >
-                    <Button size="small" type="primary" loading={dangNap === r.tenFile}>
-                      Nạp vào DB
-                    </Button>
-                  </Popconfirm>
-                </Space>
-              ) },
+            { title: "Tên file", dataIndex: "tenFile", width: 300, ellipsis: true },
           ]}
         />
+        </div>
+
+        {/* ---------- KHUNG DƯỚI: mặt hàng của hóa đơn đang chọn ---------- */}
+        {/* ---------- KHUNG DƯỚI: mặt hàng — nửa dưới màn hình, thanh trượt riêng ---------- */}
+        <div style={{ flex: "1 1 50%", minHeight: 0,
+                      display: "flex", flexDirection: "column",
+                      borderTop: "2px solid #d9d9d9", paddingTop: 4, overflow: "hidden" }}>
+          {!hdDangChon ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+                   description="Chọn một hóa đơn ở trên để xem mặt hàng" />
+          ) : (
+            <>
+              <Space wrap size={6} style={{ marginBottom: 3 }}>
+                <Typography.Text strong style={{ fontSize: 13 }}>
+                  Mặt hàng — {hdDangChon.khHd}/{hdDangChon.soHd} ({hdDangChon.matHangs.length} dòng)
+                </Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {hdDangChon.tenFile}
+                </Typography.Text>
+                {(() => {
+                  const sum = hdDangChon.matHangs.reduce((s, x) => s + x.thanhTien, 0);
+                  const lech = hdDangChon.tienHang - sum;
+                  return lech === 0
+                    ? <Tag color="green">Σ line khớp tiền hàng</Tag>
+                    : <Tag color="red">
+                        Σ line {sum.toLocaleString("vi-VN")} — lệch {lech.toLocaleString("vi-VN")}
+                      </Tag>;
+                })()}
+                <Button size="small" onClick={() => xemHtml(hdDangChon)}>Xem ảnh HĐ (HTML)</Button>
+                <Popconfirm
+                  title="Nạp hóa đơn này vào database?"
+                  description={`Mã sẽ ghi: ${hdDangChon.huong}_${hdDangChon.mstBan}`
+                             + `_${hdDangChon.khHd}_${hdDangChon.soHd}`}
+                  okText="Nạp" cancelText="Thôi"
+                  onConfirm={() => napMotHoaDon(hdDangChon)}
+                >
+                  <Button size="small" type="primary" loading={dangNap === hdDangChon.tenFile}>
+                    Ghi vào Hóa đơn
+                  </Button>
+                </Popconfirm>
+              </Space>
+              <Table
+                className="luoi-gon"
+                rowKey="stt" size="small" pagination={false}
+                scroll={{ y: "calc(50vh - 104px)" }}
+                dataSource={hdDangChon.matHangs}
+                locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                            description="Hóa đơn không có dòng hàng" /> }}
+                columns={[
+                  { title: "STT", dataIndex: "stt", width: 60 },
+                  { title: "Tên hàng", dataIndex: "tenHang",
+                    render: (v: string, m: MatHang) => (
+                      <Input size="small" value={v}
+                             onChange={(e) => suaMatHang(hdDangChon.tenFile, m.stt,
+                                                         { tenHang: e.target.value })} />
+                    ) },
+                  { title: "ĐVT", dataIndex: "dvt", width: 100,
+                    render: (v: string, m: MatHang) => (
+                      <Input size="small" value={v}
+                             onChange={(e) => suaMatHang(hdDangChon.tenFile, m.stt,
+                                                         { dvt: e.target.value })} />
+                    ) },
+                  { title: "Số lượng", dataIndex: "soLuong", width: 140,
+                    render: (v: number, m: MatHang) => (
+                      <InputNumber size="small" controls={false} style={{ width: "100%" }} value={v}
+                                   onChange={(x) => suaMatHang(hdDangChon.tenFile, m.stt,
+                                                               { soLuong: x ?? 0 })} />
+                    ) },
+                  { title: "Đơn giá", dataIndex: "donGia", width: 160,
+                    render: (v: number, m: MatHang) => (
+                      <InputNumber size="small" controls={false} style={{ width: "100%" }} value={v}
+                                   onChange={(x) => suaMatHang(hdDangChon.tenFile, m.stt,
+                                                               { donGia: x ?? 0 })} />
+                    ) },
+                  // Chỉ đọc — tự nhân lại từ số lượng × đơn giá. Đỏ khi số từ XML gốc
+                  // chưa khớp tích, sửa số lượng hoặc đơn giá một cái là hết đỏ.
+                  { title: "Thành tiền", dataIndex: "thanhTien", width: 170, align: "right",
+                    render: (v: number, m: MatHang) => {
+                      const lech = v - m.soLuong * m.donGia;
+                      return (
+                        <b style={{ color: Math.abs(lech) < 1 ? undefined : "#cf1322" }}
+                           title={Math.abs(lech) < 1 ? "Khớp số lượng × đơn giá"
+                                : `Lệch ${lech.toLocaleString("vi-VN")} so với SL × ĐG`}>
+                          {v.toLocaleString("vi-VN", { maximumFractionDigits: 2 })}
+                        </b>
+                      );
+                    } },
+                  { title: "% VAT", dataIndex: "thueSuat", width: 100,
+                    render: (v: string, m: MatHang) => (
+                      <Input size="small" value={v}
+                             onChange={(e) => suaMatHang(hdDangChon.tenFile, m.stt,
+                                                         { thueSuat: e.target.value })} />
+                    ) },
+                ]}
+                summary={(rows) => {
+                  const sum = rows.reduce((s, x) => s + x.thanhTien, 0);
+                  return (
+                    <Table.Summary.Row>
+                      <Table.Summary.Cell index={0} colSpan={5} align="right">
+                        <b>Σ thành tiền</b>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={1} align="right">
+                        <b style={{ color: hdDangChon.tienHang - sum === 0 ? "#389e0d" : "#cf1322" }}>
+                          {sum.toLocaleString("vi-VN")}
+                        </b>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={2} colSpan={2} />
+                    </Table.Summary.Row>
+                  );
+                }}
+              />
+            </>
+          )}
+        </div>
       </Modal>
     </Space>
   );

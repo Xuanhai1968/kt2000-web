@@ -37,8 +37,20 @@ from selenium.webdriver.common.by import By
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')    ##errors='replace' đảm bảo không bao giờ vỡ — ký tự lạ thành ?.
 # Cấu hình log
+# Vá #7 (04/08): trước đây ghim r'C:\test\com_server_error.log'. Dòng này chạy ngay
+# lúc import, nên máy nào không sẵn thư mục C:\test là script chết vì FileNotFoundError
+# TRƯỚC cả khi đọc tham số. Nay đặt cạnh chính file script (đè được bằng biến môi
+# trường KT2000_LOG_DIR) và tự tạo thư mục — chuyển máy nào cũng chạy, không phụ
+# thuộc ổ đĩa nào tồn tại.
+_LOG_DIR = os.environ.get("KT2000_LOG_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "logs")
+try:
+    os.makedirs(_LOG_DIR, exist_ok=True)
+except Exception:
+    _LOG_DIR = tempfile.gettempdir()
+
 logging.basicConfig(
-    filename=r'C:\test\com_server_error.log',
+    filename=os.path.join(_LOG_DIR, 'com_server_error.log'),
     level=logging.ERROR,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
@@ -2153,7 +2165,7 @@ class tra_cuu_hdt:
 # =========================
 # CLI
 # =========================
-CLI_ERROR_LOG = r"C:\test\cli_error.log"
+CLI_ERROR_LOG = os.path.join(_LOG_DIR, "cli_error.log")   # vá #7: không ghim ổ C
 
 def _log_cli_error(msg):
     try:

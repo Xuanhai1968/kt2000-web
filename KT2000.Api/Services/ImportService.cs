@@ -361,11 +361,15 @@ namespace KT2000.Api.Services
             var tenant = await _db.Tenants.FindAsync(req.TenantId)
                 ?? throw new ArgumentException("Không tìm thấy đơn vị");
 
-            // Giữ ĐÚNG khuôn mã đang có trong DB: <MÃ_ĐƠN_VỊ>_<MST đơn vị>_<KÝ HIỆU>_<SỐ HĐ>.
-            // Đặt khác đi là sinh bản ghi trùng với hàng đã nạp từ Excel tổng.
-            string soHd = req.SoHd.TrimStart('0');
-            if (soHd == "") soHd = "0";
-            string maHd = $"{tenant.Code}_{tenant.TaxCode}_{req.KhHd}_{soHd}";
+            // BR-HD-01: <HƯỚNG>_<MST người phát hành>_<KÝ HIỆU>_<SỐ HĐ> — đúng khuôn mà
+            // TRA_CUU_HDDT_2_0.py sinh ra (vá #6). HĐ vào thì người phát hành là người bán;
+            // HĐ ra thì người bán cũng chính là đơn vị mình — một công thức phủ cả hai hướng.
+            // Nhờ tiền tố VAO_/RA_ mà cột tính `huong` trong HOA_DON mới chạy đúng.
+            string huongMa = req.Huong.Equals("RA", StringComparison.OrdinalIgnoreCase) ? "RA" : "VAO";
+            string mstPhatHanh = string.IsNullOrWhiteSpace(req.MstPhatHanh)
+                ? (tenant.TaxCode ?? "") : req.MstPhatHanh.Trim();
+            string soHd = req.SoHd.Trim();
+            string maHd = $"{huongMa}_{mstPhatHanh}_{req.KhHd}_{soHd}";
             string khhd = req.MauSo + req.KhHd;   // giống UpsertMaster: KIEU_HD + ký hiệu
 
             if (!DateTime.TryParse(req.Ngay, System.Globalization.CultureInfo.InvariantCulture,

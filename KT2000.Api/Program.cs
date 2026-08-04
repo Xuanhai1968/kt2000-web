@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
@@ -17,6 +18,17 @@ builder.Services.AddControllers();
 builder.Services.AddSingleton<TenantDbResolver>();
 builder.Services.AddScoped<AdminService>();
 builder.Services.AddScoped<ImportService>();
+
+// Mật khẩu cổng TCT mã hóa hai chiều bằng Data Protection. Khóa PHẢI lưu ra đĩa:
+// mặc định nó nằm trong profile người dùng và đổi theo tài khoản chạy tiến trình —
+// chuyển sang chạy Windows Service sẽ ra khóa khác, mọi mật khẩu đã lưu thành rác.
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(
+        Path.Combine(AppContext.BaseDirectory, "dp-keys")))
+    .SetApplicationName("KT2000");
+
+// Singleton: giữ tiến độ phiên lấy HĐ trong bộ nhớ và bảo đảm mỗi lúc chỉ một Chrome
+builder.Services.AddSingleton<TctFetchService>();
 
 // ---- MỚI: dạy backend cách KIỂM TRA JWT (trước giờ mới chỉ biết PHÁT) ----
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

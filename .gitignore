@@ -9,9 +9,25 @@ dist/
 # File chua bi mat - KHONG BAO GIO len repo
 KT2000.Api/appsettings.json
 
+# KHOA MA HOA mat khau cong TCT. File nay chua khoa AES-256 DANG THO
+# (Data Protection ghi kem dong "the key below is in an unencrypted form").
+# Lo len git la lo toan bo mat khau cong thue dang nam trong database.
+dp-keys/
+**/dp-keys/
+
+# Rac sinh ra khi chay TRA_CUU_HDDT_2_0.py
+# .wdm la cache chromedriver cua webdriver-manager, khoang 60 MB
+tools/.wdm/
+tools/logs/
+__pycache__/
+*.pyc
+
 # Linh tinh
 *.user
 .vscode/
 
+# Excel noi chung khong len repo (file so lieu that cua khach hang)
 *.xlsx
 *.xls
+# ...NHUNG XML_MAP.xlsx la file cau hinh cua bo tai HD, BAT BUOC di theo repo
+!tools/XML_MAP.xlsx

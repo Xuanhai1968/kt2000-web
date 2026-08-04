@@ -28,6 +28,15 @@ namespace KT2000.Api.Models
         public string? TkCongNo { get; set; }
         public int? NamQuyetToan { get; set; }
         public bool KhaiQuy { get; set; }
+
+        // Mật khẩu cổng Tổng cục Thuế — LUÔN là chuỗi đã qua Data Protection.
+        // [JsonIgnore] là lưới an toàn: Tenants bị đọc ở rất nhiều chỗ, chỉ cần một
+        // nơi lỡ trả nguyên thực thể là chuỗi mã hóa đi thẳng ra trình duyệt.
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string? MatKhauHddt { get; set; }
+        public DateTime? MkHddtCapNhatLuc { get; set; }
+        public string? MkHddtCapNhatBoi { get; set; }
+
         public List<FiscalYear> FiscalYears { get; set; } = new();
     }
 

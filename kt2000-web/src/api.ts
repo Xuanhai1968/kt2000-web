@@ -115,6 +115,50 @@ export interface LeftoverInfo {
   lechTheoThang: { thang: number; soFile: number }[];
 }
 
+// ===== BƯỚC 1: tài khoản cổng TCT + chạy bộ tải =====
+
+export interface TctCredentialInfo {
+  coMatKhau: boolean;
+  capNhatLuc: string | null;
+  capNhatBoi: string | null;
+}
+
+export const getTctCredential = (tenantId: string) =>
+  api.get<TctCredentialInfo>("/admin/tct-credential", { params: { tenantId } });
+
+// Mật khẩu đi MỘT CHIỀU: gửi lên rồi mã hóa lưu, không có API nào đọc ngược ra
+export const saveTctCredential = (tenantId: string, matKhau: string) =>
+  api.put("/admin/tct-credential", { tenantId, matKhau });
+
+export interface TienDoLay {
+  tenantId: string;
+  code: string;
+  nam: number;
+  thang: number;
+  trangThai: "cho" | "dang_chay" | "xong" | "loi" | "huy";
+  giaiDoan: string;      // state của status.json: LOGIN / XML / DONE_PARSE / ERROR…
+  thongDiep: string;
+  daTai: number;
+  tong: number;
+  loi: string | null;
+  batDau: string | null;
+  ketThuc: string | null;
+}
+
+export interface PhienLay {
+  dangChay: boolean;
+  nguoiChay: string | null;
+  batDau: string | null;
+  cac: TienDoLay[];
+}
+
+export const fetchStart = (
+  tenantIds: string[], nam: number, thangBd: number, thangKt: number, huong: HuongLay
+) => api.post<PhienLay>("/admin/fetch-start", { tenantIds, nam, thangBd, thangKt, huong });
+
+export const fetchProgress = () => api.get<PhienLay>("/admin/fetch-progress");
+export const fetchStop = () => api.post("/admin/fetch-stop");
+
 // Một mặt hàng trên hóa đơn, đọc từ XML gốc của TCT
 export interface MatHang {
   stt: number;
@@ -164,6 +208,7 @@ export interface ImportOnePayload {
   soHd: string;
   ngay: string;
   mst: string;
+  mstPhatHanh: string;   // MST người bán — dựng ma_hd theo BR-HD-01
   tenKh: string;
   diaChi: string;
   tienHang: number;

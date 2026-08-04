@@ -1,0 +1,52 @@
+/* Lưới nén cho modal soi file còn lại trong raw\ (FRM_LAY_HDDT).
+   Vì sao cần: ô nhập của antd cao 32px, cộng padding ô bảng 8px trên/dưới là mỗi
+   dòng ngốn ~48px — một màn hình chỉ hiện được chục dòng, phần lớn là khoảng trắng.
+   Ở đây ép về ~24px/dòng cho gần với mật độ lưới bên VFP. */
+
+/* KHÔNG đụng vào chiều cao thân bảng.
+   Bản trước ép .ant-table-body { max-height: none; flex: 1 1 auto } cho thanh trượt
+   trải kín khung. Hậu quả: mất luôn khung cuộn của antd — 184 dòng render hết rồi
+   bị khung cha cắt cụt, không còn thanh trượt nào để kéo. Chiều cao vùng cuộn nay
+   giao lại cho scroll.y của antd; ở đây chỉ nén padding và cỡ chữ. */
+
+.luoi-gon .ant-table-thead > tr > th,
+.luoi-gon .ant-table-tbody > tr > td {
+  padding: 1px 6px !important;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.luoi-gon .ant-table-thead > tr > th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Ô nhập nằm trong ô bảng: bỏ chiều cao mặc định, canh vừa dòng */
+.luoi-gon .ant-input,
+.luoi-gon .ant-input-number,
+.luoi-gon .ant-input-number-input {
+  height: 22px !important;
+  min-height: 22px !important;
+  padding: 0 4px !important;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* Mũi tên tăng/giảm của InputNumber chiếm chỗ và chỉ hiện khi rê chuột — bỏ hẳn */
+.luoi-gon .ant-input-number-handler-wrap {
+  display: none;
+}
+
+.luoi-gon .ant-tag {
+  margin-inline-end: 0;
+  line-height: 18px;
+  padding-inline: 5px;
+}
+
+/* Dòng tổng bám đáy khi cuộn để luôn thấy Σ thành tiền */
+.luoi-gon .ant-table-summary {
+  position: sticky;
+  bottom: 0;
+  background: #fafafa;
+  z-index: 2;
+}

@@ -11,6 +11,14 @@
          bao giờ thiếu file, và không ai sửa được schema trên server mà không build lại. -->
     <EmbeddedResource Include="..\database\010_tenant_template_v6.sql"
                       LogicalName="KT2000.Api.tenant_template.sql" />
+
+    <!-- Bộ tải HĐ của TCT đi kèm bản build: TctFetchService gọi nó bằng Process.Start
+         theo đường dẫn <thư mục exe>\tools\. Copy chứ không nhúng, vì python.exe cần
+         file thật trên đĩa. Đè được bằng khóa Paths:TctScript nếu muốn để nơi khác. -->
+    <None Include="..\tools\TRA_CUU_HDDT_2_0.py" Link="tools\TRA_CUU_HDDT_2_0.py"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\tools\XML_MAP.xlsx" Link="tools\XML_MAP.xlsx"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

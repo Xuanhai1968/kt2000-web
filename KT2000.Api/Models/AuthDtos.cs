@@ -83,6 +83,25 @@ namespace KT2000.Api.Models
         public int ThangKt { get; set; } = 12;
         public string Huong { get; set; } = "vao";   // vao = chỉ đầu vào, all = cả vào và ra
     }
+    // Khai mật khẩu cổng Tổng cục Thuế cho một đơn vị.
+    // Mật khẩu thô CHỈ tồn tại trong request này rồi được mã hóa ngay — không ghi log,
+    // không lưu thô, không có API nào đọc ngược ra.
+    public class LuuMatKhauTctRequest
+    {
+        public Guid TenantId { get; set; }
+        public string MatKhau { get; set; } = "";
+    }
+
+    // Bắt đầu phiên lấy HĐ từ cổng TCT cho nhiều đơn vị × khoảng tháng
+    public class BatDauLayHdRequest
+    {
+        public List<string> TenantIds { get; set; } = new();
+        public int Nam { get; set; }
+        public int ThangBd { get; set; } = 1;
+        public int ThangKt { get; set; } = 1;
+        public string Huong { get; set; } = "vao";
+    }
+
     // Xem chi tiết các hóa đơn còn nằm lại raw\ của MỘT đơn vị
     public class RawFilesRequest
     {
@@ -117,7 +136,10 @@ namespace KT2000.Api.Models
         public string KhHd { get; set; } = "";
         public string SoHd { get; set; } = "";
         public string Ngay { get; set; } = "";      // yyyy-MM-dd
-        public string Mst { get; set; } = "";       // MST đối tác
+        public string Mst { get; set; } = "";       // MST đối tác (ghi vào cột mst)
+        // MST NGƯỜI BÁN trên hóa đơn — dùng dựng ma_hd theo BR-HD-01. Khác Mst ở hóa
+        // đơn đầu ra: khi đó Mst là người mua, còn người bán chính là đơn vị mình.
+        public string MstPhatHanh { get; set; } = "";
         public string TenKh { get; set; } = "";
         public string DiaChi { get; set; } = "";
         public decimal TienHang { get; set; }
