@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Card, Table, Button, message, Typography, Input, Select, Space,
-  Tag, Checkbox, Progress, Alert, Radio,
+  Tag, Checkbox, Progress, Alert, Radio, Modal, Empty, InputNumber, Popconfirm,
 } from "antd";
-import { getAdminTenants, importJob, getLeftoverFiles } from "../api";
-import type { AdminTenant, ImportJobResult, LeftoverInfo, HuongLay } from "../api";
+import {
+  getAdminTenants, importJob, getLeftoverFiles, getRawFiles, getRawHtml, importOne,
+} from "../api";
+import type {
+  AdminTenant, ImportJobResult, LeftoverInfo, HuongLay, HoaDonConLai, MatHang,
+} from "../api";
 import { useAuth } from "../AuthContext";
 
 // Kết quả nạp của MỘT (đơn vị × tháng) — gom lại thành nhật ký phiên chạy
@@ -51,6 +55,86 @@ function ConsoleLayHoaDon() {
       // Chưa cấu hình Paths:JobsRoot hoặc chưa có thư mục job là chuyện thường ở máy dev
       // — cột để trống, không nhảy thông báo lỗi làm phiền
       .catch(() => setFileLoi({}));
+  };
+
+  // ===== Modal soi các hóa đơn còn nằm lại raw\ =====
+  const [modalMo, setModalMo] = useState(false);
+  const [modalTai, setModalTai] = useState(false);
+  const [modalDonVi, setModalDonVi] = useState<AdminTenant | null>(null);
+  const [dsConLai, setDsConLai] = useState<HoaDonConLai[]>([]);
+
+  // Nút chỉ sáng khi đang chọn ĐÚNG MỘT đơn vị và đơn vị đó còn file trong raw\
+  const donViDangChon = selected.length === 1
+    ? tenants.find((t) => t.id === selected[0]) ?? null : null;
+  const soFileCuaDonViChon = donViDangChon
+    ? fileLoi[donViDangChon.id]?.soFileConLai ?? 0 : 0;
+
+  const moModalConLai = async () => {
+    if (!donViDangChon) return;
+    setModalDonVi(donViDangChon);
+    setModalMo(true);
+    setModalTai(true);
+    setDsConLai([]);
+    try {
+      const r = await getRawFiles(donViDangChon.id, namLamViec, tuThang, denThang, huong);
+      setDsConLai(r.data);
+    } catch (e: any) {
+      message.error(e?.response?.data?.message ?? "Không đọc được thư mục raw\\");
+    } finally {
+      setModalTai(false);
+    }
+  };
+
+  // Sửa tại chỗ: ghi đè đúng hóa đơn trong danh sách đang hiển thị
+  const suaHoaDon = (tenFile: string, thayDoi: Partial<HoaDonConLai>) =>
+    setDsConLai((ds) => ds.map((x) => (x.tenFile === tenFile ? { ...x, ...thayDoi } : x)));
+
+  const suaMatHang = (tenFile: string, stt: number, thayDoi: Partial<MatHang>) =>
+    setDsConLai((ds) => ds.map((x) => x.tenFile !== tenFile ? x
+      : { ...x, matHangs: x.matHangs.map((m) => (m.stt === stt ? { ...m, ...thayDoi } : m)) }));
+
+  // Xem bản HTML gốc — tải qua axios (có token) rồi mở bằng blob, không mở link thẳng
+  const xemHtml = async (hd: HoaDonConLai) => {
+    if (!modalDonVi) return;
+    try {
+      const r = await getRawHtml(modalDonVi.id, namLamViec, hd.thang, hd.huong, hd.tenFile);
+      const url = URL.createObjectURL(new Blob([r.data], { type: "text/html;charset=utf-8" }));
+      window.open(url, "_blank", "noopener");
+      // Thu hồi muộn để tab kịp đọc xong
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e: any) {
+      message.error(e?.response?.status === 404
+        ? "Hóa đơn này không có bản HTML kèm theo"
+        : e?.response?.data?.message ?? "Không mở được bản HTML");
+    }
+  };
+
+  const [dangNap, setDangNap] = useState<string | null>(null);
+
+  const napMotHoaDon = async (hd: HoaDonConLai) => {
+    if (!modalDonVi) return;
+    setDangNap(hd.tenFile);
+    try {
+      const r = await importOne({
+        tenantId: modalDonVi.id, nam: namLamViec, thang: hd.thang, huong: hd.huong,
+        tenFile: hd.tenFile, mauSo: hd.mauSo, khHd: hd.khHd, soHd: hd.soHd, ngay: hd.ngay,
+        mst: hd.huong === "VAO" ? hd.mstBan : hd.mstMua,
+        tenKh: hd.huong === "VAO" ? hd.tenBan : hd.tenMua,
+        diaChi: "", tienHang: hd.tienHang, tienVat: hd.tienVat, tienCk: 0,
+        matHangs: hd.matHangs,
+      });
+      const d = r.data;
+      message.success(`${d.capNhat ? "Đã cập nhật" : "Đã thêm"} ${d.maHd}`
+                    + ` — ${d.soDongHang} dòng hàng, dời ${d.moved} file`);
+      if (d.loiDoiFile) message.warning(`Đã ghi DB nhưng không dời được file: ${d.loiDoiFile}`);
+      // Hóa đơn đã vào sổ thì bỏ khỏi danh sách và cập nhật lại cột đếm
+      setDsConLai((ds) => ds.filter((x) => x.tenFile !== hd.tenFile));
+      docFileLoi(dangHoatDong);
+    } catch (e: any) {
+      message.error(e?.response?.data?.message ?? "Không nạp được hóa đơn này");
+    } finally {
+      setDangNap(null);
+    }
   };
 
   const napDanhSach = (baoOnKhiXong = false) => {
@@ -221,6 +305,21 @@ function ConsoleLayHoaDon() {
                        optionType="button" buttonStyle="solid"
                        options={[{ value: "vao", label: "Chỉ đầu vào" },
                                  { value: "all", label: "Cả vào và ra" }]} />
+          {/* Xám khi chưa chọn đúng 1 đơn vị, hoặc đơn vị đó đã vào hết */}
+          <Button
+            danger={soFileCuaDonViChon > 0}
+            disabled={!donViDangChon || soFileCuaDonViChon === 0}
+            onClick={moModalConLai}
+            title={
+              !donViDangChon
+                ? "Chọn đúng một đơn vị để xem"
+                : soFileCuaDonViChon === 0
+                  ? "Đơn vị này không còn file nào ở raw\\"
+                  : `Xem ${soFileCuaDonViChon} hóa đơn còn lại của ${donViDangChon.code}`
+            }
+          >
+            Xem file còn lại{soFileCuaDonViChon > 0 ? ` (${soFileCuaDonViChon})` : ""}
+          </Button>
         </Space>
       </Card>
 
@@ -293,6 +392,160 @@ function ConsoleLayHoaDon() {
           />
         )}
       </Card>
+
+      {/* ===== Modal: các hóa đơn còn nằm lại raw\ — đọc thẳng từ XML gốc ===== */}
+      <Modal
+        title={`File còn lại trong raw\\ — ${modalDonVi?.code ?? ""} `
+             + `(T${tuThang}–T${denThang}, ${huong === "vao" ? "đầu vào" : "vào + ra"})`}
+        open={modalMo}
+        onCancel={() => setModalMo(false)}
+        footer={null}
+        width="95vw"
+        style={{ top: 24, maxWidth: 1800 }}
+        styles={{ body: { maxHeight: "calc(100vh - 160px)", overflowY: "auto" } }}
+      >
+        <Table
+          rowKey="tenFile"
+          size="small"
+          loading={modalTai}
+          dataSource={dsConLai}
+          pagination={{ pageSize: 10 }}
+          locale={{ emptyText: <Empty description="Không đọc được hóa đơn nào trong raw\" /> }}
+          scroll={{ x: 1500 }}
+          // Nút + của antd: bung ra mặt hàng của chính hóa đơn đó, sửa được tại chỗ
+          expandable={{
+            expandedRowRender: (r: HoaDonConLai) => {
+              const sumLine = r.matHangs.reduce((s, x) => s + x.thanhTien, 0);
+              const lech = r.tienHang - sumLine;
+              return (
+                <div style={{ padding: "4px 0 8px 0" }}>
+                  <Space wrap style={{ marginBottom: 8 }}>
+                    <Typography.Text type="secondary">File: {r.tenFile}</Typography.Text>
+                    <Typography.Text type="secondary">
+                      Bán: {r.tenBan} [{r.mstBan}]
+                    </Typography.Text>
+                    <Typography.Text type="secondary">
+                      Mua: {r.tenMua} [{r.mstMua}]
+                    </Typography.Text>
+                  </Space>
+                  {r.matHangs.length === 0
+                    ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Hóa đơn không có dòng hàng" />
+                    : <Table
+                        rowKey="stt" size="small" pagination={false} dataSource={r.matHangs}
+                        columns={[
+                          { title: "STT", dataIndex: "stt", width: 60 },
+                          { title: "Tên hàng hóa / dịch vụ", dataIndex: "tenHang",
+                            render: (v: string, m: MatHang) => (
+                              <Input size="small" value={v}
+                                     onChange={(e) => suaMatHang(r.tenFile, m.stt, { tenHang: e.target.value })} />
+                            ) },
+                          { title: "ĐVT", dataIndex: "dvt", width: 90,
+                            render: (v: string, m: MatHang) => (
+                              <Input size="small" value={v}
+                                     onChange={(e) => suaMatHang(r.tenFile, m.stt, { dvt: e.target.value })} />
+                            ) },
+                          { title: "Số lượng", dataIndex: "soLuong", width: 130,
+                            render: (v: number, m: MatHang) => (
+                              <InputNumber size="small" style={{ width: "100%" }} value={v}
+                                           onChange={(x) => suaMatHang(r.tenFile, m.stt, { soLuong: x ?? 0 })} />
+                            ) },
+                          { title: "Đơn giá", dataIndex: "donGia", width: 150,
+                            render: (v: number, m: MatHang) => (
+                              <InputNumber size="small" style={{ width: "100%" }} value={v}
+                                           onChange={(x) => suaMatHang(r.tenFile, m.stt, { donGia: x ?? 0 })} />
+                            ) },
+                          { title: "Thành tiền", dataIndex: "thanhTien", width: 160,
+                            render: (v: number, m: MatHang) => (
+                              <InputNumber size="small" style={{ width: "100%" }} value={v}
+                                           onChange={(x) => suaMatHang(r.tenFile, m.stt, { thanhTien: x ?? 0 })} />
+                            ) },
+                          { title: "Thuế suất", dataIndex: "thueSuat", width: 100,
+                            render: (v: string, m: MatHang) => (
+                              <Input size="small" value={v}
+                                     onChange={(e) => suaMatHang(r.tenFile, m.stt, { thueSuat: e.target.value })} />
+                            ) },
+                        ]}
+                        summary={() => (
+                          <Table.Summary.Row>
+                            <Table.Summary.Cell index={0} colSpan={5} align="right">
+                              <b>Σ thành tiền</b>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell index={1} align="right">
+                              <b style={{ color: lech === 0 ? "#389e0d" : "#cf1322" }}>
+                                {sumLine.toLocaleString("vi-VN")}
+                              </b>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell index={2}>
+                              {lech === 0
+                                ? <Tag color="green">khớp</Tag>
+                                : <Tag color="red">lệch {lech.toLocaleString("vi-VN")}</Tag>}
+                            </Table.Summary.Cell>
+                          </Table.Summary.Row>
+                        )}
+                      />}
+                </div>
+              );
+            },
+          }}
+          columns={[
+            { title: "Tháng", dataIndex: "thang", width: 70, fixed: "left" },
+            { title: "Hướng", dataIndex: "huong", width: 80,
+              render: (v: string) => <Tag color={v === "VAO" ? "blue" : "purple"}>{v}</Tag> },
+            { title: "Ký hiệu", dataIndex: "khHd", width: 120,
+              render: (v: string, r: HoaDonConLai) => (
+                <Input size="small" value={v}
+                       onChange={(e) => suaHoaDon(r.tenFile, { khHd: e.target.value })} />
+              ) },
+            { title: "Số HĐ", dataIndex: "soHd", width: 120,
+              render: (v: string, r: HoaDonConLai) => (
+                <Input size="small" value={v}
+                       onChange={(e) => suaHoaDon(r.tenFile, { soHd: e.target.value })} />
+              ) },
+            { title: "Ngày", dataIndex: "ngay", width: 130,
+              render: (v: string, r: HoaDonConLai) => (
+                <Input size="small" value={v} placeholder="yyyy-MM-dd"
+                       onChange={(e) => suaHoaDon(r.tenFile, { ngay: e.target.value })} />
+              ) },
+            { title: "Đối tác", dataIndex: "tenBan", width: 240, ellipsis: true,
+              render: (_: string, r: HoaDonConLai) =>
+                r.huong === "VAO" ? `${r.tenBan} [${r.mstBan}]` : `${r.tenMua} [${r.mstMua}]` },
+            { title: "Tiền hàng", dataIndex: "tienHang", width: 160,
+              render: (v: number, r: HoaDonConLai) => (
+                <InputNumber size="small" style={{ width: "100%" }} value={v}
+                             onChange={(x) => suaHoaDon(r.tenFile, { tienHang: x ?? 0 })} />
+              ) },
+            { title: "VAT", dataIndex: "tienVat", width: 150,
+              render: (v: number, r: HoaDonConLai) => (
+                <InputNumber size="small" style={{ width: "100%" }} value={v}
+                             onChange={(x) => suaHoaDon(r.tenFile, { tienVat: x ?? 0 })} />
+              ) },
+            { title: "Tổng", dataIndex: "tongTien", width: 130, align: "right",
+              render: (v: number) => <b>{v.toLocaleString("vi-VN")}</b> },
+            { title: "Vì sao còn nằm lại", dataIndex: "lyDo", width: 300, ellipsis: true,
+              render: (v: string, r: HoaDonConLai) => (
+                <Typography.Text type={r.coTrongExcel ? "danger" : "warning"} title={v}>
+                  {v}
+                </Typography.Text>
+              ) },
+            { title: "", width: 190, fixed: "right",
+              render: (_: unknown, r: HoaDonConLai) => (
+                <Space size={4}>
+                  <Button size="small" onClick={() => xemHtml(r)}>Xem HTML</Button>
+                  <Popconfirm
+                    title="Nạp hóa đơn này vào database?"
+                    description={`${modalDonVi?.code}_${modalDonVi?.taxCode}_${r.khHd}_${r.soHd.replace(/^0+/, "") || "0"}`}
+                    okText="Nạp" cancelText="Thôi"
+                    onConfirm={() => napMotHoaDon(r)}
+                  >
+                    <Button size="small" type="primary" loading={dangNap === r.tenFile}>
+                      Nạp vào DB
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ) },
+          ]}
+        />
+      </Modal>
     </Space>
   );
 }

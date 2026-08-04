@@ -63,6 +63,15 @@ namespace KT2000.Api.Models
         public int SoLuong { get; set; }
     }
 
+    // Khuôn hứng chi tiết lỗi nạp của một hóa đơn — dùng để gắn lý do vào danh sách
+    // file còn lại trong raw\ (không phải bảng, chỉ là kết quả SELECT)
+    public class ImportErrorDetail
+    {
+        public string MaHd { get; set; } = "";
+        public int Thang { get; set; }
+        public string? LyDo { get; set; }
+    }
+
     public class TenantChangeLog
     {
         public int Id { get; set; }

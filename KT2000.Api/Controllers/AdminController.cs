@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using System.IdentityModel.Tokens.Jwt;
 using KT2000.Api.Data;
@@ -97,6 +98,50 @@ namespace KT2000.Api.Controllers
             try { return Ok(await _import.DemFileConLai(ds, req.Nam, req.ThangBd, req.ThangKt, req.Huong)); }
             catch (ArgumentException ex)
             { return BadRequest(new { message = ex.Message }); }
+        }
+
+        // POST api/admin/raw-files — Chi tiết các hóa đơn còn nằm lại raw\ của 1 đơn vị,
+        // đọc thẳng từ XML gốc kèm mặt hàng, để soi "nó bị làm sao"
+        [HttpPost("raw-files")]
+        public async Task<IActionResult> RawFiles([FromBody] RawFilesRequest req)
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            var t = await _db.Tenants.FindAsync(req.TenantId);
+            if (t == null) return BadRequest(new { message = "Không tìm thấy đơn vị" });
+            try { return Ok(await _import.DocHoaDonConLai(t, req.Nam, req.ThangBd, req.ThangKt, req.Huong)); }
+            catch (ArgumentException ex)
+            { return BadRequest(new { message = ex.Message }); }
+        }
+
+        // GET api/admin/raw-html — Trả bản HTML gốc của hóa đơn còn nằm ở raw\ để xem tại chỗ
+        [HttpGet("raw-html")]
+        public async Task<IActionResult> RawHtml(Guid tenantId, int nam, int thang,
+                                                 string huong, string tenFile)
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            var t = await _db.Tenants.FindAsync(tenantId);
+            if (t == null) return BadRequest(new { message = "Không tìm thấy đơn vị" });
+            try
+            {
+                var path = _import.DuongDanFileRaw(t, nam, thang, huong, tenFile, ".html");
+                if (!System.IO.File.Exists(path))
+                    return NotFound(new { message = "Hóa đơn này không có bản HTML kèm theo" });
+                return PhysicalFile(path, "text/html; charset=utf-8");
+            }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
+        // POST api/admin/import-one — Nạp TAY một hóa đơn (đã sửa) vào database đơn vị-năm
+        [HttpPost("import-one")]
+        public async Task<IActionResult> ImportOne([FromBody] ImportOneRequest req)
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            try { return Ok(await _import.NapMotHoaDon(req, CurrentLoginName())); }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (SqlException ex) { return BadRequest(new { message = "Lỗi ghi database: " + ex.Message }); }
         }
 
         // POST api/admin/import-job — Nạp Excel tổng của 1 job vào database đơn vị-năm

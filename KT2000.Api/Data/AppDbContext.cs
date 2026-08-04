@@ -28,6 +28,7 @@ namespace KT2000.Api.Data
             mb.Entity<UserPreference>().HasKey(x => new { x.UserId, x.Key });
             // Chỉ để hứng kết quả GROUP BY từ ImportError — không phải bảng, không khóa
             mb.Entity<ImportErrorRow>().HasNoKey().ToView(null);
+            mb.Entity<ImportErrorDetail>().HasNoKey().ToView(null);
         }
     }
 }

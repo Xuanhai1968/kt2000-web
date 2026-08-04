@@ -115,6 +115,83 @@ export interface LeftoverInfo {
   lechTheoThang: { thang: number; soFile: number }[];
 }
 
+// Một mặt hàng trên hóa đơn, đọc từ XML gốc của TCT
+export interface MatHang {
+  stt: number;
+  tenHang: string;
+  dvt: string;
+  soLuong: number;
+  donGia: number;
+  thanhTien: number;
+  thueSuat: string;
+}
+
+// Một hóa đơn còn nằm lại raw\ — dựng từ file XML, kèm lý do bị giữ lại
+export interface HoaDonConLai {
+  tenFile: string;
+  huong: string;
+  thang: number;
+  mauSo: string;
+  khHd: string;
+  soHd: string;
+  ngay: string;          // yyyy-MM-dd, lấy nguyên từ thẻ NLap của XML
+  mstBan: string;
+  tenBan: string;
+  mstMua: string;
+  tenMua: string;
+  tienHang: number;
+  tienVat: number;
+  tongTien: number;
+  lyDo: string;
+  coTrongExcel: boolean; // false = file lạc, không có dòng nào trong Excel tổng
+  matHangs: MatHang[];
+}
+
+export const getRawFiles = (
+  tenantId: string, nam: number, thangBd: number, thangKt: number, huong: HuongLay
+) => api.post<HoaDonConLai[]>("/admin/raw-files",
+                              { tenantId, nam, thangBd, thangKt, huong });
+
+// Nạp tay MỘT hóa đơn (đã sửa trên màn hình) vào database đơn vị-năm
+export interface ImportOnePayload {
+  tenantId: string;
+  nam: number;
+  thang: number;
+  huong: string;
+  tenFile: string;
+  mauSo: string;
+  khHd: string;
+  soHd: string;
+  ngay: string;
+  mst: string;
+  tenKh: string;
+  diaChi: string;
+  tienHang: number;
+  tienVat: number;
+  tienCk: number;
+  matHangs: (MatHang & { tinhChat?: string })[];
+}
+
+export interface ImportOneResult {
+  maHd: string;
+  capNhat: boolean;
+  soDongHang: number;
+  moved: number;
+  loiDoiFile: string | null;
+}
+
+export const importOne = (p: ImportOnePayload) =>
+  api.post<ImportOneResult>("/admin/import-one", p);
+
+// Bản HTML gốc. Phải tải qua axios chứ không mở thẳng bằng thẻ <a>: link trực tiếp
+// không đi qua interceptor nên không có Bearer token, backend sẽ trả 401.
+export const getRawHtml = (
+  tenantId: string, nam: number, thang: number, huong: string, tenFile: string
+) => api.get<string>("/admin/raw-html", {
+  params: { tenantId, nam, thang, huong, tenFile },
+  responseType: "text",
+});
+
 export const getLeftoverFiles = (
   tenantIds: string[], nam: number, thangBd: number, thangKt: number, huong: HuongLay
 ) => api.post<LeftoverInfo[]>("/admin/leftover-files",

@@ -14,6 +14,18 @@ namespace KT2000.Api.Services
     // "lệch Σ line phải xử lý tay" khỏi các loại hỏng khác.
     public record LoiNap(string MaHd, string Huong, string LoaiLoi, string LyDo);
 
+    // Một dòng hàng đọc thẳng từ XML gốc của TCT
+    public record MatHang(int Stt, string TenHang, string Dvt, decimal SoLuong,
+                          decimal DonGia, decimal ThanhTien, string ThueSuat);
+
+    // Một hóa đơn còn nằm lại raw\ — dựng từ chính file XML chứ không từ Excel tổng,
+    // vì file lạc (không có dòng master) thì trong Excel không có gì để đọc.
+    public record HoaDonConLai(
+        string TenFile, string Huong, int Thang, string MauSo, string KhHd, string SoHd,
+        string Ngay, string MstBan, string TenBan, string MstMua, string TenMua,
+        decimal TienHang, decimal TienVat, decimal TongTien,
+        string LyDo, bool CoTrongExcel, List<MatHang> MatHangs);
+
     public class ImportService
     {
         private readonly AppDbContext _db;
@@ -270,6 +282,237 @@ namespace KT2000.Api.Services
                 });
             }
             return kq;
+        }
+
+        // Đọc từng hóa đơn còn nằm lại raw\ để soi "nó bị làm sao".
+        // Nguồn là chính file XML của TCT — file lạc không có dòng nào trong Excel tổng
+        // nên đọc Excel sẽ ra rỗng. Lý do bị giữ lại thì tra bảng ImportError, khớp theo
+        // đuôi <KHHD>_<SO_HD> vì MA_HD và tên file đều kết thúc bằng cặp đó.
+        public async Task<List<HoaDonConLai>> DocHoaDonConLai(
+            Tenant t, int nam, int thangBd, int thangKt, string huong)
+        {
+            string jobsRoot = _config["Paths:JobsRoot"]
+                ?? throw new ArgumentException("Chưa cấu hình Paths:JobsRoot trong appsettings.json");
+            var cacHuong = huong.Equals("all", StringComparison.OrdinalIgnoreCase)
+                ? new[] { "VAO", "RA" } : new[] { "VAO" };
+
+            var loi = await _db.Set<ImportErrorDetail>()
+                .FromSqlRaw(@"SELECT MaHd, Thang, LyDo FROM ImportError
+                              WHERE TenantId={0} AND Nam={1} AND Thang BETWEEN {2} AND {3}",
+                            t.Id, nam, thangBd, thangKt)
+                .ToListAsync();
+
+            var kq = new List<HoaDonConLai>();
+            for (int thang = thangBd; thang <= thangKt; thang++)
+                foreach (var h in cacHuong)
+                {
+                    string jobDir = Path.Combine(jobsRoot, t.Code, $"NAM{nam}",
+                                                 $"T{thang}_{nam}_{t.Code}");
+                    string d = Path.Combine(jobDir, "raw", h);
+                    if (!Directory.Exists(d)) continue;
+
+                    // Không có Excel tổng của hướng này thì cả thư mục CHƯA hề được nạp —
+                    // khác hẳn với "đã nạp nhưng hóa đơn này bị bỏ lại". Phân biệt cho rõ,
+                    // không thì nhìn 254 dòng "file lạc" sẽ tưởng dữ liệu hỏng hàng loạt.
+                    string fileTong = Path.Combine(jobDir, "outputs", $"HOA_DON_{h}_{t.Code}.xlsx");
+                    bool coExcelTong = File.Exists(fileTong);
+
+                    foreach (var f in Directory.GetFiles(d, "*.xml").OrderBy(x => x))
+                    {
+                        var hd = DocXmlHoaDon(f, h, thang);
+                        if (hd == null) continue;
+
+                        // MA_HD kết thúc bằng _<KHHD>_<SO_HD>, tên file cũng vậy
+                        string duoi = $"_{hd.KhHd}_{hd.SoHd}";
+                        var khop = loi.FirstOrDefault(x => x.MaHd.EndsWith(duoi, StringComparison.OrdinalIgnoreCase));
+                        kq.Add(khop != null
+                            ? hd with { LyDo = khop.LyDo ?? "", CoTrongExcel = true }
+                            : hd with
+                              {
+                                  LyDo = coExcelTong
+                                      ? "Không có dòng nào trong Excel tổng — file lạc của lần tải trước"
+                                      : $"Chưa nạp hướng {h}: thiếu file tổng HOA_DON_{h}_{t.Code}.xlsx",
+                                  CoTrongExcel = false,
+                              });
+                    }
+                }
+            return kq;
+        }
+
+        // Đường dẫn file gốc trong raw\ — dùng chung cho xem HTML và nạp tay.
+        // Chặn path traversal: chỉ nhận TÊN file, mọi ký tự phân cách đều bị từ chối.
+        public string DuongDanFileRaw(Tenant t, int nam, int thang, string huong,
+                                      string tenFile, string ext)
+        {
+            if (tenFile.Contains('/') || tenFile.Contains('\\') || tenFile.Contains(".."))
+                throw new ArgumentException("Tên file không hợp lệ");
+            string jobsRoot = _config["Paths:JobsRoot"]
+                ?? throw new ArgumentException("Chưa cấu hình Paths:JobsRoot trong appsettings.json");
+            string h = huong.Equals("RA", StringComparison.OrdinalIgnoreCase) ? "RA" : "VAO";
+            return Path.Combine(jobsRoot, t.Code, $"NAM{nam}", $"T{thang}_{nam}_{t.Code}",
+                                "raw", h, Path.ChangeExtension(tenFile, ext));
+        }
+
+        // Nạp TAY một hóa đơn (người dùng đã sửa trên màn hình) vào database đơn vị-năm.
+        // Khác ImportJob ở chỗ nguồn là XML + số liệu người dùng sửa, không phải Excel tổng —
+        // dùng cho HĐ bị bỏ lại (lệch Σ line) hoặc file lạc không có trong Excel.
+        public async Task<object> NapMotHoaDon(ImportOneRequest req, string userName)
+        {
+            var tenant = await _db.Tenants.FindAsync(req.TenantId)
+                ?? throw new ArgumentException("Không tìm thấy đơn vị");
+
+            // Giữ ĐÚNG khuôn mã đang có trong DB: <MÃ_ĐƠN_VỊ>_<MST đơn vị>_<KÝ HIỆU>_<SỐ HĐ>.
+            // Đặt khác đi là sinh bản ghi trùng với hàng đã nạp từ Excel tổng.
+            string soHd = req.SoHd.TrimStart('0');
+            if (soHd == "") soHd = "0";
+            string maHd = $"{tenant.Code}_{tenant.TaxCode}_{req.KhHd}_{soHd}";
+            string khhd = req.MauSo + req.KhHd;   // giống UpsertMaster: KIEU_HD + ký hiệu
+
+            if (!DateTime.TryParse(req.Ngay, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var ngay))
+                throw new ArgumentException($"Ngày không hợp lệ: '{req.Ngay}' (cần dạng yyyy-MM-dd)");
+            if (ngay.Year != req.Nam)
+                throw new ArgumentException($"Ngày HĐ ({ngay:yyyy-MM-dd}) không thuộc năm {req.Nam}");
+
+            using var conn = new SqlConnection(_resolver.GetTenantConnection(tenant.Code, req.Nam));
+            await conn.OpenAsync();
+
+            bool existed;
+            using (var chk = new SqlCommand("SELECT COUNT(*) FROM HOA_DON WHERE ma_hd=@id", conn))
+            { chk.Parameters.AddWithValue("@id", maHd); existed = (int)(await chk.ExecuteScalarAsync())! > 0; }
+
+            using (var tx = conn.BeginTransaction())
+            {
+                try
+                {
+                    string sql = existed
+                      ? @"UPDATE HOA_DON SET ngay=@ngay, thang=@thang, khhd=@khhd, so_hd=@so_hd,
+                            mst=@mst, ten_kh=@ten_kh, dia_chi=@dia_chi, tien_vat=@tien_vat,
+                            tien_ck=@tien_ck, edit_vat=@edit_vat, edit_ck=@edit_ck,
+                            updated_by=@user, updated_at=SYSDATETIME()
+                          WHERE ma_hd=@id"
+                      : @"INSERT INTO HOA_DON (ma_hd, ngay, thang, khhd, so_hd, mst, ten_kh, dia_chi,
+                            tien_vat, tien_ck, edit_vat, edit_ck, created_by)
+                          VALUES (@id, @ngay, @thang, @khhd, @so_hd, @mst, @ten_kh, @dia_chi,
+                            @tien_vat, @tien_ck, @edit_vat, @edit_ck, @user)";
+                    using (var cmd = new SqlCommand(sql, conn, tx))
+                    {
+                        var p = cmd.Parameters;
+                        p.AddWithValue("@id", maHd);
+                        p.AddWithValue("@ngay", ngay.Date);
+                        p.AddWithValue("@thang", ngay.Month);
+                        p.AddWithValue("@khhd", khhd);
+                        p.AddWithValue("@so_hd", soHd);
+                        p.AddWithValue("@mst", (object?)Nz(req.Mst) ?? DBNull.Value);
+                        p.AddWithValue("@ten_kh", (object?)Nz(req.TenKh) ?? DBNull.Value);
+                        p.AddWithValue("@dia_chi", (object?)Nz(req.DiaChi) ?? DBNull.Value);
+                        p.AddWithValue("@tien_vat", req.TienVat);
+                        p.AddWithValue("@tien_ck", req.TienCk);
+                        p.AddWithValue("@edit_vat", req.TienVat > 0);
+                        p.AddWithValue("@edit_ck", req.TienCk > 0);
+                        p.AddWithValue("@user", userName);
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+
+                    using (var del = new SqlCommand("DELETE FROM HOA_DON_LINE WHERE ma_hd=@id", conn, tx))
+                    { del.Parameters.AddWithValue("@id", maHd); await del.ExecuteNonQueryAsync(); }
+
+                    foreach (var m in req.MatHangs)
+                    {
+                        using var ins = new SqlCommand(@"
+                            INSERT INTO HOA_DON_LINE (ma_hd, stt_line, ten_hang_goc, dvt, so_luong,
+                                don_gia, pt_vat, tien_ck, tinh_chat, created_by)
+                            VALUES (@id, @stt, @ten, @dvt, @sl, @dg, @pt_vat, 0, @tc, @user)", conn, tx);
+                        var p = ins.Parameters;
+                        p.AddWithValue("@id", maHd);
+                        p.AddWithValue("@stt", m.Stt);
+                        p.AddWithValue("@ten", (object?)Nz(m.TenHang) ?? DBNull.Value);
+                        p.AddWithValue("@dvt", (object?)Nz(m.Dvt) ?? DBNull.Value);
+                        p.AddWithValue("@sl", m.SoLuong);
+                        p.AddWithValue("@dg", m.DonGia);
+                        p.AddWithValue("@pt_vat", DocPhanTram(m.ThueSuat));
+                        p.AddWithValue("@tc", (object?)Nz(m.TinhChat) ?? DBNull.Value);
+                        p.AddWithValue("@user", userName);
+                        await ins.ExecuteNonQueryAsync();
+                    }
+                    tx.Commit();
+                }
+                catch { tx.Rollback(); throw; }
+            }
+
+            // Dời file gốc sang SCAN_DOC (ngoài transaction — hỏng thì HĐ vẫn đã vào DB)
+            int moved = 0; string? loiDoiFile = null;
+            try
+            {
+                string jobDir = Path.Combine(_config["Paths:JobsRoot"]!, tenant.Code,
+                                             $"NAM{req.Nam}", $"T{req.Thang}_{req.Nam}_{tenant.Code}");
+                string scanDir = Path.Combine(_config["Paths:ScanDocRoot"]!, tenant.Code, $"NAM{req.Nam}");
+                Directory.CreateDirectory(scanDir);
+                string h = req.Huong.Equals("RA", StringComparison.OrdinalIgnoreCase) ? "RA" : "VAO";
+                moved = MoveArtifacts(jobDir, h, req.Thang, req.Nam, scanDir, req.TenFile);
+            }
+            catch (Exception ex) { loiDoiFile = ex.Message; }
+
+            // Hóa đơn đã vào sổ thì dòng lỗi cũ của nó không còn đúng nữa
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM ImportError WHERE TenantId={0} AND Nam={1} AND Thang={2} AND MaHd={3}",
+                tenant.Id, req.Nam, req.Thang, maHd);
+
+            await _db.Database.ExecuteSqlRawAsync(
+                @"INSERT INTO ActivityLog (UserName, TenantId, Nam, Thang, Action, Detail)
+                  VALUES ({0}, {1}, {2}, {3}, N'NAP_HD_TAY', {4})",
+                userName, tenant.Id, req.Nam, req.Thang,
+                $"{(existed ? "Cập nhật" : "Thêm mới")} {maHd} (sửa tay từ {req.TenFile})");
+
+            return new { maHd, capNhat = existed, soDongHang = req.MatHangs.Count, moved, loiDoiFile };
+        }
+
+        // "10%" / "8%" / "KCT" → số phần trăm; không đọc được thì 0
+        private static decimal DocPhanTram(string s)
+        {
+            var so = new string((s ?? "").Where(c => char.IsDigit(c) || c == '.' || c == ',').ToArray())
+                     .Replace(",", ".");
+            return decimal.TryParse(so, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0m;
+        }
+
+        // Bộ đọc XML hóa đơn TCT (phiên bản 2.x, không có namespace).
+        // File hỏng/không đúng khuôn thì trả null chứ không ném — một file rác không
+        // được phép làm chết cả modal.
+        private static HoaDonConLai? DocXmlHoaDon(string path, string huong, int thang)
+        {
+            try
+            {
+                var doc = System.Xml.Linq.XDocument.Load(path);
+                var dl = doc.Root?.Element("DLHDon");
+                var chung = dl?.Element("TTChung");
+                var nd = dl?.Element("NDHDon");
+                if (chung == null || nd == null) return null;
+
+                string V(System.Xml.Linq.XElement? e, string n) => e?.Element(n)?.Value?.Trim() ?? "";
+                decimal D(System.Xml.Linq.XElement? e, string n) =>
+                    decimal.TryParse(V(e, n), System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0m;
+
+                var ban = nd.Element("NBan"); var mua = nd.Element("NMua");
+                var tt = nd.Element("TToan");
+
+                var hangs = new List<MatHang>();
+                foreach (var h in nd.Element("DSHHDVu")?.Elements("HHDVu")
+                                  ?? Enumerable.Empty<System.Xml.Linq.XElement>())
+                    hangs.Add(new MatHang(
+                        int.TryParse(V(h, "STT"), out var stt) ? stt : hangs.Count + 1,
+                        V(h, "THHDVu"), V(h, "DVTinh"),
+                        D(h, "SLuong"), D(h, "DGia"), D(h, "ThTien"), V(h, "TSuat")));
+
+                return new HoaDonConLai(
+                    Path.GetFileName(path), huong, thang,
+                    V(chung, "KHMSHDon"), V(chung, "KHHDon"), V(chung, "SHDon"), V(chung, "NLap"),
+                    V(ban, "MST"), V(ban, "Ten"), V(mua, "MST"), V(mua, "Ten"),
+                    D(tt, "TgTCThue"), D(tt, "TgTThue"), D(tt, "TgTTTBSo"),
+                    "", false, hangs);
+            }
+            catch { return null; }
         }
 
         private bool UpsertMaster(SqlConnection c, SqlTransaction tx, IXLRow r,

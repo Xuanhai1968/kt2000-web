@@ -83,6 +83,48 @@ namespace KT2000.Api.Models
         public int ThangKt { get; set; } = 12;
         public string Huong { get; set; } = "vao";   // vao = chỉ đầu vào, all = cả vào và ra
     }
+    // Xem chi tiết các hóa đơn còn nằm lại raw\ của MỘT đơn vị
+    public class RawFilesRequest
+    {
+        public Guid TenantId { get; set; }
+        public int Nam { get; set; }
+        public int ThangBd { get; set; } = 1;
+        public int ThangKt { get; set; } = 12;
+        public string Huong { get; set; } = "vao";
+    }
+    // Một dòng hàng do người dùng sửa tay trước khi nạp
+    public class MatHangSua
+    {
+        public int Stt { get; set; }
+        public string TenHang { get; set; } = "";
+        public string Dvt { get; set; } = "";
+        public decimal SoLuong { get; set; }
+        public decimal DonGia { get; set; }
+        public decimal ThanhTien { get; set; }
+        public string ThueSuat { get; set; } = "";
+        public string TinhChat { get; set; } = "1";
+    }
+
+    // Nạp TAY một hóa đơn (đã sửa) từ file XML còn nằm lại raw\ vào database đơn vị-năm
+    public class ImportOneRequest
+    {
+        public Guid TenantId { get; set; }
+        public int Nam { get; set; }
+        public int Thang { get; set; }
+        public string Huong { get; set; } = "VAO";
+        public string TenFile { get; set; } = "";
+        public string MauSo { get; set; } = "";
+        public string KhHd { get; set; } = "";
+        public string SoHd { get; set; } = "";
+        public string Ngay { get; set; } = "";      // yyyy-MM-dd
+        public string Mst { get; set; } = "";       // MST đối tác
+        public string TenKh { get; set; } = "";
+        public string DiaChi { get; set; } = "";
+        public decimal TienHang { get; set; }
+        public decimal TienVat { get; set; }
+        public decimal TienCk { get; set; }
+        public List<MatHangSua> MatHangs { get; set; } = new();
+    }
     public class ImportJobRequest
     {
         public Guid TenantId { get; set; }
