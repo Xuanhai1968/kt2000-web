@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Card, Table, Button, message, Typography, Input, Select, Space,
-  Tag, Checkbox, Progress, Alert, Radio, Modal, Empty, InputNumber, Popconfirm,
+  Tag, Checkbox, Progress, Alert, Modal, Empty, InputNumber, Popconfirm,
 } from "antd";
 import {
   getAdminTenants, importJob, getLeftoverFiles, getRawFiles, getRawHtml, importOne,
@@ -383,10 +383,29 @@ function ConsoleLayHoaDon() {
           Đến tháng:
           <Select style={{ width: 90 }} value={denThang} onChange={setDenThang}
                   options={cacThang.map((m) => ({ value: m, label: `T${m}` }))} />
-          <Radio.Group value={huong} onChange={(e) => setHuong(e.target.value)}
-                       optionType="button" buttonStyle="solid"
-                       options={[{ value: "vao", label: "Chỉ đầu vào" },
-                                 { value: "all", label: "Cả vào và ra" }]} />
+          {/* Không tích = chỉ đầu vào, đúng phần việc của màn hình này */}
+          <Checkbox checked={huong === "all"}
+                    onChange={(e) => setHuong(e.target.checked ? "all" : "vao")}>
+            Cả vào và ra
+          </Checkbox>
+
+          <Button type="primary" loading={dangBatDau}
+                  disabled={selected.length === 0 || !!phien?.dangChay}
+                  onClick={batDauLayHd}>
+            Lấy HĐ điện tử
+          </Button>
+          {phien?.dangChay && (
+            <Popconfirm title="Dừng phiên đang chạy?"
+                        description="Lượt đang tải sẽ bị hủy giữa chừng."
+                        okText="Dừng" cancelText="Thôi" onConfirm={() => fetchStop()}>
+              <Button danger>Dừng</Button>
+            </Popconfirm>
+          )}
+          <Button type="primary" loading={dangChay}
+                  disabled={selected.length === 0} onClick={chayBuoc2}>
+            Nạp vào database
+          </Button>
+
           {/* Xám khi chưa chọn đúng 1 đơn vị, hoặc đơn vị đó đã vào hết */}
           <Button
             danger={soFileCuaDonViChon > 0}
@@ -402,42 +421,35 @@ function ConsoleLayHoaDon() {
           >
             Xem file còn lại{soFileCuaDonViChon > 0 ? ` (${soFileCuaDonViChon})` : ""}
           </Button>
-        </Space>
-      </Card>
 
-      <Card title="Bước 1 — Lấy HĐ từ cổng Tổng cục Thuế">
-        <Space wrap>
-          <Button type="primary" loading={dangBatDau}
-                  disabled={selected.length === 0 || !!phien?.dangChay}
-                  onClick={batDauLayHd}>
-            Lấy HĐ điện tử ({selected.length} đơn vị × {Math.max(0, denThang - tuThang + 1)} tháng,
-            {huong === "vao" ? " chỉ đầu vào" : " vào + ra"})
-          </Button>
-          {phien?.dangChay && (
-            <Popconfirm title="Dừng phiên đang chạy?"
-                        description="Lượt đang tải sẽ bị hủy giữa chừng."
-                        okText="Dừng" cancelText="Thôi" onConfirm={() => fetchStop()}>
-              <Button danger>Dừng</Button>
-            </Popconfirm>
-          )}
           <Button disabled={!donViDangChon} onClick={() => { setMkGiaTri(""); setMkMo(true); }}>
-            TK Hóa đơn điện tử
-            {donViDangChon
-              ? (mkDaCo[donViDangChon.id] ? " — đã khai" : " — CHƯA khai")
-              : ""}
+            Mật Khẩu cổng TCT
+            {donViDangChon ? (mkDaCo[donViDangChon.id] ? " — đã có" : " — CHƯA có") : ""}
           </Button>
-          <Typography.Text type="secondary">
-            Chạy tuần tự từng đơn vị-tháng, mỗi lượt một phiên Chrome
-          </Typography.Text>
+
+          <Checkbox checked={xoaTruoc} onChange={(e) => setXoaTruoc(e.target.checked)}>
+            <span style={{ color: xoaTruoc ? "#cf1322" : undefined }}>
+              Gặp HĐ trùng: XÓA hẳn rồi ghi mới
+            </span>
+          </Checkbox>
         </Space>
+
+        <Typography.Text type="secondary" style={{ display: "block", marginTop: 6, fontSize: 12 }}>
+          {selected.length} đơn vị × {Math.max(0, denThang - tuThang + 1)} tháng
+          {huong === "vao" ? " — chỉ đầu vào" : " — cả vào và ra"}.
+          Lấy HĐ chạy tuần tự từng đơn vị-tháng.
+        </Typography.Text>
 
         {donViDangChon && mkDaCo[donViDangChon.id] === false && (
-          <Alert style={{ marginTop: 12 }} type="warning" showIcon
-                 message={`${donViDangChon.code} chưa khai mật khẩu cổng TCT — bấm "TK Hóa đơn điện tử" để nhập`} />
+          <Alert style={{ marginTop: 8 }} type="warning" showIcon
+                 message={`${donViDangChon.code} chưa khai mật khẩu cổng TCT — bấm "Mật Khẩu cổng TCT" để nhập`} />
         )}
+      </Card>
 
-        {phien && phien.cac.length > 0 && (
-          <div style={{ marginTop: 12 }}>
+      {/* Tiến độ lấy HĐ — chỉ hiện khi thật sự có phiên, không chiếm chỗ lúc rảnh */}
+      {phien && phien.cac.length > 0 && (
+        <Card size="small" title="Tiến độ lấy HĐ từ cổng Tổng cục Thuế">
+          <div>
             <Progress
               percent={Math.round(
                 (phien.cac.filter((x) => x.trangThai === "xong" || x.trangThai === "loi").length
@@ -471,8 +483,8 @@ function ConsoleLayHoaDon() {
               ]}
             />
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
 
       {/* Nhập mật khẩu cổng TCT — chỉ nhập đè, không bao giờ hiển thị lại */}
       <Modal
@@ -490,21 +502,11 @@ function ConsoleLayHoaDon() {
                         onPressEnter={luuMatKhau} />
       </Modal>
 
-      <Card title="Bước 2 — Đưa HĐ vào HOA_DON / HOA_DON_LINE (chạy tay)">
-        <Space wrap>
-          <Button type="primary" loading={dangChay}
-                  disabled={selected.length === 0} onClick={chayBuoc2}>
-            Nạp vào database ({selected.length} đơn vị × {Math.max(0, denThang - tuThang + 1)} tháng)
-          </Button>
-          <Checkbox checked={xoaTruoc} onChange={(e) => setXoaTruoc(e.target.checked)}>
-            <span style={{ color: xoaTruoc ? "#cf1322" : undefined }}>
-              Gặp HĐ trùng: XÓA hẳn rồi ghi mới (mất dữ liệu đã hạch toán trên HĐ đó)
-            </span>
-          </Checkbox>
-        </Space>
-
+      {/* Kết quả nạp vào DB — cũng chỉ hiện khi đã chạy ít nhất một lượt */}
+      {(tienDo.tong > 0 || ketQua.length > 0) && (
+        <Card size="small" title="Kết quả nạp vào HOA_DON / HOA_DON_LINE">
         {tienDo.tong > 0 && (
-          <div style={{ marginTop: 12 }}>
+          <div>
             <Progress
               percent={Math.round((tienDo.xong / tienDo.tong) * 100)}
               status={dangChay ? "active" : "normal"}
@@ -539,7 +541,8 @@ function ConsoleLayHoaDon() {
             ]}
           />
         )}
-      </Card>
+        </Card>
+      )}
 
       {/* ===== Modal: các hóa đơn còn nằm lại raw\ — đọc thẳng từ XML gốc ===== */}
       <Modal
@@ -673,13 +676,17 @@ function ConsoleLayHoaDon() {
               <Table
                 className="luoi-gon"
                 rowKey="stt" size="small" pagination={false}
-                scroll={{ y: "calc(50vh - 104px)" }}
+                // Khai cả x: khi chỉ có y, antd tách tiêu đề và thân thành hai bảng
+                // rời rồi tự đoán bề rộng — cột "Tên hàng" không có width nên hai bên
+                // đoán khác nhau, tiêu đề lệch hẳn khỏi ô dữ liệu.
+                // x = đúng tổng bề rộng 7 cột: 60+380+100+140+160+170+100
+                scroll={{ x: 1110, y: "calc(50vh - 104px)" }}
                 dataSource={hdDangChon.matHangs}
                 locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
                                             description="Hóa đơn không có dòng hàng" /> }}
                 columns={[
-                  { title: "STT", dataIndex: "stt", width: 60 },
-                  { title: "Tên hàng", dataIndex: "tenHang",
+                  { title: "STT", dataIndex: "stt", width: 60, fixed: "left" },
+                  { title: "Tên hàng", dataIndex: "tenHang", width: 380,
                     render: (v: string, m: MatHang) => (
                       <Input size="small" value={v}
                              onChange={(e) => suaMatHang(hdDangChon.tenFile, m.stt,
@@ -735,7 +742,11 @@ function ConsoleLayHoaDon() {
                           {sum.toLocaleString("vi-VN")}
                         </b>
                       </Table.Summary.Cell>
-                      <Table.Summary.Cell index={2} colSpan={2} />
+                      {/* Bảng có ĐÚNG 7 cột: STT, Tên hàng, ĐVT, Số lượng, Đơn giá,
+                          Thành tiền, % VAT. Tổng colSpan phải bằng 7 (5+1+1). Trước đây
+                          để 5+1+2=8 (còn sót từ hồi có cột SL × ĐG) khiến dòng tổng rộng
+                          hơn bảng, kéo lệch toàn bộ thân so với tiêu đề. */}
+                      <Table.Summary.Cell index={2} />
                     </Table.Summary.Row>
                   );
                 }}
