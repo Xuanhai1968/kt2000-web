@@ -13,8 +13,26 @@ namespace KT2000.Api.Services
         public AdminService(AppDbContext db, TenantDbResolver resolver)
         { _db = db; _resolver = resolver; }
 
+        // Ghi một dòng nhật ký. Nuốt lỗi có chủ đích: thao tác quản trị đã commit rồi,
+        // ném tiếp chỉ khiến người dùng tưởng thất bại và bấm lại lần nữa.
+        // Nam là int? nên phải ép DBNull đúng kiểu, không đưa null trần vào
+        // ExecuteSqlRawAsync (ADO.NET sẽ đoán nvarchar và SQL Server từ chối gán vào int).
+        private async Task GhiNhatKy(string nguoiDung, Guid tenantId, int? nam,
+                                     string hanhDong, string chiTiet)
+        {
+            try
+            {
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"INSERT INTO ActivityLog (UserName, TenantId, Nam, Action, Detail)
+                      VALUES ({0}, {1}, {2}, {3}, {4})",
+                    nguoiDung, tenantId, (object?)nam ?? DBNull.Value, hanhDong, chiTiet);
+            }
+            catch { /* mất một dòng nhật ký còn hơn báo hỏng một thao tác đã xong */ }
+        }
+
         // ============ Thêm đơn vị mới ============
-        public async Task<object> CreateTenant(CreateTenantRequest req, Guid currentUserId)
+        public async Task<object> CreateTenant(CreateTenantRequest req, Guid currentUserId,
+                                               string nguoiDung)
         {
             var code = (req.Code ?? "").Trim().ToUpperInvariant();
             if (!TenantDbResolver.IsValidCode(code))
@@ -22,11 +40,30 @@ namespace KT2000.Api.Services
             if (await _db.Tenants.AnyAsync(t => t.Code == code))
                 throw new ArgumentException($"Mã đơn vị {code} đã tồn tại");
 
+            // QT-03 + AD-NB-03: tenant nội bộ BẮT BUỘC trỏ về một tenant thuế có thật.
+            // Kiểm ở đây chứ không tin frontend — sai mã liên kết thì mọi tra cứu xuyên
+            // DB sau này (BR-NB-03) sẽ trỏ vào hư không.
+            string loai = (req.TenantType ?? "headquarter").Trim().ToLowerInvariant();
+            if (loai != "headquarter" && loai != "branch" && loai != "noibo")
+                throw new ArgumentException($"Loại đơn vị không hợp lệ: {req.TenantType}");
+
+            string? lienKet = string.IsNullOrWhiteSpace(req.LinkedTenantCode)
+                ? null : req.LinkedTenantCode.Trim().ToUpperInvariant();
+            if (loai == "noibo")
+            {
+                if (lienKet == null)
+                    throw new ArgumentException("Đơn vị nội bộ phải khai đơn vị thuế liên kết");
+                if (!await _db.Tenants.AnyAsync(t => t.Code == lienKet))
+                    throw new ArgumentException($"Không có đơn vị thuế mã {lienKet} để liên kết");
+            }
+            else lienKet = null;   // tenant thuế không mang mã liên kết
+
             var tenant = new Tenant
             {
                 Id = Guid.NewGuid(), Code = code,
                 Name = req.Name.Trim(), DbName = code,
-                TenantType = "headquarter",
+                TenantType = loai,
+                LinkedTenantCode = lienKet,
                 TaxCode = req.TaxCode?.Trim(), Address = req.Address?.Trim(),
                 IsActive = true
             };
@@ -38,11 +75,13 @@ namespace KT2000.Api.Services
             await _db.SaveChangesAsync();
 
             CreateTenantDatabase(code, req.FirstYear);
+            await GhiNhatKy(nguoiDung, tenant.Id, req.FirstYear, "TAO_DON_VI",
+                $"Tạo đơn vị {code} ({loai}) — mở năm đầu {req.FirstYear}");
             return new { tenant.Id, tenant.Code, dbCreated = _resolver.BuildDbName(code, req.FirstYear) };
         }
 
         // ============ Mở năm hàng loạt ============
-        public async Task<List<object>> OpenYears(OpenYearsRequest req)
+        public async Task<List<object>> OpenYears(OpenYearsRequest req, string nguoiDung)
         {
             var results = new List<object>();
             foreach (var idStr in req.TenantIds)
@@ -60,19 +99,31 @@ namespace KT2000.Api.Services
                     }
                     bool created = CreateTenantDatabase(tenant.Code, req.Year);
 
+                    // Ghi cả ba nhánh, kể cả "không làm gì". Nhật ký phải trả lời được
+                    // câu "ai đã bấm mở năm lúc nào", chứ không chỉ "lúc nào có DB mới".
+                    string ketQua;
                     if (!existed)
-                        results.Add(new { code = tenant.Code, status = "ok",
-                                          message = $"Đã tạo {tenant.Code}_{req.Year}" });
+                    {
+                        ketQua = $"Đã tạo {tenant.Code}_{req.Year}";
+                        results.Add(new { code = tenant.Code, status = "ok", message = ketQua });
+                    }
                     else if (created)
-                        results.Add(new { code = tenant.Code, status = "ok",
-                                          message = $"Năm {req.Year} đã có trong sổ — đã tạo bổ sung database {tenant.Code}_{req.Year} còn thiếu" });
+                    {
+                        ketQua = $"Năm {req.Year} đã có trong sổ — đã tạo bổ sung database {tenant.Code}_{req.Year} còn thiếu";
+                        results.Add(new { code = tenant.Code, status = "ok", message = ketQua });
+                    }
                     else
-                        results.Add(new { code = tenant.Code, status = "skip",
-                                          message = $"Năm {req.Year} đã mở, database đã có đủ" });
+                    {
+                        ketQua = $"Năm {req.Year} đã mở, database đã có đủ";
+                        results.Add(new { code = tenant.Code, status = "skip", message = ketQua });
+                    }
+                    await GhiNhatKy(nguoiDung, tenant.Id, req.Year, "MO_NAM", ketQua);
                 }
                 catch (Exception ex)
                 {
                     results.Add(new { code = tenant.Code, status = "error", message = ex.Message });
+                    await GhiNhatKy(nguoiDung, tenant.Id, req.Year, "MO_NAM_LOI",
+                                    $"Mở năm {req.Year} cho {tenant.Code} thất bại: {ex.Message}");
                 }
             }
             return results;
@@ -105,6 +156,21 @@ namespace KT2000.Api.Services
             Track("IsActive", t.IsActive.ToString(), req.IsActive.ToString());
             Track("KhaiQuy", t.KhaiQuy.ToString(), req.KhaiQuy.ToString());
 
+            // AD-NB-03: chỉ tenant nội bộ mới mang mã liên kết, và mã đó phải có thật
+            string? lienKetMoi = string.IsNullOrWhiteSpace(req.LinkedTenantCode)
+                ? null : req.LinkedTenantCode.Trim().ToUpperInvariant();
+            if (t.TenantType == "noibo")
+            {
+                if (lienKetMoi == null)
+                    throw new ArgumentException("Đơn vị nội bộ phải khai đơn vị thuế liên kết");
+                if (lienKetMoi == t.Code)
+                    throw new ArgumentException("Đơn vị không thể liên kết với chính nó");
+                if (!await _db.Tenants.AnyAsync(x => x.Code == lienKetMoi))
+                    throw new ArgumentException($"Không có đơn vị thuế mã {lienKetMoi} để liên kết");
+            }
+            else lienKetMoi = null;
+            Track("LinkedTenantCode", t.LinkedTenantCode, lienKetMoi);
+
             if (changes.Count == 0) return new { message = "Không có gì thay đổi" };
 
             t.Name = req.Name.Trim();
@@ -112,6 +178,7 @@ namespace KT2000.Api.Services
             t.Address = req.Address?.Trim();
             t.IsActive = req.IsActive;
             t.KhaiQuy = req.KhaiQuy;
+            t.LinkedTenantCode = lienKetMoi;
             _db.TenantChangeLog.Add(new TenantChangeLog
             {
                 TenantId = t.Id, ChangedBy = changedBy,

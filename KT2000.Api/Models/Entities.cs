@@ -8,6 +8,14 @@ namespace KT2000.Api.Models
         public string? RealName { get; set; }
         public bool IsAdmin { get; set; }
         public bool IsActive { get; set; }
+        // QT-01: bật khi tạo mới / vừa reset — đăng nhập lần đầu bắt đổi ngay,
+        // vì mật khẩu ban đầu thường được đọc qua điện thoại hoặc Zalo
+        public bool MustChangePassword { get; set; }
+        // Mật khẩu BAN ĐẦU do admin đặt, mã hóa hai chiều để admin đọc lại cho nhân
+        // viên. Bị xóa về null ngay khi người dùng tự đổi. [JsonIgnore] vì không có
+        // đường nào được phép trả nó ra kèm danh sách user.
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string? MatKhauBanDauMaHoa { get; set; }
         public DateTime CreatedAt { get; set; }
     }
 
@@ -28,6 +36,9 @@ namespace KT2000.Api.Models
         public string? TkCongNo { get; set; }
         public int? NamQuyetToan { get; set; }
         public bool KhaiQuy { get; set; }
+        // AD-NB-03: tenant nội bộ (TUAN_NGA_NB) trỏ về tenant thuế tương ứng (TUAN_NGA).
+        // Sợi dây DUY NHẤT nối hai thế giới; NULL với tenant thuế.
+        public string? LinkedTenantCode { get; set; }
 
         // Mật khẩu cổng Tổng cục Thuế — LUÔN là chuỗi đã qua Data Protection.
         // [JsonIgnore] là lưới an toàn: Tenants bị đọc ở rất nhiều chỗ, chỉ cần một
@@ -79,6 +90,21 @@ namespace KT2000.Api.Models
         public string MaHd { get; set; } = "";
         public int Thang { get; set; }
         public string? LyDo { get; set; }
+    }
+
+    // Nhật ký hoạt động — CHỈ THÊM, không sửa không xóa (008_master_taskstatus.sql).
+    // Từ trước tới nay chỉ được ghi bằng SQL thô; nay khai thành thực thể để màn hình
+    // Nhật ký hệ thống lọc và phân trang bằng LINQ cho gọn.
+    public class ActivityLog
+    {
+        public long Id { get; set; }
+        public DateTime At { get; set; }
+        public string UserName { get; set; } = "";
+        public Guid? TenantId { get; set; }
+        public int? Nam { get; set; }
+        public int? Thang { get; set; }
+        public string Action { get; set; } = "";
+        public string? Detail { get; set; }
     }
 
     public class TenantChangeLog

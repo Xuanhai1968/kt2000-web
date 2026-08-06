@@ -19,15 +19,25 @@ namespace KT2000.Api.Services
             _config = config;
         }
 
-        // Buoc 1: go username -> tra danh sach don vi + nam + lua chon lan truoc
+        // Câu trả lời DUY NHẤT cho mọi kiểu sai ở cửa đăng nhập. Tách thành hằng số để
+        // không đường nào lỡ nói khác đi: chỉ cần một thông báo riêng cho "sai mật khẩu"
+        // là kẻ dò biết ngay tài khoản đó có thật.
+        private const string SAI_DANG_NHAP = "Tên đăng nhập hoặc mật khẩu không đúng";
+
+        // Bước 1: username + mật khẩu -> danh sách đơn vị + năm + lựa chọn lần trước
         // (thay: doc DM_DONVI + KT2000.INI [DONVIDAMO] trong VFP)
-        public async Task<GetTenantsResponse> GetTenantsByUsername(string loginName)
+        //
+        // Mật khẩu bị kiểm hai lần (ở đây rồi lại ở Login) — cố ý. Đổi lại là giữ nguyên
+        // được luồng hai bước quen thuộc mà không phải phát sinh thêm một loại token tạm.
+        public async Task<GetTenantsResponse> GetTenantsByUsername(string loginName, string password)
         {
             var user = await _db.Users
                 .FirstOrDefaultAsync(u => u.LoginName == loginName && u.IsActive);
 
-            // Khong bao "user khong ton tai" de tranh do username
-            if (user == null) return new GetTenantsResponse();
+            // Không phân biệt "không có user" với "sai mật khẩu", cũng không phân biệt
+            // với "đã bị khóa": mọi khác biệt ở đây đều là một cái máy dò tài khoản.
+            if (user == null || !BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
+                throw new UnauthorizedAccessException(SAI_DANG_NHAP);
 
             var access = await _db.UserTenantAccess
                 .Where(a => a.UserId == user.Id)
@@ -73,11 +83,11 @@ namespace KT2000.Api.Services
         {
             var user = await _db.Users
                 .FirstOrDefaultAsync(u => u.LoginName == req.Username && u.IsActive);
-            if (user == null)
-                throw new UnauthorizedAccessException("Không có USER này!");
-
-            if (!BCrypt.Net.BCrypt.Verify(req.Password, user.PasswordHash))
-                throw new UnauthorizedAccessException("Mật khẩu sai!");
+            // Trước đây tách "Không có USER này!" và "Mật khẩu sai!" — đúng kiểu VFP cũ,
+            // nhưng đó chính là máy dò tài khoản. Vá get-tenants mà để hở chỗ này thì
+            // chẳng vá được gì.
+            if (user == null || !BCrypt.Net.BCrypt.Verify(req.Password, user.PasswordHash))
+                throw new UnauthorizedAccessException(SAI_DANG_NHAP);
 
             var tenantId = Guid.Parse(req.TenantId);
             var access = await _db.UserTenantAccess
@@ -137,7 +147,9 @@ namespace KT2000.Api.Services
                 User = new
                 {
                     id = user.Id, loginName = user.LoginName,
-                    realName = user.RealName, isAdmin = user.IsAdmin
+                    realName = user.RealName, isAdmin = user.IsAdmin,
+                    // QT-01: frontend thấy cờ này thì bắt đổi mật khẩu ngay sau đăng nhập
+                    mustChangePassword = user.MustChangePassword
                 },
                 Tenant = new
                 {
@@ -148,6 +160,37 @@ namespace KT2000.Api.Services
                 Branches = branches,
                 FiscalYear = req.FiscalYear
             };
+        }
+
+        // AD-QT-01: đây là endpoint quản trị DUY NHẤT sống ở cả hai instance — user NB
+        // trên internet cũng phải tự đổi được mật khẩu. Vì vậy nó không kiểm is_admin,
+        // chỉ kiểm chính chủ: phải đưa đúng mật khẩu cũ.
+        public async Task<string> DoiMatKhau(Guid userId, DoiMatKhauRequest req)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId && u.IsActive)
+                ?? throw new UnauthorizedAccessException("Tài khoản không tồn tại hoặc đã bị khóa");
+
+            if (!BCrypt.Net.BCrypt.Verify(req.MatKhauCu, user.PasswordHash))
+                throw new UnauthorizedAccessException("Mật khẩu hiện tại không đúng");
+            if (string.IsNullOrWhiteSpace(req.MatKhauMoi) || req.MatKhauMoi.Length < 8)
+                throw new ArgumentException("Mật khẩu mới tối thiểu 8 ký tự");
+            if (!req.MatKhauMoi.Any(char.IsDigit))
+                throw new ArgumentException("Mật khẩu mới phải có ít nhất một chữ số");
+            if (BCrypt.Net.BCrypt.Verify(req.MatKhauMoi, user.PasswordHash))
+                throw new ArgumentException("Mật khẩu mới phải khác mật khẩu cũ");
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(req.MatKhauMoi);
+            user.MustChangePassword = false;
+            // Từ giây phút này mật khẩu là của người dùng, không phải của admin nữa —
+            // xóa hẳn bản admin xem được (chốt 06/08).
+            user.MatKhauBanDauMaHoa = null;
+            await _db.SaveChangesAsync();
+
+            await _db.Database.ExecuteSqlRawAsync(
+                @"INSERT INTO ActivityLog (UserName, Action, Detail)
+                  VALUES ({0}, N'DOI_MAT_KHAU', N'Tự đổi mật khẩu')", user.LoginName);
+
+            return "Đã đổi mật khẩu";
         }
 
         private async Task UpsertPref(Guid userId, string key, string value)

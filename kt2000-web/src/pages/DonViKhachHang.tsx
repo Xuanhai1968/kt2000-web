@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { Card, Table, Button, Modal, Form, Input, InputNumber, Switch, Tag, message } from "antd";
+import {
+  Card, Table, Button, Modal, Form, Input, InputNumber, Switch, Tag, Select, message,
+} from "antd";
 import { getAdminTenants, createTenant, updateTenant } from "../api";
 import type { AdminTenant } from "../api";
 import { useAuth } from "../AuthContext";
@@ -26,7 +28,9 @@ export default function DonViKhachHang() {
     setSaving(true);
     try {
       const r = await createTenant({ code: v.code, name: v.name, taxCode: v.taxCode,
-                                     address: v.address, firstYear: v.firstYear });
+                                     address: v.address, firstYear: v.firstYear,
+                                     tenantType: v.tenantType ?? "headquarter",
+                                     linkedTenantCode: v.linkedTenantCode || null });
       message.success(`Đã tạo đơn vị + database ${r.data.dbCreated}`);
       setOpenNew(false); formNew.resetFields(); reload();
     } catch (e: any) {
@@ -38,7 +42,8 @@ export default function DonViKhachHang() {
     setEditing(t);
     formEdit.setFieldsValue({ name: t.name, taxCode: t.taxCode,
                               address: t.address, isActive: t.isActive,
-                              khaiQuy: t.khaiQuy });
+                              khaiQuy: t.khaiQuy,
+                              linkedTenantCode: t.linkedTenantCode });
   };
 
   const onEdit = async (v: any) => {
@@ -47,7 +52,8 @@ export default function DonViKhachHang() {
     try {
       await updateTenant(editing.id, { name: v.name, taxCode: v.taxCode,
                                        address: v.address, isActive: v.isActive,
-                                       khaiQuy: !!v.khaiQuy });
+                                       khaiQuy: !!v.khaiQuy,
+                                       linkedTenantCode: v.linkedTenantCode || null });
       message.success("Đã lưu thay đổi");
       setEditing(null); reload();
     } catch (e: any) {
@@ -58,7 +64,11 @@ export default function DonViKhachHang() {
   return (
     <Card
       title="Đơn vị khách hàng"
-      extra={<Button type="primary" onClick={() => setOpenNew(true)}>Thêm đơn vị</Button>}
+      // Tạo đơn vị kéo theo CREATE DATABASE nên cùng mức quyền với Sửa và Mở năm
+      extra={<Button type="primary" disabled={!isAdmin} onClick={() => setOpenNew(true)}
+                     title={isAdmin ? undefined : "Chỉ quản trị viên được tạo đơn vị mới"}>
+               Thêm đơn vị
+             </Button>}
     >
       <Table
         rowKey="id" size="small" loading={loading} dataSource={tenants}
@@ -99,6 +109,25 @@ export default function DonViKhachHang() {
           <Form.Item name="firstYear" label="Năm làm việc đầu tiên" rules={[{ required: true }]}>
             <InputNumber min={2000} max={2100} style={{ width: 140 }} />
           </Form.Item>
+          {/* QT-03 + AD-NB-03: đơn vị nội bộ phải trỏ về một đơn vị thuế có thật */}
+          <Form.Item name="tenantType" label="Loại đơn vị" initialValue="headquarter">
+            <Select options={[
+              { value: "headquarter", label: "Đơn vị thuế (trụ sở)" },
+              { value: "branch", label: "Chi nhánh" },
+              { value: "noibo", label: "Nội bộ (kt2000_nb)" },
+            ]} />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(a, b) => a.tenantType !== b.tenantType}>
+            {({ getFieldValue }) => getFieldValue("tenantType") === "noibo" && (
+              <Form.Item name="linkedTenantCode" label="Đơn vị thuế liên kết"
+                         extra="Mã đơn vị thuế tương ứng, ví dụ TUAN_NGA_NB liên kết với TUAN_NGA"
+                         rules={[{ required: true, message: "Đơn vị nội bộ phải khai đơn vị liên kết" }]}>
+                <Select showSearch optionFilterProp="label" placeholder="Chọn đơn vị thuế"
+                        options={tenants.filter((t) => t.tenantType !== "noibo")
+                          .map((t) => ({ value: t.code, label: `${t.code} — ${t.name}` }))} />
+              </Form.Item>
+            )}
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -122,6 +151,14 @@ export default function DonViKhachHang() {
           <Form.Item name="khaiQuy" label="Kỳ kê khai thuế" valuePropName="checked">
             <Switch checkedChildren="Quý" unCheckedChildren="Tháng" />
           </Form.Item>
+          {editing?.tenantType === "noibo" && (
+            <Form.Item name="linkedTenantCode" label="Đơn vị thuế liên kết"
+                       rules={[{ required: true, message: "Đơn vị nội bộ phải khai đơn vị liên kết" }]}>
+              <Select showSearch optionFilterProp="label"
+                      options={tenants.filter((t) => t.tenantType !== "noibo" && t.id !== editing?.id)
+                        .map((t) => ({ value: t.code, label: `${t.code} — ${t.name}` }))} />
+            </Form.Item>
+          )}
           <Form.Item name="isActive" label="Trạng thái" valuePropName="checked">
             <Switch checkedChildren="Hoạt động" unCheckedChildren="Ngừng" />
           </Form.Item>

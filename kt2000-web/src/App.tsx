@@ -7,6 +7,8 @@ import HoaDonDauVao from "./pages/HoaDonDauVao";
 import ChoPhatTrien from "./pages/ChoPhatTrien";
 import DonViKhachHang from "./pages/DonViKhachHang";
 import MoNamLamViec from "./pages/MoNamLamViec";
+import QuanLyUser from "./pages/QuanLyUser";
+import NhatKyHeThong from "./pages/NhatKyHeThong";
 export default function App() {
   return (
     <AuthProvider>
@@ -24,6 +26,8 @@ export default function App() {
             <Route path="bao-cao-cong-no" element={<ChoPhatTrien title="Báo cáo công nợ" />} />
             <Route path="don-vi" element={<DonViKhachHang />} />
             <Route path="mo-nam" element={<MoNamLamViec />} />
+            <Route path="quan-ly-user" element={<QuanLyUser />} />
+            <Route path="nhat-ky" element={<NhatKyHeThong />} />
           </Route>
         </Routes>
       </BrowserRouter>

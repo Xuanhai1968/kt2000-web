@@ -39,8 +39,13 @@ export interface GetTenantsResponse {
   lastPreferences: { tenantCode: string | null; fiscalYear: number | null };
 }
 
-export const getTenants = (username: string) =>
-  api.post<GetTenantsResponse>("/auth/get-tenants", { username });
+// Đòi cả mật khẩu: danh sách đơn vị là thông tin riêng, không cho gõ đại một cái tên
+// rồi xem được. Sai tên hoặc sai mật khẩu đều trả 401 với cùng một câu.
+export const getTenants = (username: string, password: string) =>
+  api.post<GetTenantsResponse>("/auth/get-tenants", { username, password });
+
+export const doiMatKhau = (matKhauCu: string, matKhauMoi: string) =>
+  api.post<{ message: string }>("/auth/change-password", { matKhauCu, matKhauMoi });
 
 export const login = (payload: {
   username: string; password: string;
@@ -55,9 +60,89 @@ export interface AdminTenant {
   taxCode: string | null;
   address: string | null;
   isActive: boolean;
-  khaiQuy: boolean;      // false = khai THÁNG → FRM_LAY_HDDT tô đỏ
+  khaiQuy: boolean;                // false = khai THÁNG → FRM_LAY_HDDT tô đỏ
+  tenantType: string;              // headquarter | branch | noibo | internal
+  linkedTenantCode: string | null; // AD-NB-03: tenant NB trỏ về tenant thuế nào
   fiscalYears: number[];
 }
+
+// ===== Nhật ký hệ thống (ActivityLog — chỉ đọc) =====
+
+export interface NhatKyDong {
+  id: number;
+  at: string;            // ISO, vd 2026-08-06T10:58:59
+  userName: string;
+  action: string;
+  detail: string | null;
+  nam: number | null;
+  thang: number | null;
+  donVi: string | null;  // mã đơn vị, null nếu hành động không gắn đơn vị nào
+}
+
+export interface NhatKyKetQua {
+  tong: number;
+  trang: number;
+  soDong: number;
+  ds: NhatKyDong[];
+}
+
+export const getActivityLog = (p: {
+  tuNgay?: string; denNgay?: string; nguoiDung?: string;
+  tenantId?: string; hanhDong?: string; trang?: number; soDong?: number;
+}) => api.get<NhatKyKetQua>("/admin/activity-log", { params: p });
+
+export const getActivityActions = () =>
+  api.get<string[]>("/admin/activity-log/actions");
+
+// ===== QT-01: quản lý user & phân quyền =====
+
+export interface QuyenDonVi {
+  tenantId: string;
+  code: string;
+  role: string;
+}
+
+export interface AdminUser {
+  id: string;
+  loginName: string;
+  realName: string | null;
+  isAdmin: boolean;
+  isActive: boolean;
+  mustChangePassword: boolean;
+  createdAt: string;
+  donVi: QuyenDonVi[];
+}
+
+export const getUsers = (tenantId?: string) =>
+  api.get<AdminUser[]>("/admin/users", { params: tenantId ? { tenantId } : {} });
+
+export const createUser = (p: {
+  loginName: string; realName?: string; matKhau: string;
+  isAdmin: boolean; tenantId?: string; role: string;
+}) => api.post("/admin/users", p);
+
+// Chỉ đọc được khi người dùng CHƯA tự đổi mật khẩu; đổi rồi backend trả lỗi
+export const viewInitialPassword = (userId: string) =>
+  api.get<{ loginName: string; matKhau: string }>(
+    "/admin/users/mat-khau-ban-dau", { params: { userId } });
+
+export const setUserActive = (userId: string, isActive: boolean) =>
+  api.put("/admin/users/trang-thai", { userId, isActive });
+
+// Xóa hẳn tài khoản. Nhật ký hoạt động cũ vẫn giữ vì ActivityLog lưu tên dạng chữ.
+export const deleteUser = (userId: string) =>
+  api.delete(`/admin/users/${userId}`);
+
+export const resetUserPassword = (userId: string, matKhauMoi: string) =>
+  api.put("/admin/users/reset-mat-khau", { userId, matKhauMoi });
+
+// role = null → gỡ quyền của user khỏi đơn vị đó
+export const setUserRole = (userId: string, tenantId: string, role: string | null) =>
+  api.put("/admin/users/quyen", { userId, tenantId, role });
+
+// Tự đổi mật khẩu — endpoint duy nhất sống ở cả hai instance (AD-QT-01)
+export const changeOwnPassword = (matKhauCu: string, matKhauMoi: string) =>
+  api.post("/auth/change-password", { matKhauCu, matKhauMoi });
 
 export interface UpdateTenantPayload {
   name: string;
@@ -65,18 +150,25 @@ export interface UpdateTenantPayload {
   address?: string;
   isActive: boolean;
   khaiQuy: boolean;
+  linkedTenantCode?: string | null;   // AD-NB-03, chỉ dùng với tenant 'noibo'
 }
 
 export const updateTenant = (id: string, p: UpdateTenantPayload) =>
   api.put(`/admin/tenants/${id}`, p);
 
-export const getAdminTenants = () => api.get<AdminTenant[]>("/admin/tenants");
+// baoGomNoiBo = true chỉ dùng ở màn Mở năm (QT-02) để thấy cả MDN_NB.
+// Các màn khác giữ mặc định false — MDN_NB xuất hiện ở đó là vô nghĩa.
+export const getAdminTenants = (baoGomNoiBo = false) =>
+  api.get<AdminTenant[]>("/admin/tenants", { params: { baoGomNoiBo } });
+
 export interface CreateTenantPayload {
   code: string;
   name: string;
   taxCode?: string;
   address?: string;
   firstYear: number;
+  tenantType?: string;                // mặc định 'headquarter'
+  linkedTenantCode?: string | null;   // bắt buộc khi tenantType = 'noibo'
 }
 
 export interface OpenYearResult {

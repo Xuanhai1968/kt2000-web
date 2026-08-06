@@ -2,6 +2,7 @@ import { Layout, Menu, Tag, Button, Space, Typography } from "antd";
 import { Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import ErrorBoundary from "./ErrorBoundary";
+import DoiMatKhauBatBuoc from "./DoiMatKhauBatBuoc";
 const menuItems = [
   {
     type: "group" as const, label: "NHẬP DỮ LIỆU",
@@ -33,6 +34,8 @@ export default function AppShell() {
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
+      {/* QT-01: đặt ở khung ngoài nên phủ mọi trang con — vào thẳng URL nào cũng gặp */}
+      <DoiMatKhauBatBuoc />
       <Layout.Header style={{ display: "flex", alignItems: "center",
                               justifyContent: "space-between", color: "#fff" }}>
         <Space size="large">
@@ -66,6 +69,8 @@ export default function AppShell() {
                     children: [
                     { key: "/app/don-vi", label: "Đơn vị khách hàng" },
                     { key: "/app/mo-nam", label: "Mở năm làm việc" },
+                    { key: "/app/quan-ly-user", label: "Quản lý người dùng" },
+                    { key: "/app/nhat-ky", label: "Nhật ký hệ thống" },
                     ],
                 }]
                 : []),
