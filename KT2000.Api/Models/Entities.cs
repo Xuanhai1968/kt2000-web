@@ -29,6 +29,12 @@ namespace KT2000.Api.Models
         public int? NamQuyetToan { get; set; }
         public bool KhaiQuy { get; set; }
 
+        // AD-NB-03: tenant NB trỏ về tenant THUẾ tương ứng (TUAN_NGA_NB -> TUAN_NGA).
+        // Đây là SỢI DÂY DUY NHẤT nối hai thế giới — BR-NB-03 dựa vào cột này để biết
+        // phiên NB được phép đọc sổ thuế của ai. Là MÃ tenant (Code), không phải Id.
+        // NULL với mọi tenant thuế và tenant quản trị.
+        public string? LinkedTenantCode { get; set; }
+
         // Mật khẩu cổng Tổng cục Thuế — LUÔN là chuỗi đã qua Data Protection.
         // [JsonIgnore] là lưới an toàn: Tenants bị đọc ở rất nhiều chỗ, chỉ cần một
         // nơi lỡ trả nguyên thực thể là chuỗi mã hóa đi thẳng ra trình duyệt.

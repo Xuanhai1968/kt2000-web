@@ -4,6 +4,16 @@ import axios from "axios";
 // còn bản publish backend tự phục vụ frontend nên cùng gốc, không phải sửa gì.
 const api = axios.create({ baseURL: "/api" });
 
+export function loiApi(e: unknown, macDinh = "Thao tác không thành công"): string {
+  if (axios.isAxiosError(e)) {
+    const data = e.response?.data as { message?: string } | undefined;
+    if (typeof data?.message === "string" && data.message.trim()) return data.message;
+    if (e.message) return e.message;
+  }
+  if (e instanceof Error && e.message) return e.message;
+  return macDinh;
+}
+
 // Gan token vao moi request sau khi login
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("kt2000_token");
@@ -246,3 +256,209 @@ export const importJob = (
   tenantId: string, nam: number, thang: number, huong: HuongLay, xoaTruocKhiGhi = false
 ) => api.post<ImportJobResult>("/admin/import-job",
                                { tenantId, nam, thang, huong, xoaTruocKhiGhi });
+// ==================== PHẦN NỘI BỘ (NB) ====================
+// Đơn vị và năm KHÔNG gửi kèm: backend đọc thẳng từ claim trong token
+// (tenant_code / fiscal_year), nên frontend không có cách nào trỏ nhầm database.
+
+export interface DmHangNb {
+  maHang: string | null;
+  tenHang: string;
+  dvt: string | null;
+  quyCach: string | null;
+  giaBan: number | null;
+  giaMua: number | null;
+  ptVat: number | null;
+  maNgan: string | null;
+  maHangThue: string | null;   // BR-NB-02: vết chép từ sổ thuế
+  ghiChu: string | null;
+  // 014 — bổ sung theo form gốc Hoa_Sang
+  tenTat: string | null;      // gõ tắt để tìm nhanh
+  maVach: string | null;
+  nhomHang: string | null;
+  dvtLon: string | null;      // 1 dvtLon = heSoLon × dvt
+  heSoLon: number | null;
+  giaBanLon: number | null;
+}
+
+// BR-NB-01: DM_KH_NB là danh mục ĐỐI TƯỢNG CÔNG NỢ — khách VÀ nhân viên chung một
+// bảng, phân biệt bằng loaiDt. Không có danh mục nhân viên riêng.
+export type LoaiDoiTuong = "KH" | "NV";
+
+export interface DmKhNb {
+  maKh: string | null;
+  tenKh: string;
+  loaiDt: LoaiDoiTuong;
+  tenGiaoDich: string | null;  // tên phục vụ NGƯỜI GIAO HÀNG
+  mst: string | null;
+  diaChi: string | null;
+  dienThoai: string | null;
+  nguoiLienHe: string | null;
+  maKhHd: string | null;
+  congNoDau: number | null;
+  ghiChu: string | null;
+  // 014
+  tenTat: string | null;
+  diaChiGiao: string | null;   // địa chỉ GIAO, khác địa chỉ trên hóa đơn
+}
+
+export interface DonNbLine {
+  sttLine: number;
+  maHang: string | null;
+  tenHang: string | null;
+  dvt: string | null;
+  soLuong: number;
+  donGia: number;
+  thanhTien: number;
+  ptVat: number;
+  tienVatL: number;
+  ghiChu: string | null;
+  // Hệ số chốt tại thời điểm lập đơn (đổi danh mục sau không làm sai đơn cũ)
+  heSoQd: number | null;
+  slQuyDoi: number | null;
+  laHangTang: boolean;
+  quyCach: string | null;
+  ngayNhL: string | null;      // BR-NB-07: mốc rời kho của riêng dòng này
+}
+
+// Đơn hàng NB = HOA_DON (khuôn dùng chung với sổ thuế, SPEC mục 4).
+//   maHd   = SỐ ĐƠN hiển thị/in, kiểu V125 / R236 (chốt 9.7)
+//   ngayNh = ngày hàng THẬT SỰ rời kho (BR-NB-07) — mốc trừ tồn, KHÔNG phải ngày tạo
+// soHd/khhd không có mặt: với NB chúng vô nghĩa và luôn trống.
+export interface DonNb {
+  maHd: string | null;
+  ngay: string | null;
+  ngayNh: string | null;
+  maKh: string | null;
+  tenKh: string | null;
+  mst: string | null;
+  diaChi: string | null;
+  maNvkd: string | null;       // -> DM_KH_NB (loaiDt='NV')
+  maNvvc: string | null;
+  maGoi: string | null;        // BR-NB-08: thuộc gói nào
+  ghiChu: string | null;
+  tienHang: number;
+  tienVat: number;
+  tongTien: number;
+  tthaiHd: string;
+  // VAO = đơn nhập, RA = đơn giao. Cột tính của HOA_DON nên chỉ ĐỌC RA —
+  // màn hình tổng hợp chứng từ dùng nó để dán nhãn từng dòng.
+  huong: HuongDon | null;
+  tenNvkd: string | null;      // đọc ra để hiện, không ghi xuống
+  tenNvvc: string | null;
+  lines: DonNbLine[];
+}
+
+// BR-NB-03: kết quả tra tên hàng từ sổ THUẾ của tenant liên kết.
+// Chỉ 4 trường — không có giá/số tiền/đối tác của sổ thuế (v1).
+export interface TraHangThue {
+  maHang: string | null;
+  tenHang: string;
+  dvt: string | null;
+  maNgan: string | null;
+  nguon: "da_co_ma" | "ten_tren_hd";   // nhãn nguồn hiện trên gợi ý
+  nam: number;
+}
+
+// BR-NB-08: gói hàng
+export interface GoiHdLine {
+  sttLine: number;
+  maHang: string | null;
+  tenHang: string | null;
+  dvt: string | null;
+  soLuong: number;             // TỔNG gộp từ mọi đơn con
+  soDonGop: number;
+  ghiChu: string | null;
+  // Hệ số đóng gói đọc SỐNG từ DM_HANG_NB — để tách cột Thùng / Lẻ trên phiếu gói.
+  // Trống = mặt hàng chưa khai quy đổi, khi đó dồn hết vào cột Lẻ.
+  heSoLon: number | null;
+  dvtLon: string | null;
+  // Trị giá gộp trong gói — CHỐT lúc chốt gói. Dùng tính "G.đơn" = triGia / soLuong.
+  triGia: number | null;
+  // Giá niêm yết hiện tại (đọc sống) — cột "G.chuẩn" để so với giá thực bán.
+  giaChuan: number | null;
+}
+
+export type TrangThaiGoi = "moi" | "chot" | "xuat" | "huy";
+
+export interface GoiHd {
+  maGoi: string | null;
+  tenGoi: string | null;
+  khuVuc: string | null;
+  ngay: string | null;
+  maNvvc: string | null;
+  tenNvvc: string | null;
+  trangThai: TrangThaiGoi;
+  soDon: number | null;
+  ngayChot: string | null;
+  ngayXuat: string | null;
+  ghiChu: string | null;
+  lines: GoiHdLine[];          // phiếu soạn hàng (có sau khi CHỐT)
+  donCon: DonNb[];
+}
+
+// VAO = đơn nhập hàng, RA = đơn bán/giao hàng (cùng bộ giá trị với cột huong
+// của khuôn HOA_DON)
+export type HuongDon = "VAO" | "RA";
+
+export const nbTimHang = (tu?: string, gioiHan = 50) =>
+  api.get<DmHangNb[]>("/nb/hang", { params: { tu, gioiHan } });
+
+export const nbLuuHang = (d: Partial<DmHangNb>) => api.post<DmHangNb>("/nb/hang", d);
+
+export const nbTimKh = (tu?: string, loaiDt?: LoaiDoiTuong, gioiHan = 50) =>
+  api.get<DmKhNb[]>("/nb/kh", { params: { tu, loaiDt, gioiHan } });
+
+export const nbLuuKh = (d: Partial<DmKhNb>) => api.post<DmKhNb>("/nb/kh", d);
+
+// BR-NB-03: tra tên hàng bên sổ thuế. Đơn vị thuế lấy từ LinkedTenantCode của
+// chính tenant đang đăng nhập — frontend không gửi mã đơn vị nào cả.
+export const nbTraHangThue = (tu?: string, gioiHan = 30) =>
+  api.get<TraHangThue[]>("/nb/tra-hang-thue", { params: { tu, gioiHan } });
+
+export const nbSoTiep = (huong: HuongDon) =>
+  api.get<{ maHd: string }>(`/nb/don/${huong}/so-tiep`);
+
+export const nbDanhSachDon = (huong: HuongDon, thang?: number, tu?: string, gioiHan = 100) =>
+  api.get<DonNb[]>(`/nb/don/${huong}`, { params: { thang, tu, gioiHan } });
+
+// Tổng hợp CẢ HAI chiều trong một lượt. Gộp ở backend chứ không gọi hai lượt rồi
+// trộn ở đây: trộn ngoài thì mỗi chiều tự cắt TOP N của riêng nó, đơn ở giữa bị mất.
+export const nbDanhSachDonTatCa = (thang?: number, tu?: string, gioiHan = 200) =>
+  api.get<DonNb[]>("/nb/don/tat-ca", { params: { thang, tu, gioiHan } });
+
+export const nbLayDon = (maHd: string) =>
+  api.get<DonNb>(`/nb/don/chi-tiet/${encodeURIComponent(maHd)}`);
+
+export const nbLuuDon = (huong: HuongDon, d: Partial<DonNb>) =>
+  api.post<DonNb>(`/nb/don/${huong}`, d);
+
+export const nbXoaDon = (maHd: string) =>
+  api.delete(`/nb/don/${encodeURIComponent(maHd)}`);
+
+// ---------- Gói hàng (BR-NB-08) ----------
+export const nbDanhSachGoi = (thang?: number, trangThai?: TrangThaiGoi, gioiHan = 100) =>
+  api.get<GoiHd[]>("/nb/goi", { params: { thang, trangThai, gioiHan } });
+
+export const nbLayGoi = (maGoi: string) =>
+  api.get<GoiHd>(`/nb/goi/${encodeURIComponent(maGoi)}`);
+
+export const nbLuuGoi = (d: Partial<GoiHd>) => api.post<GoiHd>("/nb/goi", d);
+
+export const nbGhepDonVaoGoi = (maGoi: string, dsMaHd: string[]) =>
+  api.post<{ message: string; soDon: number }>(
+    `/nb/goi/${encodeURIComponent(maGoi)}/ghep`, dsMaHd);
+
+export const nbRutDonKhoiGoi = (dsMaHd: string[]) =>
+  api.post<{ message: string; soDon: number }>("/nb/goi/rut", dsMaHd);
+
+// CHỐT GÓI -> sinh phiếu soạn hàng (snapshot) + khóa sửa đơn con
+// KHÔNG còn nút nào gọi hàm này: phiếu gói giờ TỰ dựng lại sau mỗi lần ghép/rút đơn
+// (xem DungLaiSnapshot bên NoiBoService). Giữ endpoint để gọi tay khi cần dựng lại
+// snapshot của một gói cũ, hoặc lỡ có gói nào lệch.
+export const nbChotGoi = (maGoi: string) =>
+  api.post<GoiHd>(`/nb/goi/${encodeURIComponent(maGoi)}/chot`);
+
+// XUẤT GÓI -> đóng dấu ngayNh hàng loạt (lúc này mới trừ kho)
+export const nbXuatGoi = (maGoi: string, ngayXuat?: string) =>
+  api.post<GoiHd>(`/nb/goi/${encodeURIComponent(maGoi)}/xuat`, null,
+                  { params: { ngayXuat } });

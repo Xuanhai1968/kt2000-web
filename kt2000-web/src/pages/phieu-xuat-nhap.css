@@ -1,0 +1,267 @@
+/* Form phiếu xuất/nhập — lưới dày kiểu VFP (BR-NB-05: ít khoảng trắng, nhiều dòng
+   nhìn được cùng lúc). Tiền tố .pxn__ để không đụng luoi-gon.css của màn hình thuế. */
+
+.pxn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Cao ĐÚNG bằng vùng nội dung, không hơn: nhờ vậy màn phiếu KHÔNG dùng thanh cuộn
+     của trang — chỉ lưới hàng hóa cuộn bên trong nó. Khai cả height lẫn max-height
+     phòng khi ô cha chưa chốt được chiều cao. */
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Biến thể cho màn hình DANH SÁCH (vd Gói hàng): cao theo nội dung, để vùng nội dung
+   của AppShell lo việc cuộn. Vẫn dùng chung các lớp .pxn__* con (nhãn, ô nhập...). */
+.pxn-trang {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pxn__info { flex-shrink: 0; }
+
+/* Nhãn ô nhập: nhỏ, in hoa, xám — nhường chỗ cho dữ liệu */
+.pxn__nhan {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+
+.pxn__gach {
+  border-top: 1px dashed #e2e8f0;
+  margin: 8px 0;
+}
+
+/* ---------- Lưới ---------- */
+.pxn__luoi-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* MẮT XÍCH THIẾU: antd chèn .ant-card-body giữa card và lưới của mình. Nó không tự
+   giãn nên khung lưới KHÔNG có chiều cao xác định — hệ quả là .pxn__luoi-body cứ cao
+   đúng bằng nội dung, đo bao nhiêu dòng cũng "vừa khít", không bao giờ kẻ thêm dòng
+   cho kín bảng. Phải bắt nó giãn thì phép đo mới có đáy để dựa vào. */
+.pxn__luoi-card > .ant-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pxn__luoi-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pxn__bang {
+  width: 100%;
+  /* separate chứ KHÔNG collapse: với border-collapse:collapse, viền của ô thuộc về
+     bảng chứ không thuộc ô, nên dòng tiêu đề dính (sticky) trôi lên mà bỏ viền lại —
+     nhìn như tiêu đề bị cuộn mất. separate + border-spacing:0 giữ nguyên nét kẻ. */
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+
+.pxn__bang thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #fafafa;
+  /* separate làm viền nhân đôi ở chỗ giáp nhau -> chỉ kẻ phải + dưới, ô đầu kẻ thêm trái */
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  border-top: 1px solid #e5e7eb;
+  padding: 5px 6px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+.pxn__bang thead th:first-child { border-left: 1px solid #e5e7eb; }
+
+/* Cùng lý do với thead: chỉ kẻ phải + dưới để nét không dày gấp đôi ở chỗ giáp nhau */
+.pxn__bang td {
+  border-right: 1px solid #eef0f2;
+  border-bottom: 1px solid #eef0f2;
+  padding: 0;
+  height: 28px;
+}
+.pxn__bang td:first-child { border-left: 1px solid #eef0f2; }
+
+.pxn__bang tbody tr:hover td { background: #f8fbff; }
+
+/* Dòng kẻ sẵn cho kín khung: nhìn như ô trống chờ gõ, bấm vào là thêm dòng thật.
+   Số thứ tự để mờ để phân biệt với dòng đã có dữ liệu. */
+.pxn__dong-ke { cursor: text; }
+.pxn__dong-ke td { color: #c9ced6; }
+.pxn__dong-ke:hover td { background: #f4f8ff; }
+
+.pxn__c { text-align: center; }
+
+/* Ô nhập trong lưới: không viền, không nền — nhìn như đang gõ thẳng lên bảng */
+.pxn__o {
+  width: 100%;
+  height: 26px;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 0 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.pxn__o:focus {
+  background: #e6f4ff;
+  box-shadow: inset 0 0 0 2px #1677ff;
+}
+
+.pxn__o--so {
+  text-align: right;
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thành tiền: chỉ đọc, tự nhân lại từ SL × ĐG */
+.pxn__so-tt {
+  text-align: right;
+  padding: 0 6px !important;
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  background: #fcfcfd;
+  color: #334155;
+}
+
+/* ---------- Ô gợi ý ---------- */
+.pxn__ac { position: relative; width: 100%; }
+
+.pxn__ac-input {
+  width: 100%;
+  height: 26px;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 0 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.pxn__ac-input:focus {
+  background: #e6f4ff;
+  box-shadow: inset 0 0 0 2px #1677ff;
+}
+
+/* Trong khối thông tin chung (ngoài lưới) thì ô gợi ý phải có viền như Input antd */
+.pxn__info .pxn__ac-input {
+  height: 24px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.pxn__ac-drop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1050;
+  min-width: 420px;
+  max-height: 280px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* Gõ ở mấy dòng cuối lưới thì dưới hết chỗ -> LẬT danh sách LÊN TRÊN ô nhập.
+   Phải đặt SAU .pxn__ac-drop, không thì bóng đổ của luật gốc đè lại. */
+.pxn__ac-drop--tren {
+  top: auto;
+  bottom: 100%;
+  box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.pxn__ac-drop--rong {
+  min-width: 260px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.pxn__ac-item {
+  display: flex;
+  gap: 10px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pxn__ac-item--chon { background: #e6f4ff; }
+
+/* Cột đầu (mã) hẹp và xám, cột hai (tên) chiếm phần còn lại */
+.pxn__ac-cot:first-child {
+  min-width: 58px;
+  color: #94a3b8;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+.pxn__ac-cot:nth-child(2) {
+  flex: 1;
+  min-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pxn__ac-cot:nth-child(n + 3) {
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* ---------- Thanh tổng ---------- */
+.pxn__tong {
+  flex-shrink: 0;
+  border: 2px solid #1e3a8a;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+}
+
+.pxn__tong-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.pxn__tong-phai {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-left: auto;
+}
+
+.pxn__tong-o {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+}
+
+.pxn__tong-nhan {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748b;
+}

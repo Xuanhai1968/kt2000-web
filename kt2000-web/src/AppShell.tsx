@@ -2,7 +2,8 @@ import { Layout, Menu, Tag, Button, Space, Typography } from "antd";
 import { Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import ErrorBoundary from "./ErrorBoundary";
-const menuItems = [
+// Bộ menu KẾ TOÁN THUẾ — dành cho tenant thường và tenant nội bộ quản trị (MDN_NB)
+const menuThue = [
   {
     type: "group" as const, label: "NHẬP DỮ LIỆU",
     children: [
@@ -22,6 +23,23 @@ const menuItems = [
   },
 ];
 
+const menuNoiBo = [
+  {
+    type: "group" as const, label: "PHIẾU",
+    children: [
+      { key: "/app/phieu-xuat", label: "Phiếu xuất hàng" },
+      { key: "/app/phieu-nhap", label: "Phiếu nhập hàng" },
+    ],
+  },
+  {
+    type: "group" as const, label: "KHO / GIAO HÀNG",
+    children: [
+      { key: "/app/danh-sach-phieu", label: "Danh sách phiếu" },
+      { key: "/app/goi-hang", label: "Gói hàng" },
+    ],
+  },
+];
+
 export default function AppShell() {
   const { session, signOut } = useAuth();
   const nav = useNavigate();
@@ -30,9 +48,10 @@ export default function AppShell() {
   if (!session) return <Navigate to="/" replace />;
 
   const isInternal = session.tenant.tenantType === "internal";
+  const isNoiBo = session.tenant.tenantType === "noibo";
 
   return (
-    <Layout style={{ minHeight: "100vh" }}>
+    <Layout style={{ height: "100vh", overflow: "hidden" }}>
       <Layout.Header style={{ display: "flex", alignItems: "center",
                               justifyContent: "space-between", color: "#fff" }}>
         <Space size="large">
@@ -54,27 +73,34 @@ export default function AppShell() {
           </Button>
         </Space>
       </Layout.Header>
-      <Layout>
-        <Layout.Sider width={260} theme="light">
+      <Layout style={{ minHeight: 0 }}>
+        <Layout.Sider width={260} theme="light" style={{ overflow: "auto" }}>
           <Menu
             mode="inline"
-            items={[
-            ...menuItems,
-            ...(isInternal
-                ? [{
-                    type: "group" as const, label: "QUẢN TRỊ",
-                    children: [
-                    { key: "/app/don-vi", label: "Đơn vị khách hàng" },
-                    { key: "/app/mo-nam", label: "Mở năm làm việc" },
-                    ],
-                }]
-                : []),
-            ]}
+            items={
+              // Rẽ nhánh hai lớp (BR-NB-06): đây chỉ là lớp TIỆN DỤNG. Lớp an toàn
+              // thật nằm ở backend — mọi endpoint gate bằng claim.
+              isNoiBo
+                ? menuNoiBo
+                : [
+                    ...menuThue,
+                    ...(isInternal
+                      ? [{
+                          type: "group" as const, label: "QUẢN TRỊ",
+                          children: [
+                            { key: "/app/don-vi", label: "Đơn vị khách hàng" },
+                            { key: "/app/mo-nam", label: "Mở năm làm việc" },
+                          ],
+                        }]
+                      : []),
+                  ]
+            }
             selectedKeys={[loc.pathname]}
             onClick={(e) => nav(e.key)}
           />
         </Layout.Sider>
-        <Layout.Content style={{ padding: 16, background: "#f5f5f5" }}>
+        <Layout.Content style={{ padding: 16, background: "#f5f5f5",
+                                 minHeight: 0, overflow: "auto" }}>
           <ErrorBoundary><Outlet /></ErrorBoundary>
         </Layout.Content>
       </Layout>

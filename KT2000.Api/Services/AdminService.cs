@@ -136,13 +136,16 @@ namespace KT2000.Api.Services
                 check.Parameters.AddWithValue("@n", dbName);
                 existed = check.ExecuteScalar() != DBNull.Value;
             }
-
             if (existed)
             {
                 // Database có sẵn nhưng RỖNG RUỘT (di sản của bản cũ) → vá nốt khuôn.
                 // Chỉ đụng database chưa có HOA_DON, nên không bao giờ chạm dữ liệu sống.
                 using var probe = new SqlCommand($"SELECT OBJECT_ID('[{dbName}]..HOA_DON')", conn);
-                if (probe.ExecuteScalar() != DBNull.Value) return false;   // đã đủ khuôn
+                if (probe.ExecuteScalar() != DBNull.Value)
+                {
+                    ApplyNbTables(conn, dbName);
+                    return false;
+                }
             }
             else
             {
@@ -151,6 +154,7 @@ namespace KT2000.Api.Services
             }
 
             ApplyTenantTemplate(conn, dbName);
+            ApplyNbTables(conn, dbName);
             return !existed;   // true = vừa tạo mới database
         }
 
@@ -166,12 +170,33 @@ namespace KT2000.Api.Services
             }
         }
 
-        private static string ReadTenantTemplate()
+        // Bộ bảng nội bộ (013/014/015). Tách khỏi ApplyTenantTemplate vì còn phải gọi
+        // riêng cho các database dựng trước khi có script này.
+        private static void ApplyNbTables(SqlConnection conn, string dbName)
+        {
+            // 013 dựng danh mục _NB, 014 thêm cột bổ sung, 015 vá khuôn HOA_DON
+            // (ma_nvkd/ma_nvvc/ma_goi + cột tính huong) và dựng GOI_HD/GOI_HD_LINE.
+            // PHẢI chạy đúng thứ tự này: 015 dọn di sản DON_HANG của bản 013 cũ.
+            foreach (var file in new[] { "KT2000.Api.tenant_nb.sql",
+                                         "KT2000.Api.tenant_nb_bosung.sql",
+                                         "KT2000.Api.tenant_nb_hoadon_goi.sql",
+                                         "KT2000.Api.tenant_nb_tri_gia.sql" })
+                foreach (var batch in SplitSqlBatches(ReadEmbedded(file)))
+                {
+                    using var cmd = new SqlCommand($"USE [{dbName}];\n{batch}", conn);
+                    cmd.CommandTimeout = 120;
+                    cmd.ExecuteNonQuery();
+                }
+        }
+
+        private static string ReadTenantTemplate() => ReadEmbedded("KT2000.Api.tenant_template.sql");
+
+        private static string ReadEmbedded(string logicalName)
         {
             using var s = typeof(AdminService).Assembly
-                .GetManifestResourceStream("KT2000.Api.tenant_template.sql")
+                .GetManifestResourceStream(logicalName)
                 ?? throw new InvalidOperationException(
-                    "Thiếu khuôn schema nhúng (KT2000.Api.tenant_template.sql) — build lại backend");
+                    $"Thiếu file SQL nhúng ({logicalName}) — build lại backend");
             using var r = new StreamReader(s);
             return r.ReadToEnd();
         }

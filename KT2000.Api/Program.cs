@@ -18,6 +18,7 @@ builder.Services.AddControllers();
 builder.Services.AddSingleton<TenantDbResolver>();
 builder.Services.AddScoped<AdminService>();
 builder.Services.AddScoped<ImportService>();
+builder.Services.AddScoped<NoiBoService>();   // phần nội bộ: danh mục + phiếu xuất/nhập
 
 // Mật khẩu cổng TCT mã hóa hai chiều bằng Data Protection. Khóa PHẢI lưu ra đĩa:
 // mặc định nó nằm trong profile người dùng và đổi theo tài khoản chạy tiến trình —
@@ -62,6 +63,12 @@ app.UseSwaggerUI();
 app.UseCors("AllowReact");
 
 app.UseAuthentication();   // MỚI: soát "con dấu" trên JWT của mỗi request
+
+// AD-NB-04/05: cắt gọt instance NB (cờ "Mode": "NB" trong appsettings của instance đó).
+// PHẢI đứng SAU UseAuthentication — nó đọc claim tenant_type, mà claim chỉ có sau khi
+// JWT đã được soát. Đứng trước UseAuthorization để chặn từ sớm, khỏi chạy vào endpoint.
+app.UseMiddleware<KT2000.Api.Services.NbModeGuard>();
+
 app.UseAuthorization();    // MỚI: đối chiếu yêu cầu [Authorize] của endpoint
 app.UseDefaultFiles();   // vào / thì trả index.html
 app.UseStaticFiles();    // phục vụ file trong wwwroot (bản build React)

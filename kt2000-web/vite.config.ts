@@ -5,6 +5,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    port: 5173,
+    strictPort: true,
+    // Backend chạy cổng 5000 (AD-NB-04: instance thuế KT2000Api). Đổi ở đây thì phải
+    // đổi khớp cả "Urls" trong appsettings.json và CORS trong Program.cs.
     proxy: { "/api": "http://localhost:5000" },
   },
   build: {

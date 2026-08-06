@@ -12,6 +12,21 @@
     <EmbeddedResource Include="..\database\010_tenant_template_v6.sql"
                       LogicalName="KT2000.Api.tenant_template.sql" />
 
+    <!-- Bộ bảng nội bộ (NB): danh mục DM_KH_NB/DM_HANG_NB (013+014), rồi vá khuôn
+         HOA_DON + gói hàng (015). Tách file riêng chứ không gộp vào 010 để 010 giữ
+         nguyên vai "bản sao đúng của TUAN_NGA_2025".
+         Chạy cho MỌI tenant theo AD-NB-09 — tenant thuế chỉ thừa mấy bảng rỗng và
+         mấy cột trống (ma_nvkd/ma_nvvc/ma_goi), đúng nguyên tắc "cột thừa để trống
+         theo CẢ HAI CHIỀU" của SPEC mục 4. THỨ TỰ TRONG DANH SÁCH LÀ THỨ TỰ CHẠY. -->
+    <EmbeddedResource Include="..\database\013_tenant_nb_donhang.sql"
+                      LogicalName="KT2000.Api.tenant_nb.sql" />
+    <EmbeddedResource Include="..\database\014_tenant_nb_bosung.sql"
+                      LogicalName="KT2000.Api.tenant_nb_bosung.sql" />
+    <EmbeddedResource Include="..\database\015_nb_hoadon_goi.sql"
+                      LogicalName="KT2000.Api.tenant_nb_hoadon_goi.sql" />
+    <EmbeddedResource Include="..\database\017_goi_hd_line_tri_gia.sql"
+                      LogicalName="KT2000.Api.tenant_nb_tri_gia.sql" />
+
     <!-- Bộ tải HĐ của TCT đi kèm bản build: TctFetchService gọi nó bằng Process.Start
          theo đường dẫn <thư mục exe>\tools\. Copy chứ không nhúng, vì python.exe cần
          file thật trên đĩa. Đè được bằng khóa Paths:TctScript nếu muốn để nơi khác. -->

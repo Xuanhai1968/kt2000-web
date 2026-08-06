@@ -86,6 +86,14 @@ namespace KT2000.Api.Services
             if (access?.Tenant == null)
                 throw new UnauthorizedAccessException("Bạn không được quyền mở dữ liệu của đơn vị này");
 
+            // AD-NB-05: instance NB chỉ chấp nhận login của user thuộc tenant 'noibo'.
+            // NbModeGuard đã chặn mọi request sau đăng nhập, nhưng chặn ngay từ cửa login
+            // thì người dùng nhận đúng thông báo thay vì đăng nhập xong mới bị 403 khắp nơi.
+            if (string.Equals(_config["Mode"], "NB", StringComparison.OrdinalIgnoreCase)
+                && access.Tenant.TenantType != "noibo")
+                throw new UnauthorizedAccessException(
+                    "Đơn vị này không mở trên máy chủ nội bộ. Vui lòng dùng bản trong mạng nội bộ.");
+
             var fy = await _db.FiscalYears
                 .FirstOrDefaultAsync(f => f.TenantId == tenantId && f.Year == req.FiscalYear);
             if (fy == null)
