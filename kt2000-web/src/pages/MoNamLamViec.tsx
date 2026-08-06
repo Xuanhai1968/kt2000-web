@@ -1,16 +1,24 @@
 import { useEffect, useState } from "react";
-import { Card, Table, Button, InputNumber, Space, Tag, message } from "antd";
+import { Card, Table, Button, InputNumber, Space, Tag, message, Alert } from "antd";
 import { getAdminTenants, openFiscalYears } from "../api";
 import type { AdminTenant, OpenYearResult } from "../api";
+import { useAuth } from "../AuthContext";
 
 export default function MoNamLamViec() {
+    // Mở năm = CREATE DATABASE nên chỉ quản trị viên được bấm. Người khác vẫn vào xem
+    // được danh sách đơn vị và các năm đã mở — khóa nút chứ không khóa màn hình.
+    // Đây chỉ là lớp tiện dụng; chặn thật nằm ở backend (403).
+    const { session } = useAuth();
+    const laAdmin = !!session?.user.isAdmin;
     const [tenants, setTenants] = useState<AdminTenant[]>([]);
     const [selected, setSelected] = useState<React.Key[]>([]);
     const [year, setYear] = useState<number>(new Date().getFullYear());
     const [running, setRunning] = useState(false);
     const [results, setResults] = useState<OpenYearResult[]>([]);
 
-    useEffect(() => { getAdminTenants().then((r) => setTenants(r.data)); }, []);
+    // QT-02: màn này là chỗ DUY NHẤT cần thấy MDN_NB — mở năm cho chính tenant quản lý
+    // đi chung đường OpenYears, không đặc cách. Các màn khác vẫn giữ mặc định (ẩn).
+    useEffect(() => { getAdminTenants(true).then((r) => setTenants(r.data)); }, []);
     const run = async () => {
         setRunning(true);
         try {
@@ -33,12 +41,17 @@ export default function MoNamLamViec() {
 
   return (
     <Card title="Mở năm làm việc mới (hàng loạt)">
+      {!laAdmin && (
+        <Alert style={{ marginBottom: 12 }} type="info" showIcon
+               message="Bạn xem được danh sách và các năm đã mở, nhưng chỉ quản trị viên mới mở được năm mới" />
+      )}
       <Space style={{ marginBottom: 12 }}>
         Năm cần mở:
         <InputNumber min={2000} max={2100} value={year}
                      onChange={(v) => setYear(v ?? year)} />
         <Button type="primary" loading={running}
-                disabled={selected.length === 0} onClick={run}>
+                disabled={!laAdmin || selected.length === 0} onClick={run}
+                title={laAdmin ? undefined : "Chỉ quản trị viên được mở năm làm việc mới"}>
           Mở năm {year} cho {selected.length} đơn vị
         </Button>
       </Space>

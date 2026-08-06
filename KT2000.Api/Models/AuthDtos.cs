@@ -1,9 +1,13 @@
 namespace KT2000.Api.Models
 {
     // ---- Requests ----
+    // Có Password vì danh sách đơn vị là thông tin RIÊNG của từng người. Trước đây
+    // endpoint này ẩn danh: ai cũng gõ một tên bất kỳ để soi được đơn vị nào có thật
+    // và tài khoản nào có thật. Nay phải qua cửa mật khẩu mới thấy.
     public class GetTenantsRequest
     {
         public string Username { get; set; } = "";
+        public string Password { get; set; } = "";
     }
 
     public class LoginRequest
@@ -59,6 +63,49 @@ namespace KT2000.Api.Models
         public string? TaxCode { get; set; }
         public string? Address { get; set; }
         public int FirstYear { get; set; }
+        // QT-03: 'headquarter' (mặc định, đơn vị thuế) hoặc 'noibo' (tenant NB)
+        public string TenantType { get; set; } = "headquarter";
+        // AD-NB-03: bắt buộc với tenant 'noibo', bỏ trống với tenant thuế
+        public string? LinkedTenantCode { get; set; }
+    }
+
+    // ===== QT-01: quản lý user & phân quyền =====
+
+    public class TaoUserRequest
+    {
+        public string LoginName { get; set; } = "";
+        public string? RealName { get; set; }
+        public string MatKhau { get; set; } = "";   // mật khẩu ban đầu, băm ngay khi lưu
+        public bool IsAdmin { get; set; }
+        public Guid? TenantId { get; set; }         // gán luôn một đơn vị nếu có
+        public string Role { get; set; } = "accountant";
+    }
+
+    public class DoiTrangThaiUserRequest
+    {
+        public Guid UserId { get; set; }
+        public bool IsActive { get; set; }
+    }
+
+    public class ResetMatKhauRequest
+    {
+        public Guid UserId { get; set; }
+        public string MatKhauMoi { get; set; } = "";
+    }
+
+    // Gán/gỡ quyền của một user trên MỘT đơn vị
+    public class CapQuyenRequest
+    {
+        public Guid UserId { get; set; }
+        public Guid TenantId { get; set; }
+        public string? Role { get; set; }   // null = gỡ quyền khỏi đơn vị này
+    }
+
+    // Tự đổi mật khẩu của chính mình — AD-QT-01: endpoint DUY NHẤT sống ở cả hai instance
+    public class DoiMatKhauRequest
+    {
+        public string MatKhauCu { get; set; } = "";
+        public string MatKhauMoi { get; set; } = "";
     }
 
     public class OpenYearsRequest
@@ -73,6 +120,7 @@ namespace KT2000.Api.Models
         public string? Address { get; set; }
         public bool IsActive { get; set; }
         public bool KhaiQuy { get; set; }   // true = khai QUÝ, false = khai THÁNG
+        public string? LinkedTenantCode { get; set; }   // AD-NB-03, chỉ dùng với tenant 'noibo'
     }
     // Hỏi: mỗi đơn vị còn bao nhiêu file gốc nằm lại raw\ (HĐ lệch Σ line vs master)
     public class LeftoverRequest

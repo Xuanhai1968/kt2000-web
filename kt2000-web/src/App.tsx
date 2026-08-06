@@ -7,9 +7,13 @@ import HoaDonDauVao from "./pages/HoaDonDauVao";
 import ChoPhatTrien from "./pages/ChoPhatTrien";
 import DonViKhachHang from "./pages/DonViKhachHang";
 import MoNamLamViec from "./pages/MoNamLamViec";
+// Phần nội bộ (NB)
 import { PhieuXuatHang, PhieuNhapHang } from "./pages/PhieuXuatNhap";
 import GoiHang from "./pages/GoiHang";
 import DanhSachPhieu from "./pages/DanhSachPhieu";
+// Phần quản trị
+import QuanLyUser from "./pages/QuanLyUser";
+import NhatKyHeThong from "./pages/NhatKyHeThong";
 export default function App() {
   return (
     <AuthProvider>
@@ -31,6 +35,8 @@ export default function App() {
             <Route path="danh-sach-phieu" element={<DanhSachPhieu />} />
             <Route path="don-vi" element={<DonViKhachHang />} />
             <Route path="mo-nam" element={<MoNamLamViec />} />
+            <Route path="quan-ly-user" element={<QuanLyUser />} />
+            <Route path="nhat-ky" element={<NhatKyHeThong />} />
           </Route>
         </Routes>
       </BrowserRouter>
