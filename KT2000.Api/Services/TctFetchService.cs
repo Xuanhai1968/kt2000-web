@@ -21,6 +21,26 @@ namespace KT2000.Api.Services
         public string? Loi { get; set; }
         public DateTime? BatDau { get; set; }
         public DateTime? KetThuc { get; set; }
+
+        // NT-01: hướng lấy và số tải THỰC TẾ, đọc thẳng từ status.json thay vì bắt
+        // người dùng đoán qua câu message.
+        public string Huong { get; set; } = "";          // VAO / RA / VAO+RA
+        public int TaiOk { get; set; }                   // XML tải thành công
+        public int TaiLoi { get; set; }                  // XML tải hỏng (mọi loại)
+        public int SoFile { get; set; }                  // total_files khi script báo xong
+
+        // Tách hai loại "không tải được" — gộp lại thì lần nào cũng thấy "lỗi" mà
+        // không ai biết cái nào đáng đi tìm.
+        public int KhongCoGoc { get; set; }   // HTTP 500 "không tồn tại hồ sơ gốc" — HỢP LỆ
+        public int LoiThat { get; set; }      // 429 / 504 / mạng hỏng — phải xem lại
+        public string NguonDs { get; set; } = "";        // excel | search
+
+        // NT-03: kết quả pha NẠP chạy ngay sau pha lấy, trong cùng một lượt
+        public string PhaNap { get; set; } = "";         // "" / dang_nap / xong / loi
+        public int NapMoi { get; set; }
+        public int NapCapNhat { get; set; }
+        public int NapLoi { get; set; }
+        public string? NapThongDiep { get; set; }
     }
 
     public class PhienLay
@@ -65,9 +85,11 @@ namespace KT2000.Api.Services
         public string MaHoa(string matKhauTho) => _protector.Protect(matKhauTho);
 
         // ---------- Khởi động một phiên ----------
+        // NT-03: lấy xong là nạp luôn, không còn bước hai. xoaTruocKhiGhi đi kèm xuống
+        // tận pha nạp vì người dùng chọn nó ở cùng một thanh nút với nút Lấy.
         public PhienLay BatDauPhien(List<(Guid Id, string Code)> dsDonVi,
                                     int nam, int thangBd, int thangKt, string huong,
-                                    string nguoiChay)
+                                    bool xoaTruocKhiGhi, string nguoiChay)
         {
             if (!_khoaPhien.Wait(0))
                 throw new ArgumentException("Đang có phiên lấy hóa đơn chạy dở — chờ xong hoặc bấm Dừng");
@@ -91,7 +113,7 @@ namespace KT2000.Api.Services
                 _cts = new CancellationTokenSource();
                 var token = _cts.Token;
                 // Chạy nền, KHÔNG await — API trả về ngay, giao diện hỏi tiến độ sau
-                _ = Task.Run(() => ChayTuanTu(phien, huong, nguoiChay, token));
+                _ = Task.Run(() => ChayTuanTu(phien, huong, xoaTruocKhiGhi, nguoiChay, token));
                 return phien;
             }
             catch
@@ -121,8 +143,8 @@ namespace KT2000.Api.Services
             _config["Paths:TctScript"]
             ?? Path.Combine(AppContext.BaseDirectory, "tools", "TRA_CUU_HDDT_2_0.py");
 
-        private async Task ChayTuanTu(PhienLay phien, string huong, string nguoiChay,
-                                      CancellationToken token)
+        private async Task ChayTuanTu(PhienLay phien, string huong, bool xoaTruoc,
+                                      string nguoiChay, CancellationToken token)
         {
             try
             {
@@ -134,7 +156,7 @@ namespace KT2000.Api.Services
                         muc.ThongDiep = "Người dùng đã dừng phiên";
                         continue;
                     }
-                    await ChayMotLuot(muc, huong, nguoiChay, token);
+                    await ChayMotLuot(muc, huong, xoaTruoc, nguoiChay, token);
                 }
             }
             catch (Exception ex)
@@ -148,8 +170,8 @@ namespace KT2000.Api.Services
             }
         }
 
-        private async Task ChayMotLuot(TienDoLay muc, string huong, string nguoiChay,
-                                       CancellationToken token)
+        private async Task ChayMotLuot(TienDoLay muc, string huong, bool xoaTruoc,
+                                       string nguoiChay, CancellationToken token)
         {
             muc.TrangThai = "dang_chay";
             muc.BatDau = DateTime.Now;
@@ -176,8 +198,11 @@ namespace KT2000.Api.Services
             // Thư mục job phải TRÙNG khuôn mà Importer bước 2 đọc:
             // <JobsRoot>\<MÃ>\NAM<năm>\T<tháng>_<năm>_<MÃ>\
             string jobsRoot = _config["Paths:JobsRoot"]!;
-            string jobId = Path.Combine($"NAM{muc.Nam}", $"T{muc.Thang}_{muc.Nam}_{muc.Code}");
-            string jobDir = Path.Combine(jobsRoot, muc.Code, jobId);
+            // jobId là TÊN job, không kèm thư mục. Script tự chèn tầng NAM<năm> (nó đọc
+            // năm ra từ chính tên job), nên trước đây truyền "NAM2026\T5_..." xuống là
+            // tầng NAM bị chèn hai lần → sinh cây NAM2026\NAM2026\ rỗng bên cạnh cây thật.
+            string jobId = $"T{muc.Thang}_{muc.Nam}_{muc.Code}";
+            string jobDir = Path.Combine(jobsRoot, muc.Code, $"NAM{muc.Nam}", jobId);
             Directory.CreateDirectory(jobDir);
 
             string statusFile = Path.Combine(jobDir, "status.json");
@@ -200,7 +225,9 @@ namespace KT2000.Api.Services
                 "--thang_bd", muc.Thang.ToString(),
                 "--thang_kt", muc.Thang.ToString(),
                 "--nam", muc.Nam.ToString(),
-                "--loai", huong.Equals("all", StringComparison.OrdinalIgnoreCase) ? "all" : "vao",
+                "--loai", huong.Equals("all", StringComparison.OrdinalIgnoreCase) ? "all"
+                        : huong.Equals("ra",  StringComparison.OrdinalIgnoreCase) ? "ra"
+                        : "vao",
                 "--ma_donvi", muc.Code,
                 "--job_id", jobId,
                 "--save_dir", jobsRoot,
@@ -270,7 +297,79 @@ namespace KT2000.Api.Services
                 muc.TrangThai = "loi";
                 muc.Loi = $"Tiến trình dừng ở giai đoạn '{muc.GiaiDoan}' — xem backend_run.log trong thư mục job";
             }
+
+            // NT-03: lấy xong là nạp luôn, cùng một lượt. Chỉ nạp khi pha lấy thành công —
+            // lấy hỏng mà vẫn nạp thì nạp lại đúng dữ liệu cũ của lần chạy trước, người
+            // dùng nhìn con số lại tưởng lần này có kết quả.
+            if (muc.TrangThai == "xong")
+                await NapNgay(muc, huong, xoaTruoc, nguoiChay);
+
             muc.KetThuc = DateTime.Now;
+            await GhiNhatKyLuot(muc, nguoiChay);
+        }
+
+        // Pha 2 của một lượt: đưa dữ liệu vừa tải vào HOA_DON / HOA_DON_LINE.
+        // Hỏng ở đây KHÔNG hạ trạng thái lượt xuống "loi": file đã tải về nằm nguyên
+        // trên đĩa, nạp lại được. Trộn hai loại hỏng vào một ô thì lần sau không biết
+        // phải tải lại hay chỉ cần nạp lại.
+        private async Task NapNgay(TienDoLay muc, string huong, bool xoaTruoc, string nguoiChay)
+        {
+            muc.PhaNap = "dang_nap";
+            muc.NapThongDiep = "Đang nạp vào database…";
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var import = scope.ServiceProvider.GetRequiredService<ImportService>();
+                var kq = await import.ImportJob(new Models.ImportJobRequest
+                {
+                    TenantId = muc.TenantId, Nam = muc.Nam, Thang = muc.Thang,
+                    Huong = huong, XoaTruocKhiGhi = xoaTruoc,
+                }, nguoiChay);
+
+                muc.NapMoi = kq.Inserted;
+                muc.NapCapNhat = kq.Updated;
+                muc.NapLoi = kq.Errors.Count;
+                muc.PhaNap = "xong";
+                muc.NapThongDiep = $"Nạp: mới {kq.Inserted}, cập nhật {kq.Updated}"
+                    + (kq.LechTong > 0 ? $", lệch Σ {kq.LechTong} HĐ nằm lại raw\\" : "")
+                    + (kq.KhongCoGoc > 0 ? $", {kq.KhongCoGoc} HĐ không có gốc TCT" : "");
+            }
+            catch (Exception ex)
+            {
+                muc.PhaNap = "loi";
+                muc.NapThongDiep = "Lấy xong nhưng KHÔNG nạp được: " + ex.Message;
+                _log.LogError(ex, "Nạp tự động hỏng cho {Code} T{Thang}", muc.Code, muc.Thang);
+            }
+        }
+
+        // NT-07: một dòng nhật ký cho mỗi lượt, để màn hình mở lên là thấy ngay lịch sử.
+        // Ghi vào ActivityLog sẵn có — luật #7 của repo, không đẻ bảng mới.
+        private async Task GhiNhatKyLuot(TienDoLay muc, string nguoiChay)
+        {
+            try
+            {
+                string chiTiet =
+                    $"{muc.Code} T{muc.Thang} {(string.IsNullOrEmpty(muc.Huong) ? "VAO" : muc.Huong)}"
+                    + $" · tải {muc.TaiOk}/{(muc.Tong > 0 ? muc.Tong : muc.TaiOk)}"
+                    + (muc.KhongCoGoc > 0 ? $" ({muc.KhongCoGoc} không có gốc)" : "")
+                    + (muc.LoiThat > 0 ? $" (LỖI {muc.LoiThat})" : "")
+                    + (string.IsNullOrEmpty(muc.NapThongDiep) ? "" : " · " + muc.NapThongDiep)
+                    + (string.IsNullOrEmpty(muc.Loi) ? "" : " · LỖI: " + muc.Loi);
+
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await db.Database.ExecuteSqlRawAsync(
+                    @"INSERT INTO ActivityLog (UserName, TenantId, Nam, Thang, Action, Detail)
+                      VALUES ({0}, {1}, {2}, {3}, {4}, {5})",
+                    nguoiChay, muc.TenantId, muc.Nam, muc.Thang,
+                    muc.TrangThai == "xong" ? "LAY_HD" : "LAY_HD_LOI",
+                    chiTiet.Length > 500 ? chiTiet[..500] : chiTiet);
+            }
+            catch (Exception ex)
+            {
+                // Mất một dòng lịch sử còn hơn làm hỏng cả phiên đang chạy
+                _log.LogWarning(ex, "Không ghi được nhật ký lượt lấy HĐ");
+            }
         }
 
         private static void KetThucLoi(TienDoLay muc, string loi)
@@ -295,6 +394,24 @@ namespace KT2000.Api.Services
                 if (r.TryGetProperty("message", out var ms)) muc.ThongDiep = ms.GetString() ?? "";
                 if (r.TryGetProperty("total", out var tt) && tt.TryGetInt32(out var t)) muc.Tong = t;
                 if (r.TryGetProperty("downloaded", out var dl) && dl.TryGetInt32(out var d)) muc.DaTai = d;
+                // NT-01: số THỰC TẾ tải được, tách khỏi "đã duyệt tới hóa đơn thứ mấy"
+                if (r.TryGetProperty("ok", out var ok) && ok.TryGetInt32(out var o)) muc.TaiOk = o;
+                if (r.TryGetProperty("err", out var er) && er.TryGetInt32(out var e)) muc.TaiLoi = e;
+                if (r.TryGetProperty("total_files", out var tf) && tf.TryGetInt32(out var f)) muc.SoFile = f;
+                // Bộ đếm cộng dồn cả job — script nay giữ chúng trong 'state' nên mọi
+                // lần ghi đều mang theo, kể cả lần ghi cuối cùng.
+                if (r.TryGetProperty("tong_hd", out var th) && th.TryGetInt32(out var h2)) muc.Tong = h2 > 0 ? h2 : muc.Tong;
+                if (r.TryGetProperty("tai_ok", out var tk) && tk.TryGetInt32(out var k2)) muc.TaiOk = k2;
+                if (r.TryGetProperty("khong_co_goc", out var kg) && kg.TryGetInt32(out var g2)) muc.KhongCoGoc = g2;
+                if (r.TryGetProperty("loi_that", out var lt) && lt.TryGetInt32(out var l2)) muc.LoiThat = l2;
+                if (r.TryGetProperty("nguon_ds", out var nd)) muc.NguonDs = nd.GetString() ?? "";
+                if (r.TryGetProperty("loai_xuat", out var lx))
+                {
+                    string lv = lx.GetString() ?? "";
+                    muc.Huong = lv.Equals("all", StringComparison.OrdinalIgnoreCase) ? "VAO+RA"
+                              : lv.Equals("ra",  StringComparison.OrdinalIgnoreCase) ? "RA"
+                              : "VAO";
+                }
             }
             catch { /* file đang được ghi dở */ }
         }
