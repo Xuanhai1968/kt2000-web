@@ -354,7 +354,10 @@ export const importJob = (
 
 export interface DmHangNb {
   maHang: string | null;
-  tenHang: string;
+  tenHang: string;             // tên ĐÁNH ĐƠN (có ghi chú nắp/lô cho kho)
+  // Tên CHUẨN đưa lên hóa đơn điện tử (Viettel). Trống = dùng luôn tenHang.
+  // Hai tên vì ghi chú thực địa ("nắp trắng") không được lên hóa đơn thuế.
+  tenHd: string | null;
   dvt: string | null;
   quyCach: string | null;
   giaBan: number | null;
@@ -391,6 +394,20 @@ export interface DmKhNb {
   // 014
   tenTat: string | null;
   diaChiGiao: string | null;   // địa chỉ GIAO, khác địa chỉ trên hóa đơn
+  // 018 — nạp từ hệ USA_Meva cũ
+  maNhan: string | null;       // nhãn hàng đại lý này bán (-> DM_NHAN)
+  tenNhan: string | null;      // đọc ra để hiện, không ghi xuống
+  maTinh: string | null;
+}
+
+// Danh mục NHÃN HÀNG (DM_NHAN). Trên form đánh đơn, nhãn vừa để hiện vừa là BỘ LỌC
+// khách: 1600+ khách, gõ tên không nhớ thì chọn nhãn cho danh sách ngắn lại.
+export interface DmNhan {
+  maNhan: string | null;
+  tenNhan: string;
+  tenCty: string | null;       // pháp nhân in trên phiếu
+  mst: string | null;
+  tenTat: string | null;
 }
 
 export interface DonNbLine {
@@ -423,7 +440,9 @@ export interface DonNb {
   maKh: string | null;
   tenKh: string | null;
   mst: string | null;
-  diaChi: string | null;
+  diaChi: string | null;       // địa chỉ CỬA HÀNG của khách
+  // Địa chỉ GIAO khi khách muốn chở tới chỗ khác. Trống = giao đúng địa chỉ cửa hàng.
+  diaChiGiao: string | null;
   maNvkd: string | null;       // -> DM_KH_NB (loaiDt='NV')
   maNvvc: string | null;
   maGoi: string | null;        // BR-NB-08: thuộc gói nào
@@ -437,6 +456,9 @@ export interface DonNb {
   huong: HuongDon | null;
   tenNvkd: string | null;      // đọc ra để hiện, không ghi xuống
   tenNvvc: string | null;
+  // Nhãn hàng của KHÁCH, backend JOIN sẵn từ DM_KH_NB -> DM_NHAN. Chỉ ĐỌC RA, để in
+  // lên phiếu — mỗi đơn một khách nên phải lấy theo đơn, không truyền chung từ ngoài.
+  tenNhan: string | null;
   lines: DonNbLine[];
 }
 
@@ -492,13 +514,22 @@ export interface GoiHd {
 // của khuôn HOA_DON)
 export type HuongDon = "VAO" | "RA";
 
-export const nbTimHang = (tu?: string, gioiHan = 50) =>
-  api.get<DmHangNb[]>("/nb/hang", { params: { tu, gioiHan } });
+// boQua: số dòng bỏ qua từ đầu — combobox cuộn tới đáy thì gọi tiếp (cuộn vô tận).
+export const nbTimHang = (tu?: string, gioiHan = 50, boQua = 0) =>
+  api.get<DmHangNb[]>("/nb/hang", { params: { tu, gioiHan, boQua } });
 
 export const nbLuuHang = (d: Partial<DmHangNb>) => api.post<DmHangNb>("/nb/hang", d);
 
-export const nbTimKh = (tu?: string, loaiDt?: LoaiDoiTuong, gioiHan = 50) =>
-  api.get<DmKhNb[]>("/nb/kh", { params: { tu, loaiDt, gioiHan } });
+// maNhan: lọc khách theo nhãn hàng họ bán. Bỏ trống = không lọc.
+// boQua: xem nbTimHang — cùng cơ chế cuộn vô tận.
+export const nbTimKh = (tu?: string, loaiDt?: LoaiDoiTuong, gioiHan = 50,
+                        maNhan?: string | null, boQua = 0) =>
+  api.get<DmKhNb[]>("/nb/kh",
+    { params: { tu, loaiDt, gioiHan, maNhan: maNhan || undefined, boQua } });
+
+// 43 nhãn, trả hết một lượt nên lọc tại chỗ, không cần gọi lại mỗi lần gõ.
+export const nbTimNhan = (tu?: string) =>
+  api.get<DmNhan[]>("/nb/nhan", { params: { tu } });
 
 export const nbLuuKh = (d: Partial<DmKhNb>) => api.post<DmKhNb>("/nb/kh", d);
 
@@ -520,6 +551,15 @@ export const nbDanhSachDonTatCa = (thang?: number, tu?: string, gioiHan = 200) =
 
 export const nbLayDon = (maHd: string) =>
   api.get<DonNb>(`/nb/don/chi-tiet/${encodeURIComponent(maHd)}`);
+
+// Đơn GẦN NHẤT của một khách, kèm đủ dòng hàng — cho "dùng lại đơn trước".
+// Lọc theo maKh phải làm ở backend: tham số `tu` của nbDanhSachDon chỉ tìm trong
+// ma_hd và ten_kh, truyền mã khách vào đó sẽ ra rỗng hoặc trúng nhầm khách khác.
+// Khách chưa từng mua -> backend trả 204, axios cho data = "" -> quy về null.
+export const nbDonGanNhat = async (huong: HuongDon, maKh: string) => {
+  const r = await api.get<DonNb | "">(`/nb/don/gan-nhat/${huong}`, { params: { maKh } });
+  return r.status === 204 || !r.data ? null : (r.data as DonNb);
+};
 
 export const nbLuuDon = (huong: HuongDon, d: Partial<DonNb>) =>
   api.post<DonNb>(`/nb/don/${huong}`, d);

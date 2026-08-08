@@ -1,21 +1,4 @@
-// Tiện ích IN GIẤY dùng chung cho mọi mẫu in của phần nội bộ.
-//
-// Khuôn mẫu bê từ Hoa_Sang (utils/printInvoice.ts + components/PrintInvoice.tsx) để tờ
-// giấy in ra giống hệt bản người dùng đang quen: khối đầu công ty, tiêu đề giữa trang,
-// khối thông tin nhãn-giá trị, bảng hàng có viền, dòng TỔNG, bảng 4 ô chữ ký, chân trang
-// có giờ in. Lớp CSS giữ nguyên tiền tố .pxk__ của bản gốc cho dễ đối chiếu.
-//
-// VÌ SAO IFRAME CHỨ KHÔNG window.open: cửa sổ bật lên hay bị trình duyệt chặn
-// (popup blocker), nhất là khi lệnh in không nằm ngay trong cú bấm chuột. Iframe ẩn thì
-// không bị chặn, không nhá cửa sổ trắng, và in xong tự dọn. Hoa_Sang cũng làm vậy.
-//
-// KHÔNG có bước xem trước: bấm In là ra thẳng hộp thoại in của trình duyệt (hộp thoại đó
-// vốn đã có khung xem trước sẵn).
 
-// Rào ký tự đặc biệt trước khi ghép vào HTML.
-// BẮT BUỘC: tên hàng / tên khách do người dùng tự gõ, mà app này sắp phơi ra internet
-// (AD-NB-06). Đặt tên khách là "<script>..." mà ghép thẳng chuỗi thì mã đó chạy thật.
-// React tự rào cho phần giao diện, nhưng document.write thì KHÔNG.
 export const esc = (s: unknown) =>
   String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -95,8 +78,13 @@ export const CSS_IN = `
  * @param tieuDe tên hiện trên tab / tên file khi "in ra PDF"
  * @param than   phần thân tờ giấy — PHẢI tự bọc trong <div class="pxk">
  * @param kho    khổ giấy, mặc định A4 dọc như Hoa_Sang
+ * @param le     lề trang. Mặc định 12mm cho mẫu A4 dọc sẵn có.
+ *               Mẫu hai liên (usa_meva/mauInHaiLien.ts) tự kẻ khung và tự chừa lề
+ *               trong thân nên truyền "0" — để 12mm thì hai liên bị bóp lại, tràn cột.
+ *               PHẢI là tham số chứ không sửa cứng: @page của hai <style> khác nhau
+ *               HỢP NHẤT chứ không đè nhau, nên mẫu kia không tự ghi đè được từ ngoài.
  */
-export function inGiay(tieuDe: string, than: string, kho = "A4") {
+export function inGiay(tieuDe: string, than: string, kho = "A4", le = "12mm") {
   const frame = document.createElement("iframe");
   // Ẩn hẳn nhưng KHÔNG dùng display:none — Chrome không in được iframe display:none
   frame.style.position = "fixed";
@@ -115,7 +103,7 @@ export function inGiay(tieuDe: string, than: string, kho = "A4") {
   // CSS không tắt được phần đó.
   doc.write(`<!doctype html><html><head><meta charset="utf-8">
     <title>${esc(tieuDe)}</title>
-    <style>@page{size:${kho};margin:12mm}
+    <style>@page{size:${kho};margin:${le}}
     html,body{margin:0;padding:0}
     ${CSS_IN}</style>
     </head><body>${than}</body></html>`);

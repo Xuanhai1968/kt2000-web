@@ -740,10 +740,15 @@ function Phieu({ ch }: { ch: CauHinh }) {
       ngay: ngayRaIso(docNgay(ngay)),
       ngayNh: ngayRaIso(docNgay(ngayNh)),
       maKh, tenKh, mst, diaChi,
+      // Form cũ này chỉ có MỘT ô địa chỉ. Bản mới (usa_meva/PhieuDanhDonUsa.tsx) tách
+      // thành hai — cửa hàng và địa chỉ giao. Ở đây để null = giao tại địa chỉ trên.
+      diaChiGiao: null,
       maNvkd, maNvvc, maGoi: null, ghiChu,
       tienHang, tienVat, tongTien,
       tthaiHd: "nhap",
       tenNvkd, tenNvvc,
+      // Form cũ không có ô nhãn hàng (bản mới usa_meva/ mới có)
+      tenNhan: null,
       lines: hopLe.map((d, i) => ({
         sttLine: i + 1,
         maHang: d.maHang,

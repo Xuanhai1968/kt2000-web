@@ -26,22 +26,33 @@ const menuThue = [
   },
 ];
 
-const menuNoiBo = [
-  {
-    type: "group" as const, label: "PHIẾU",
-    children: [
-      { key: "/app/phieu-xuat", label: "Phiếu xuất hàng" },
-      { key: "/app/phieu-nhap", label: "Phiếu nhập hàng" },
-    ],
-  },
-  {
-    type: "group" as const, label: "KHO / GIAO HÀNG",
-    children: [
-      { key: "/app/danh-sach-phieu", label: "Danh sách phiếu" },
-      { key: "/app/goi-hang", label: "Gói hàng" },
-    ],
-  },
-];
+// Đơn vị NB KHÔNG dùng gói hàng. Gói (BR-NB-08) là chứng từ gom nhiều đơn lên một
+// chuyến xe — đơn vị nào giao lẻ từng đơn thì màn đó chỉ tổ rối.
+// Khai theo MÃ ĐƠN VỊ chứ không xóa hẳn khỏi menu: TUAN_NGA_NB vẫn dùng gói.
+// Thêm đơn vị mới không cần gói thì thêm mã vào đây.
+const KHONG_DUNG_GOI = ["USA_MEVA_NB"];
+
+const menuNoiBo = (maDonVi: string) => {
+  const khoGiaoHang = [
+    { key: "/app/danh-sach-phieu", label: "Danh sách phiếu" },
+  ];
+  if (!KHONG_DUNG_GOI.includes(maDonVi)) {
+    khoGiaoHang.push({ key: "/app/goi-hang", label: "Gói hàng" });
+  }
+  return [
+    {
+      type: "group" as const, label: "PHIẾU",
+      children: [
+        { key: "/app/phieu-xuat", label: "Phiếu xuất hàng" },
+        { key: "/app/phieu-nhap", label: "Phiếu nhập hàng" },
+      ],
+    },
+    {
+      type: "group" as const, label: "KHO / GIAO HÀNG",
+      children: khoGiaoHang,
+    },
+  ];
+};
 
 export default function AppShell() {
   const { session, signOut } = useAuth();
@@ -90,7 +101,7 @@ export default function AppShell() {
               // thật nằm ở backend — mọi endpoint gate bằng claim.
               // Tenant 'noibo' CHỈ thấy menu NB, không thấy sổ thuế lẫn quản trị.
               isNoiBo
-                ? menuNoiBo
+                ? menuNoiBo(session.tenant.code)
                 : [
                     ...menuThue,
                     ...(isInternal

@@ -7,8 +7,9 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    // Backend chạy cổng 5000 (AD-NB-04: instance thuế KT2000Api). Đổi ở đây thì phải
-    // đổi khớp cả "Urls" trong appsettings.json và CORS trong Program.cs.
+    // Backend chạy cổng 5000. Đổi ở đây thì phải đổi khớp cả "Urls" trong
+    // appsettings.json và CORS trong Program.cs — lệch một chỗ là frontend gọi API
+    // ra 404/CORS mà nhìn màn hình không đoán nổi vì sao.
     proxy: { "/api": "http://localhost:5000" },
   },
   build: {

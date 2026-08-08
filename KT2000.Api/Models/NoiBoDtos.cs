@@ -10,7 +10,10 @@ namespace KT2000.Api.Models
     public class DmHangNbDto
     {
         public string? MaHang { get; set; }        // để trống khi thêm mới -> backend tự sinh
-        public string TenHang { get; set; } = "";
+        public string TenHang { get; set; } = "";  // tên ĐÁNH ĐƠN (có ghi chú nắp/lô cho kho)
+        // Tên CHUẨN đưa lên hóa đơn điện tử (Viettel). Trống = dùng luôn TenHang.
+        // Hai tên vì tên kho mang ghi chú thực địa ("nắp trắng") không được lên hóa đơn thuế.
+        public string? TenHd { get; set; }
         public string? Dvt { get; set; }
         public string? QuyCach { get; set; }
         public decimal? GiaBan { get; set; }
@@ -46,6 +49,22 @@ namespace KT2000.Api.Models
         // --- 014 ---
         public string? TenTat { get; set; }
         public string? DiaChiGiao { get; set; }     // địa chỉ GIAO, khác địa chỉ trên HĐ
+        // --- 018: nạp từ hệ USA_Meva cũ ---
+        // Nhãn hàng đại lý này bán (-> DM_NHAN.ma_nhan). Vừa để HIỆN trên phiếu, vừa là
+        // BỘ LỌC khách: 1677 khách mà gõ tên không nhớ thì lọc theo nhãn cho ngắn lại.
+        public string? MaNhan { get; set; }
+        public string? TenNhan { get; set; }        // đọc ra để hiện, không ghi xuống
+        public string? MaTinh { get; set; }
+    }
+
+    // Danh mục nhãn hàng (DM_NHAN) — nạp từ KT_Master.CompanyBrands của hệ cũ
+    public class DmNhanDto
+    {
+        public string? MaNhan { get; set; }
+        public string TenNhan { get; set; } = "";
+        public string? TenCty { get; set; }         // pháp nhân in trên phiếu
+        public string? Mst { get; set; }
+        public string? TenTat { get; set; }
     }
 
     // Dòng hàng = HOA_DON_LINE
@@ -85,7 +104,11 @@ namespace KT2000.Api.Models
         public string? MaKh { get; set; }
         public string? TenKh { get; set; }         // nguyên văn lúc lập đơn
         public string? Mst { get; set; }
-        public string? DiaChi { get; set; }
+        public string? DiaChi { get; set; }        // địa chỉ CỬA HÀNG của khách
+        // Địa chỉ GIAO khi khách muốn chở tới chỗ khác (kho, công trình).
+        // Trống = giao đúng địa chỉ cửa hàng. Lưu xuống đơn chứ không đọc sống từ danh
+        // mục: khách đổi địa chỉ sang năm thì đơn cũ in lại vẫn ra đúng chỗ đã giao.
+        public string? DiaChiGiao { get; set; }
         public string? MaNvkd { get; set; }        // -> DM_KH_NB (loai_dt='NV')
         public string? MaNvvc { get; set; }        // -> DM_KH_NB (loai_dt='NV')
         public string? MaGoi { get; set; }         // BR-NB-08: thuộc gói nào
@@ -100,6 +123,11 @@ namespace KT2000.Api.Models
         // Tên người đọc từ DM_KH_NB để hiện lên lưới — chỉ ĐỌC RA, không ghi xuống
         public string? TenNvkd { get; set; }
         public string? TenNvvc { get; set; }
+        // Nhãn hàng của KHÁCH (JOIN DM_KH_NB -> DM_NHAN), để in lên phiếu. Chỉ ĐỌC RA.
+        // Đọc sống nên khách đổi nhãn thì đơn cũ in ra mang nhãn mới — chấp nhận được vì
+        // nhãn là thuộc tính của đại lý, không phải của lần giao hàng. Muốn chốt cứng
+        // theo thời điểm bán thì phải thêm cột ma_nhan vào HOA_DON.
+        public string? TenNhan { get; set; }
         public List<DonNbLineDto> Lines { get; set; } = new();
     }
 

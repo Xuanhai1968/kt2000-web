@@ -57,11 +57,15 @@ namespace KT2000.Api.Controllers
         }
 
         // ============================ DANH MỤC HÀNG ============================
+        // boQua: số dòng bỏ qua từ đầu — combobox cuộn tới đáy thì gọi tiếp với
+        // boQua = số dòng đang có (cuộn vô tận).
         [HttpGet("hang")]
-        public async Task<IActionResult> TimHang([FromQuery] string? tu, [FromQuery] int gioiHan = 50)
+        public async Task<IActionResult> TimHang([FromQuery] string? tu,
+                                                 [FromQuery] int gioiHan = 50,
+                                                 [FromQuery] int boQua = 0)
             => ChanNeuKhongPhaiNoiBo()
                ?? Ok(await _nb.SearchHang(TenantCode(), FiscalYear(), Rong(tu),
-                                          Math.Clamp(gioiHan, 1, 500)));
+                                          Math.Clamp(gioiHan, 1, 500), Math.Max(0, boQua)));
 
         [HttpPost("hang")]
         public async Task<IActionResult> LuuHang([FromBody] DmHangNbDto d)
@@ -78,12 +82,23 @@ namespace KT2000.Api.Controllers
         //   loaiDt=KH  -> combobox khách trên đơn
         //   loaiDt=NV  -> combobox NVKD/NVVC
         //   bỏ trống   -> màn hình danh mục, xem tất
+        // maNhan: lọc khách theo nhãn hàng họ bán (ô "Nhãn hàng" trên form đánh đơn).
+        // Bỏ trống = không lọc.
         [HttpGet("kh")]
         public async Task<IActionResult> TimKh([FromQuery] string? tu, [FromQuery] string? loaiDt,
-                                               [FromQuery] int gioiHan = 50)
+                                               [FromQuery] int gioiHan = 50,
+                                               [FromQuery] string? maNhan = null,
+                                               [FromQuery] int boQua = 0)
             => ChanNeuKhongPhaiNoiBo()
                ?? Ok(await _nb.SearchKh(TenantCode(), FiscalYear(), Rong(tu), Rong(loaiDt),
-                                        Math.Clamp(gioiHan, 1, 500)));
+                                        Math.Clamp(gioiHan, 1, 500), Rong(maNhan),
+                                        Math.Max(0, boQua)));
+
+        // ============================ DANH MỤC NHÃN HÀNG ============================
+        [HttpGet("nhan")]
+        public async Task<IActionResult> TimNhan([FromQuery] string? tu)
+            => ChanNeuKhongPhaiNoiBo()
+               ?? Ok(await _nb.SearchNhan(TenantCode(), FiscalYear(), Rong(tu)));
 
         [HttpPost("kh")]
         public async Task<IActionResult> LuuKh([FromBody] DmKhNbDto d)
@@ -132,6 +147,25 @@ namespace KT2000.Api.Controllers
             => ChanNeuKhongPhaiNoiBo()
                ?? Ok(await _nb.DanhSachDon(TenantCode(), FiscalYear(), ChuanHoaHuong(huong),
                                            thang, Rong(tu), Math.Clamp(gioiHan, 1, 500)));
+
+        // Đơn gần nhất của một khách — "dùng lại đơn trước" trên màn đánh đơn.
+        // Khai TRƯỚC "don/{huong}" cùng lý do với "don/tat-ca": nếu không, "gan-nhat"
+        // sẽ bị hiểu là giá trị của {huong} rồi chết ở ChuanHoaHuong.
+        //
+        // Không có đơn cũ trả 204 (No Content) chứ KHÔNG phải 404: khách mới chưa mua bao
+        // giờ là chuyện bình thường, không phải lỗi — 404 sẽ hiện đỏ trong log/console
+        // mỗi lần chọn khách mới, lâu dần không ai buồn đọc log nữa.
+        [HttpGet("don/gan-nhat/{huong}")]
+        public async Task<IActionResult> DonGanNhat(string huong, [FromQuery] string maKh)
+        {
+            var chan = ChanNeuKhongPhaiNoiBo();
+            if (chan != null) return chan;
+            if (string.IsNullOrWhiteSpace(maKh))
+                return BadRequest(new { message = "Thiếu mã khách" });
+            var don = await _nb.DonGanNhatCuaKhach(TenantCode(), FiscalYear(),
+                                                   ChuanHoaHuong(huong), maKh.Trim());
+            return don == null ? NoContent() : Ok(don);
+        }
 
         [HttpGet("don/chi-tiet/{maHd}")]
         public async Task<IActionResult> ChiTiet(string maHd)

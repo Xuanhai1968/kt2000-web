@@ -50,6 +50,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 builder.Services.AddAuthorization();
 
+// Cổng 5173 = Vite dev server (vite.config.ts). Chỉ có tác dụng lúc chạy DEV: bản
+// publish để frontend tĩnh trong wwwroot nên cùng gốc, không đi qua CORS.
+// Đổi cổng dev thì phải đổi cả ba chỗ: đây, vite.config.ts, và "Urls" trong appsettings.
 builder.Services.AddCors(o => o.AddPolicy("AllowReact", p =>
     p.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
 
