@@ -225,6 +225,72 @@ namespace KT2000.Api.Services
             return ds;
         }
 
+        // Danh mục MÀU PHA — nuôi ô "Mã màu" trên lưới đánh đơn (ngành sơn).
+        // ~1131 dòng nên KHÔNG trả hết như DM_NHAN: phải lọc + chặn số dòng, giống
+        // SearchHang/SearchKh. Tìm theo mã, nhóm và ghi chú — đúng bộ trường mà bản gốc
+        // USA_Meva lọc (SalesOrderPage.tsx: searchColors).
+        //
+        // ORDER BY thu_tu TRƯỚC: bảng màu giấy của thợ pha xếp theo dải màu, không theo
+        // bảng chữ cái. Xếp lại theo mã là người dùng không dò được theo tờ giấy họ cầm.
+        // thu_tu NULL dồn xuống cuối (SQL Server xếp NULL trước, nên phải nói rõ).
+        public async Task<List<DmMauDto>> SearchMau(string code, int year, string? tu,
+                                                    int gioiHan, int boQua = 0)
+        {
+            using var conn = await OpenAsync(code, year);
+            // GOM VỀ MỘT DÒNG MỖI MÃ MÀU, GHÉP TÊN MỌI NHÓM — bê đúng cách bản gốc
+            // USA_Meva làm (SalesOrderPage.tsx: buildColorOptions), vì dữ liệu thật có
+            // 1131 dòng nhưng chỉ 1003 mã: 128 mã xếp ở HAI nhóm (vd "2001-P" nằm cả
+            // Red lẫn Pastel), và KHÔNG mã nào trùng mà khác mã hex — nhóm chỉ là cách
+            // xếp ngăn của bảng màu giấy, cùng một màu sơn. Dòng hàng lại chỉ lưu
+            // ma_mau (không lưu nhóm) nên để nguyên là ô gợi ý hiện hai dòng y hệt nhau.
+            //
+            // HAI ĐIỂM PHẢI GIỮ ĐÚNG BẢN GỐC, sai một cái là hỏng:
+            //
+            // 1. LỌC THEO MÃ RỒI BUNG LẠI ĐỦ NHÓM (bản gốc: gom `codes` xong mới
+            //    `filter(c => codes.has(c.colorCode))`). Lọc thẳng trong GROUP BY thì
+            //    gõ "Red" ra dòng 2001-P nhưng nhãn chỉ còn "Pastel" — đúng cái nhóm
+            //    người ta vừa gõ lại biến mất. Vì thế điều kiện tìm nằm trong EXISTS
+            //    con, còn STRING_AGG chạy trên MỌI dòng của mã đó.
+            //
+            // 2. GHÉP TÊN NHÓM bằng " / " (bản gốc: `descs.join(' / ')`) chứ không lấy
+            //    MIN — "2001-P - Đỏ / Pastel" cho người dùng biết màu này nằm ở cả hai
+            //    ngăn của bảng màu giấy. Lấy MIN là giấu mất một ngăn.
+            //
+            // STRING_AGG cần SQL Server 2017+. Máy chủ đang chạy 2022 (SQLEXPRESS).
+            using var cmd = new SqlCommand(
+                @"SELECT m.ma_mau,
+                         STRING_AGG(m.nhom_mau, N' / ')
+                             WITHIN GROUP (ORDER BY m.thu_tu, m.nhom_mau),
+                         MIN(m.ma_hex), MIN(m.thu_tu), MIN(m.ghi_chu)
+                  FROM DM_MAU m
+                  WHERE m.ngung_dung = 0
+                    AND (@tu IS NULL OR EXISTS (
+                          SELECT 1 FROM DM_MAU k
+                          WHERE k.ma_mau = m.ma_mau AND k.ngung_dung = 0
+                            AND (k.ma_mau LIKE @like OR k.nhom_mau LIKE @like
+                                 OR k.ghi_chu LIKE @like)))
+                  GROUP BY m.ma_mau
+                  ORDER BY CASE WHEN MIN(m.thu_tu) IS NULL THEN 1 ELSE 0 END,
+                           MIN(m.thu_tu), m.ma_mau
+                  OFFSET (@boqua) ROWS FETCH NEXT (@top) ROWS ONLY", conn);
+            cmd.Parameters.AddWithValue("@top", gioiHan);
+            cmd.Parameters.AddWithValue("@boqua", boQua);
+            cmd.Parameters.AddWithValue("@tu", (object?)tu ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@like", $"%{tu}%");
+            var ds = new List<DmMauDto>();
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+                ds.Add(new DmMauDto
+                {
+                    MaMau = r.GetString(0),
+                    NhomMau = r.IsDBNull(1) ? "" : r.GetString(1),
+                    MaHex = r.IsDBNull(2) ? null : r.GetString(2),
+                    ThuTu = r.IsDBNull(3) ? null : r.GetInt32(3),
+                    GhiChu = r.IsDBNull(4) ? null : r.GetString(4),
+                });
+            return ds;
+        }
+
         public async Task<DmKhNbDto> LuuKh(string code, int year, DmKhNbDto d, string user)
         {
             using var conn = await OpenAsync(code, year);
@@ -297,9 +363,15 @@ namespace KT2000.Api.Services
             return $"{prefix}{tiep}";
         }
 
+        // Tiền hàng của đơn = tổng thành tiền các dòng, ĐÃ CỘNG tiền tinh màu và ĐÃ LOẠI
+        // hàng tặng. Phải khớp từng đồng với công thức tính lại lúc lưu (LuuDon) và với
+        // ThanhTien đọc ra ở LayDon — lệch nhau là lưới hiện một số, mở đơn ra một số
+        // khác. Đây là chỗ DUY NHẤT tính tiền hàng cho mọi câu SELECT (danh sách + chi
+        // tiết), nên sửa ở đây là sửa hết.
         private const string SqlTienHang =
             @"ISNULL((SELECT SUM(CASE WHEN l.la_hang_tang = 1 THEN 0
-                                      ELSE l.so_luong * l.don_gia END)
+                                      ELSE l.so_luong * l.don_gia
+                                           + ISNULL(l.tien_tinh_mau, 0) END)
                       FROM HOA_DON_LINE l WHERE l.ma_hd = d.ma_hd), 0)";
 
         public async Task<List<DonNbDto>> DanhSachDon(string code, int year, string? huong,
@@ -398,10 +470,18 @@ namespace KT2000.Api.Services
             if (don == null) return null;
 
             using (var cmd = new SqlCommand(
-                @"SELECT stt_line, ma_hang, ten_hang_goc, dvt, so_luong, don_gia,
-                         pt_vat, tien_vat_l, ghi_chu, he_so_qd, sl_quy_doi,
-                         la_hang_tang, quy_cach, ngay_nh_l
-                  FROM HOA_DON_LINE WHERE ma_hd = @ma ORDER BY stt_line, auto_num", conn))
+                // JOIN DM_MAU chỉ để lấy MÃ HEX tô ô màu trên lưới — mã màu bản thân nó
+                // đã nằm sẵn trong dòng hàng. OUTER APPLY TOP 1 chứ không LEFT JOIN:
+                // DM_MAU có khóa chính GHÉP (ma_mau, nhom_mau) nên một mã màu có thể
+                // trùng ở nhiều nhóm; LEFT JOIN thẳng sẽ NHÂN ĐÔI dòng hàng.
+                @"SELECT l.stt_line, l.ma_hang, l.ten_hang_goc, l.dvt, l.so_luong, l.don_gia,
+                         l.pt_vat, l.tien_vat_l, l.ghi_chu, l.he_so_qd, l.sl_quy_doi,
+                         l.la_hang_tang, l.quy_cach, l.ngay_nh_l,
+                         l.ma_mau, l.tien_tinh_mau, m.ma_hex
+                  FROM HOA_DON_LINE l
+                  OUTER APPLY (SELECT TOP 1 ma_hex FROM DM_MAU
+                               WHERE ma_mau = l.ma_mau) m
+                  WHERE l.ma_hd = @ma ORDER BY l.stt_line, l.auto_num", conn))
             {
                 cmd.Parameters.AddWithValue("@ma", maHd);
                 using var r = await cmd.ExecuteReaderAsync();
@@ -410,6 +490,7 @@ namespace KT2000.Api.Services
                     var sl = r.IsDBNull(4) ? 0 : r.GetDecimal(4);
                     var dg = r.IsDBNull(5) ? 0 : r.GetDecimal(5);
                     var tang = !r.IsDBNull(11) && r.GetBoolean(11);
+                    var tinhMau = r.IsDBNull(15) ? 0 : r.GetDecimal(15);
                     don.Lines.Add(new DonNbLineDto
                     {
                         SttLine = r.IsDBNull(0) ? 0 : r.GetInt32(0),
@@ -419,7 +500,8 @@ namespace KT2000.Api.Services
                         SoLuong = sl,
                         DonGia = dg,
 
-                        ThanhTien = tang ? 0 : decimal.Round(sl * dg, 2),
+                        // Tiền tinh màu CỘNG THẲNG, không nhân số lượng (script 019).
+                        ThanhTien = tang ? 0 : decimal.Round(sl * dg + tinhMau, 2),
                         PtVat = r.IsDBNull(6) ? 0 : r.GetDecimal(6),
                         TienVatL = r.IsDBNull(7) ? 0 : r.GetDecimal(7),
                         GhiChu = r.IsDBNull(8) ? null : r.GetString(8),
@@ -428,6 +510,10 @@ namespace KT2000.Api.Services
                         LaHangTang = tang,
                         QuyCach = r.IsDBNull(12) ? null : r.GetString(12),
                         NgayNhL = r.IsDBNull(13) ? null : r.GetDateTime(13),
+                        MaMau = r.IsDBNull(14) ? null : r.GetString(14),
+                        // Hàng tặng không tính tiền pha màu, cùng lẽ với ThanhTien.
+                        TienTinhMau = tang ? 0 : tinhMau,
+                        MaHex = r.IsDBNull(16) ? null : r.GetString(16),
                     });
                 }
             }
@@ -480,9 +566,18 @@ namespace KT2000.Api.Services
             {
                 var l = lines[i];
                 l.SttLine = i + 1;
-                l.ThanhTien = decimal.Round(l.SoLuong * l.DonGia, 2);
+                // Chuẩn hóa cặp MÃ MÀU / TIỀN TINH MÀU trước khi tính tiền: mã màu trắng
+                // thì tiền pha vô nghĩa, và ngược lại. Bản gốc USA_Meva chặn bằng thông
+                // báo ở form (SalesOrderPage.tsx:1393); ở đây chặn thêm một lớp tại
+                // backend vì API còn phục vụ Excel/import, không chỉ mỗi form.
+                l.MaMau = string.IsNullOrWhiteSpace(l.MaMau) ? null : l.MaMau.Trim();
+                if (l.MaMau == null) l.TienTinhMau = 0;
+                if (l.TienTinhMau < 0) l.TienTinhMau = 0;
+                // Tiền tinh màu là tiền công pha CỦA CẢ DÒNG — cộng thẳng, không nhân
+                // số lượng (script 019, khớp bản gốc USA_Meva).
+                l.ThanhTien = decimal.Round(l.SoLuong * l.DonGia + l.TienTinhMau, 2);
                 l.TienVatL = decimal.Round(l.ThanhTien * l.PtVat / 100m, 2);
-                if (l.LaHangTang) { l.ThanhTien = 0; l.TienVatL = 0; }
+                if (l.LaHangTang) { l.ThanhTien = 0; l.TienVatL = 0; l.TienTinhMau = 0; }
                 var heSo = l.HeSoQd is > 0 ? l.HeSoQd.Value : 1m;
                 l.SlQuyDoi = decimal.Round(l.SoLuong * heSo, 3);
                 tienHang += l.ThanhTien;
@@ -555,10 +650,12 @@ namespace KT2000.Api.Services
                         @"INSERT INTO HOA_DON_LINE
                             (ma_hd, stt_line, ma_hang, ten_hang_goc, dvt, so_luong, don_gia,
                              pt_vat, tien_vat_l, ghi_chu,
-                             he_so_qd, sl_quy_doi, la_hang_tang, quy_cach, ngay_nh_l, created_by)
+                             he_so_qd, sl_quy_doi, la_hang_tang, quy_cach, ngay_nh_l,
+                             ma_mau, tien_tinh_mau, created_by)
                           VALUES (@ma, @stt, @mahang, @tenhang, @dvt, @sl, @dg,
                                   @vat, @tienvat, @gc,
-                                  @heso, @slqd, @tang, @quycach, @ngaynhl, @user)", conn, tran);
+                                  @heso, @slqd, @tang, @quycach, @ngaynhl,
+                                  @mamau, @tinhmau, @user)", conn, tran);
                     cmd.Parameters.AddWithValue("@ma", maHd);
                     cmd.Parameters.AddWithValue("@stt", l.SttLine);
                     cmd.Parameters.AddWithValue("@mahang", (object?)l.MaHang ?? DBNull.Value);
@@ -574,6 +671,8 @@ namespace KT2000.Api.Services
                     cmd.Parameters.AddWithValue("@tang", l.LaHangTang);
                     cmd.Parameters.AddWithValue("@quycach", (object?)l.QuyCach ?? DBNull.Value);
                     cmd.Parameters.AddWithValue("@ngaynhl", (object?)l.NgayNhL ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@mamau", (object?)l.MaMau ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@tinhmau", l.TienTinhMau);
                     cmd.Parameters.AddWithValue("@user", user);
                     await cmd.ExecuteNonQueryAsync();
                 }
@@ -932,7 +1031,8 @@ namespace KT2000.Api.Services
                          l.ma_hang, MIN(l.ten_hang_goc), MIN(l.dvt),
                          SUM(l.so_luong), COUNT(DISTINCT l.ma_hd),
                          SUM(CASE WHEN l.la_hang_tang = 1 THEN 0
-                                  ELSE l.so_luong * l.don_gia END),
+                                  ELSE l.so_luong * l.don_gia
+                                       + ISNULL(l.tien_tinh_mau, 0) END),
                          @user
                   FROM HOA_DON_LINE l JOIN HOA_DON d ON d.ma_hd = l.ma_hd
                   WHERE d.ma_goi = @g

@@ -64,7 +64,12 @@ interface Props<V extends GiaTriChon> {
    *  "kh"              = tên | điện thoại | địa chỉ — địa chỉ để rộng vì dài nhất.
    *  Khai tường minh chứ không đoán theo số cột: hai bộ đều 3 cột nhưng bề rộng
    *  hợp lý cho mỗi bộ khác hẳn nhau. */
-  kieuCot?: "hang" | "kh";
+  // Bề rộng từng cột trong dòng gợi ý khác nhau theo loại danh mục:
+  //   "hang" — tên hàng | ĐVT | giá        (cột phụ hẹp, cố định)
+  //   "hh3"  — tên hàng | tên hóa đơn | ĐVT (bản BỎ cột giá — cột giữa cần rộng)
+  //   "kh"   — tên | điện thoại | địa chỉ
+  //   "mau"  — mã màu | nhóm màu ghép      (nhóm cần rộng, xem usa-meva.css)
+  kieuCot?: "hang" | "hh3" | "kh" | "mau";
 }
 
 export default function OGoiYUsa<V extends GiaTriChon = GiaTriChon>({
@@ -307,12 +312,14 @@ export default function OGoiYUsa<V extends GiaTriChon = GiaTriChon>({
                 onPointerDown={(e) => { e.preventDefault(); chanBlur.current = true; }}
                 onClick={() => { chanBlur.current = false; chot(o); oRef.current?.focus(); }}
               >
-                {/* Lớp --n<số cột> + --kh quyết định bề rộng từng cột (usa-meva.css).
+                {/* Lớp --n<số cột> + --kh/--mau quyết định bề rộng từng cột (usa-meva.css).
                     Khai theo SỐ CỘT THẬT chứ không để flex tự chia, nếu không mỗi dòng
                     một bề rộng và các cột không thẳng hàng nhau. */}
                 <span className={`umv-drop__hang umv-drop__hang--n${(o.cot?.length ?? 1)}`
                   + `${o.mau ? " umv-drop__hang--co-cham" : ""}`
-                  + `${kieuCot === "kh" ? " umv-drop__hang--kh" : ""}`}>
+                  + `${kieuCot === "kh" ? " umv-drop__hang--kh" : ""}`
+                  + `${kieuCot === "hh3" ? " umv-drop__hang--hh3" : ""}`
+                  + `${kieuCot === "mau" ? " umv-drop__hang--mau" : ""}`}>
                   {o.mau && <span className="umv-drop__cham" style={{ background: o.mau }} aria-hidden />}
                   {(o.cot?.length ? o.cot : [o.nhan]).map((c, k) => (
                     <span key={k} className={`umv-drop__cot umv-drop__cot--${k}`}>

@@ -335,6 +335,22 @@ END
 ELSE PRINT N'[=] HOA_DON.dia_chi_giao đã có';
 GO
 
-PRINT N'';
-PRINT N'==> Đã dựng xong chỗ chứa. Chạy tiếp 018b để đẩy dữ liệu từ 192.168.0.105 sang.';
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
+-- Mã màu khách chọn, vd "2532-P". NULL = hàng bán nguyên trạng, không pha màu.
+-- Rộng 50 khớp DM_MAU.ma_mau.
+IF COL_LENGTH('HOA_DON_LINE', 'ma_mau') IS NULL
+    ALTER TABLE HOA_DON_LINE ADD ma_mau NVARCHAR(50) NULL;
+GO
+
+-- Tiền công pha màu CỦA CẢ DÒNG (không nhân số lượng — xem đầu file).
+-- DECIMAL(18,2) khớp các cột tiền khác của HOA_DON_LINE (tien_ck, tien_vat_l).
+IF COL_LENGTH('HOA_DON_LINE', 'tien_tinh_mau') IS NULL
+    ALTER TABLE HOA_DON_LINE ADD tien_tinh_mau DECIMAL(18,2) NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM SCHEMA_VERSION WHERE Ver = 11)
+    INSERT INTO SCHEMA_VERSION (Ver) VALUES (11);
 GO

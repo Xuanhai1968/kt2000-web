@@ -410,6 +410,15 @@ export interface DmNhan {
   tenTat: string | null;
 }
 
+// Danh mục MÀU PHA (DM_MAU) — bảng màu của thợ pha sơn, ~1131 dòng.
+export interface DmMau {
+  maMau: string;               // vd "2532-P"
+  nhomMau: string;             // vd "Yellow" / "Pastel"
+  maHex: string | null;        // vd "#f8ebbf" — tô ô chọn màu
+  thuTu: number | null;        // giữ đúng thứ tự bảng màu giấy
+  ghiChu: string | null;
+}
+
 export interface DonNbLine {
   sttLine: number;
   maHang: string | null;
@@ -427,6 +436,13 @@ export interface DonNbLine {
   laHangTang: boolean;
   quyCach: string | null;
   ngayNhL: string | null;      // BR-NB-07: mốc rời kho của riêng dòng này
+  // --- 019: pha màu (ngành sơn) ---
+  // Mã màu khách yêu cầu pha (-> DM_MAU.ma_mau). Trống = bán nguyên trạng.
+  maMau: string | null;
+  // Tiền công pha màu CỦA CẢ DÒNG — cộng thẳng vào thành tiền, KHÔNG nhân số lượng:
+  //     thành tiền = soLuong × donGia + tienTinhMau
+  tienTinhMau: number;
+  maHex: string | null;        // đọc kèm từ DM_MAU để tô ô màu. Chỉ ĐỌC RA.
 }
 
 // Đơn hàng NB = HOA_DON (khuôn dùng chung với sổ thuế, SPEC mục 4).
@@ -532,6 +548,11 @@ export const nbTimNhan = (tu?: string) =>
   api.get<DmNhan[]>("/nb/nhan", { params: { tu } });
 
 export const nbLuuKh = (d: Partial<DmKhNb>) => api.post<DmKhNb>("/nb/kh", d);
+
+// Bảng màu ~1131 dòng nên KHÔNG trả hết như nhãn hàng: lọc + chặn số dòng, cuộn tiếp
+// bằng boQua. Tìm theo mã màu, nhóm màu và ghi chú.
+export const nbTimMau = (tu?: string, gioiHan = 50, boQua = 0) =>
+  api.get<DmMau[]>("/nb/mau", { params: { tu, gioiHan, boQua } });
 
 // BR-NB-03: tra tên hàng bên sổ thuế. Đơn vị thuế lấy từ LinkedTenantCode của
 // chính tenant đang đăng nhập — frontend không gửi mã đơn vị nào cả.

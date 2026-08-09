@@ -214,9 +214,16 @@ function dungLien(d: DonNb, tt: ThongTinInHaiLien, tieuDe: string,
     </div>`;
 
   // ---- Bảng hàng ----
+  // Cột "Mã màu/base" nay lấy MÃ MÀU THẬT của dòng hàng (DM_MAU). Trước đây chỗ này in
+  // nhầm ĐVT — bản gốc USA_Meva in colorCode, không phải đơn vị tính.
+  //
+  // Cột "Tính thêm tinh màu" CHỈ có trên liên CÓ TIỀN, đúng bản gốc (PrintInvoice.tsx:501
+  // — cả tint lẫn giá đều nằm sau `showMoney &&`). Liên xuất kho không được thấy tiền:
+  // thủ kho chỉ đếm hàng và ký nhận.
   const cotTieuDe = coTien
     ? `<th style="width:6mm">STT</th><th>Tên sản phẩm</th>
        <th style="width:12mm">Quy cách</th><th style="width:14mm">Mã màu/base</th>
+       <th style="width:14mm">Tính thêm<br/>tinh màu</th>
        <th style="width:16mm">Giá net giao<br/>tại nhà máy</th>
        <th style="width:11mm">Số<br/>lượng</th><th style="width:19mm">Thành Tiền</th>`
     : `<th style="width:6mm">STT</th><th>Tên sản phẩm</th>
@@ -226,15 +233,19 @@ function dungLien(d: DonNb, tt: ThongTinInHaiLien, tieuDe: string,
   const hangDong = dong.map((l: DonNbLine, i: number) => {
     const sl = Number(l.soLuong) || 0;
     const gia = Number(l.donGia) || 0;
-    const tt2 = sl * gia;
+    const tinh = Number(l.tienTinhMau) || 0;
+    // Thành tiền = sl × giá + tiền tinh màu (KHÔNG nhân số lượng) — đúng công thức bản
+    // gốc (PrintInvoice.tsx:522) và backend (script 019).
+    const tt2 = sl * gia + tinh;
     return coTien
       ? `<tr><td class="c">${i + 1}</td><td>${esc(l.tenHang ?? "")}</td>
-         <td class="c">${esc(l.quyCach ?? "")}</td><td class="c">${esc(l.dvt ?? "")}</td>
+         <td class="c">${esc(l.quyCach ?? "")}</td><td class="c">${esc(l.maMau ?? "")}</td>
+         <td class="r">${tinh ? esc(soTienIn(tinh)) : ""}</td>
          <td class="r">${gia ? esc(soTienIn(gia)) : ""}</td>
          <td class="c">${sl || ""}</td>
          <td class="r">${tt2 ? esc(soTienIn(tt2)) : ""}</td></tr>`
       : `<tr><td class="c">${i + 1}</td><td>${esc(l.tenHang ?? "")}</td>
-         <td class="c">${esc(l.quyCach ?? "")}</td><td class="c">${esc(l.dvt ?? "")}</td>
+         <td class="c">${esc(l.quyCach ?? "")}</td><td class="c">${esc(l.maMau ?? "")}</td>
          <td class="c">${sl || ""}</td><td class="ky"></td></tr>`;
   }).join("");
 

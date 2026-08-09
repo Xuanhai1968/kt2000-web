@@ -166,6 +166,19 @@ export default function DanhSachPhieuUsa() {
             render: (v: number) => <span style={kieuSo}>{soTien(v)}</span> },
           { title: "Đơn giá", dataIndex: "donGia", width: 110, align: "right",
             render: (v: number) => <span style={kieuSo}>{soTien(v)}</span> },
+          // Mã màu kèm chấm màu — người xem đối chiếu ngay với tờ phiếu đã in.
+          { title: "Mã màu", dataIndex: "maMau", width: 110,
+            render: (v: string | null, r: DonNbLine) => v
+              ? <span className="umv__mau-o">
+                  {r.maHex
+                    ? <i className="umv__mau-cham" style={{ background: r.maHex }} />
+                    : null}
+                  {v}
+                </span>
+              : null },
+          { title: "Tiền tinh màu", dataIndex: "tienTinhMau", width: 110, align: "right",
+            render: (v: number) => v
+              ? <span style={kieuSo}>{soTien(v)}</span> : null },
           { title: "%VAT", dataIndex: "ptVat", width: 70, align: "right" },
           { title: "Thành tiền", dataIndex: "thanhTien", width: 130, align: "right",
             render: (v: number) => <b style={kieuSo}>{soTien(v)}</b> },

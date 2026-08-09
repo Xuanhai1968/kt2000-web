@@ -259,6 +259,20 @@
 }
 /* Cột tên hóa đơn: chữ nghiêng nhạt cho khỏi lẫn với tên chính */
 .umv-drop__hang--n4 .umv-drop__cot--1 { font-style: italic; color: #94a3b8; }
+
+/* Ô HÀNG HÓA 3 cột (bản BỎ CỘT GIÁ): tên đánh đơn | tên hóa đơn | ĐVT.
+   KHÔNG dùng được --n3 mặc định: cột giữa của nó rộng cố định 56px (dành cho ĐVT),
+   trong khi cột giữa ở đây là TÊN HÓA ĐƠN — chuỗi dài, nhét vào 56px là cụt sạch.
+   Khai SAU --n3 để đè lại (cùng một lớp, luật đứng sau thắng).
+   ĐVT lùi về cuối, rộng cố định 78px cho thẳng cột giữa các dòng. */
+.umv-drop__hang--hh3 { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 78px; }
+.umv-drop__hang--co-cham.umv-drop__hang--hh3 {
+  grid-template-columns: 14px minmax(0, 1.3fr) minmax(0, 1fr) 78px;
+}
+/* Tên hóa đơn: nghiêng nhạt như bản 4 cột, cho khỏi lẫn với tên chính */
+.umv-drop__hang--hh3 .umv-drop__cot--1 { font-style: italic; color: #94a3b8; }
+/* ĐVT (cột 2) căn giữa — cột hẹp, căn trái nhìn lệch so với tên dài bên cạnh */
+.umv-drop__hang--hh3 .umv-drop__cot--2 { text-align: center; }
 /* Cột giá (cột 3) căn phải, chữ số đều bề ngang để so giá bằng mắt */
 .umv-drop__hang--n4 .umv-drop__cot--3 {
   text-align: right;
@@ -268,6 +282,7 @@
 /* Ô KHÁCH/NHÂN VIÊN: tên | điện thoại | địa chỉ.
    Địa chỉ để rộng nhất vì nó dài nhất; điện thoại cố định 96px cho thẳng dãy số. */
 .umv-drop__hang--kh { grid-template-columns: minmax(0, 1.1fr) 96px minmax(0, 1.4fr); }
+
 
 .umv-drop__cham {
   width: 12px;
@@ -296,6 +311,29 @@
   font-variant-numeric: tabular-nums;
 }
 .umv-drop__hang--kh .umv-drop__cot--1 { font-variant-numeric: tabular-nums; }
+
+/* ---------- Ô MÃ MÀU: mã | nhóm màu ----------
+   Khai SAU --n2/--n3 vì cùng độ ưu tiên (một lớp) -> luật đứng sau thắng. Phải đè
+   được --n3: cột giữa của --n3 rộng CỐ ĐỊNH 56px (vừa cho "Lon"/"Thùng"), trong khi
+   tên nhóm ở đây là chuỗi GHÉP nhiều ngăn — "Xanh dương / Pastel" dài gấp bốn, bị cắt
+   cụt thành "Xanh d...". Cho nhóm hẳn 1.1fr để hiện đủ chữ.
+   Cột ghi chú (cột 2) gần như luôn trống nên gộp luôn vào phần dư, không chừa riêng. */
+.umv-drop__hang--mau { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); }
+.umv-drop__hang--co-cham.umv-drop__hang--mau {
+  grid-template-columns: 14px minmax(0, 0.9fr) minmax(0, 1.1fr);
+}
+/* Tên nhóm là thứ người bán nhận dạng màu (nhớ "vàng" hơn nhớ mã) nên KHÔNG làm nhạt
+   như cột phụ khác, và cho XUỐNG DÒNG thay vì cắt cụt — thà dòng cao thêm một nhịp
+   còn hơn giấu mất nửa cái tên. Đè lại .umv-drop__cot (nowrap + ellipsis) ở trên. */
+.umv-drop__hang--mau .umv-drop__cot--1 {
+  color: #475569;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.25;
+}
+/* Ghi chú màu (nếu có) vẫn là cột phụ, để nhạt và cho phép cắt cụt như cũ. */
+.umv-drop__hang--mau .umv-drop__cot--2 { color: #94a3b8; }
 
 /* Chân danh sách khi cuộn vô tận: "Đang tải thêm…" / "hết danh sách".
    Không bấm được, chỉ để báo trạng thái. */
@@ -413,6 +451,24 @@
      có bàn phím rời vẫn dùng được. */
 
   /* Lưới không co thêm được nữa thì cho cuộn ngang, thà kéo ngang còn hơn
-     bóp mỗi cột còn vài ký tự rồi không đọc được gì. */
-  .umv__bang { table-layout: auto; min-width: 720px; }
+     bóp mỗi cột còn vài ký tự rồi không đọc được gì.
+     960 chứ không phải 720: thêm hai cột Mã màu + Tiền tinh màu (~230px). */
+  .umv__bang { table-layout: auto; min-width: 960px; }
+}
+
+/* ============================ MÃ MÀU TRÊN LƯỚI DANH SÁCH ============================ */
+/* Ô "Mã màu" ở bảng chi tiết (Danh sách phiếu): chấm màu + mã, để đối chiếu nhanh với
+   tờ phiếu đã in. Dùng lại kích thước chấm của .umv-drop__cham cho đồng bộ. */
+.umv__mau-o {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.umv__mau-cham {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
 }

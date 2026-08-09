@@ -593,7 +593,7 @@ function Phieu({ ch }: { ch: CauHinh }) {
     Modal.confirm({
       title: "Lập đơn mới?",
       content: "Nội dung đang nhập sẽ bị xóa.",
-      okText: "Lập mới", cancelText: "Thôi",
+      okText: "Tạo mới", cancelText: "Thôi",
       onOk: () => { void phieuMoi(); },
     });
   }, [maKh, phieuMoi]);
@@ -633,13 +633,14 @@ function Phieu({ ch }: { ch: CauHinh }) {
           ptVat: d.ptVat,
           tienVatL: (d.soLuong * d.donGia * d.ptVat) / 100,
           ghiChu: d.ghiChu || null,
-          // v1 chưa có quy đổi đơn vị (ngoài phạm vi theo SPEC mục 1): hệ số luôn 1.
-          // Cột đã dựng sẵn ở 015 nên khi làm tới chỉ phải sửa chỗ này.
           heSoQd: 1,
           slQuyDoi: d.soLuong,
           laHangTang: false,
           quyCach: null,
           ngayNhL: null,
+          maMau: null,
+          tienTinhMau: 0,
+          maHex: null,
         })),
       });
       message.success(`${maHd ? "Đã cập nhật" : "Đã lưu"} đơn ${r.data.maHd}`);
@@ -699,7 +700,7 @@ function Phieu({ ch }: { ch: CauHinh }) {
     if (!ma || daMoUrl.current === ma) return;
     daMoUrl.current = ma;
     void moPhieu(ma);
-    // Dọn tham số khỏi URL sau khi nạp: để nguyên thì bấm "Lập mới" xong F5 lại lôi
+    // Dọn tham số khỏi URL sau khi nạp: để nguyên thì bấm "Tạo mới" xong F5 lại lôi
     // đơn cũ lên, mà người dùng đang muốn phiếu trắng.
     datThamSo({}, { replace: true });
   }, [thamSo, datThamSo, moPhieu]);
@@ -765,6 +766,10 @@ function Phieu({ ch }: { ch: CauHinh }) {
         laHangTang: false,
         quyCach: null,
         ngayNhL: null,
+        // Form cũ không có ô pha màu -> in ra cột màu/tiền pha để trống.
+        maMau: null,
+        tienTinhMau: 0,
+        maHex: null,
       })),
     }, { ten: session?.tenant.name });
   }, [ch, dong, maHd, ngay, ngayNh, maKh, tenKh, mst, diaChi, maNvkd, maNvvc, ghiChu,
@@ -1118,7 +1123,7 @@ function Phieu({ ch }: { ch: CauHinh }) {
               </span>
             </span>
             <Space>
-              <Button onClick={hoiPhieuMoi}>Lập mới</Button>
+              <Button onClick={hoiPhieuMoi}>Tạo mới</Button>
               {/* Chưa lưu thì số đơn mới là số dự kiến -> khóa nút, nói rõ lý do */}
               <Tooltip title={maHd ? "" : "Lưu đơn trước khi in — số đơn chỉ được cấp chính thức lúc lưu"}>
                 <Button onClick={inPhieu} disabled={!maHd}>In phiếu</Button>

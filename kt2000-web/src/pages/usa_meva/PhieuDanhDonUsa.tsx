@@ -42,10 +42,11 @@ import {
   Card, Row, Col, Space, Button, Tag, Typography, Input, Modal, Tooltip, message,
 } from "antd";
 import {
-  nbTimHang, nbTimKh, nbTimNhan, nbSoTiep, nbDonGanNhat, nbLayDon, nbLuuDon, loiApi,
+  nbTimHang, nbTimKh, nbTimNhan, nbTimMau, nbSoTiep, nbDonGanNhat, nbLayDon, nbLuuDon,
+  loiApi,
 } from "../../api";
 import type {
-  DmHangNb, DmKhNb, DonNb, HuongDon, LoaiDoiTuong,
+  DmHangNb, DmKhNb, DmMau, DonNb, HuongDon, LoaiDoiTuong,
 } from "../../api";
 // Không import mẫu in ở đây nữa: form không có nút In (xem khối "IN: không làm ở màn này").
 // Hai mẫu vẫn sống và được màn Danh sách phiếu dùng.
@@ -73,11 +74,48 @@ interface DongHang {
   donGia: number;
   ptVat: number;
   ghiChu: string;
+  // --- Pha màu (ngành sơn) ---
+  // Khách mua thùng sơn TRẮNG rồi chọn màu trong bảng màu giấy, thợ pha theo mã.
+  // tienTinhMau là tiền công pha CỦA CẢ DÒNG — cộng thẳng, KHÔNG nhân số lượng.
+  maMau: string | null;
+  maHex: string | null;    // tô ô chọn màu, không lưu xuống dòng hàng
+  tienTinhMau: number;
 }
 
 const dongTrong = (id: number): DongHang => ({
   id, maHang: null, tenHang: "", dvt: "", soLuong: 0, donGia: 0, ptVat: 0, ghiChu: "",
+  maMau: null, maHex: null, tienTinhMau: 0,
 });
+
+// Tên nhóm màu sang tiếng Việt — bê từ USA_Meva (utils/colorGroupVi.ts).
+// DM_MAU lưu nhóm bằng tiếng Anh ("Red", "Pastel") vì nạp từ hệ cũ, nhưng ô chọn màu
+// là người Việt dùng. Nhóm lạ (không có trong bảng) thì giữ nguyên, không nuốt mất.
+const NHOM_MAU_VI: Record<string, string> = {
+  pastel: "Pastel",
+  red: "Đỏ",
+  grey: "Xám",
+  gray: "Xám",
+  blue: "Xanh dương",
+  brown: "Nâu",
+  yellow: "Vàng",
+  green: "Xanh lá",
+  purple: "Tím",
+};
+
+// Backend ghép nhiều nhóm bằng " / " (mã nằm ở hai ngăn bảng màu) -> tách ra dịch
+// từng cái rồi ghép lại, chứ tra cả chuỗi "Red / Pastel" thì không khớp khóa nào.
+const nhomMauTiengViet = (nhom: string): string =>
+  (nhom ?? "")
+    .split("/")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => NHOM_MAU_VI[p.toLowerCase()] ?? p)
+    .join(" / ");
+
+// Thành tiền một dòng — MỘT chỗ tính duy nhất, dùng cho cả ô "Thành tiền" trên lưới,
+// thanh tổng cộng và payload lưu. Khớp công thức backend (script 019) và bản gốc
+// USA_Meva: tiền pha màu cộng thẳng, không nhân số lượng.
+const thanhTienDong = (d: DongHang) => d.soLuong * d.donGia + (d.tienTinhMau || 0);
 
 // Khuôn một bản nháp (cả tự động lẫn có tên đều dùng khuôn này)
 interface BanNhap {
@@ -100,7 +138,13 @@ interface BanNhap {
 
 // Thứ tự Enter chạy trong một dòng. Dừng ở donGia rồi nhảy dòng mới — %VAT và ghi chú
 // là thứ thỉnh thoảng mới sửa, bắt đi qua mỗi dòng là chậm tay người gõ.
-const CAC_O = ["hang", "dvt", "soLuong", "donGia", "ptVat", "ghiChu"] as const;
+//
+// maMau/tienTinhMau nằm SAU điểm dừng Enter (giống ptVat/ghiChu) chứ không chen vào
+// nhịp gõ: phần lớn dòng hàng bán nguyên trạng, không pha màu. Bắt mọi dòng đi qua hai
+// ô đó là chậm tay người gõ đơn thường. Ai cần pha màu thì Tab/chuột sang — và một khi
+// đã chọn mã màu thì Enter ở ô đó tự nhảy sang ô tiền tinh màu (xem O_SAU_MAU).
+const CAC_O = ["hang", "dvt", "soLuong", "donGia", "maMau", "tienTinhMau",
+               "ptVat", "ghiChu"] as const;
 type ONhap = typeof CAC_O[number];
 const O_ENTER: readonly ONhap[] = CAC_O.slice(0, CAC_O.indexOf("donGia") + 1);
 
@@ -305,14 +349,47 @@ function DanhDon({ ch }: { ch: CauHinh }) {
       nhanHien: h.tenHang,
       // Cột 1 hiện tên hóa đơn khi nó KHÁC tên đánh đơn — để người gõ biết mặt hàng này
       // lên hóa đơn sẽ mang tên gì (35/50 mặt hàng có hai tên khác nhau).
+      //
+      // KHÔNG hiện cột GIÁ ở đây: giá tự điền vào ô Đơn giá ngay sau khi chọn hàng,
+      // nên bày thêm một cột giá trong danh sách chỉ làm dòng chật mà không thêm tin.
+      // Bỏ luôn cột đó cho tên hàng rộng ra — tên dài như "Bột bả ngoại thất và nội
+      // thất cao cấp" đang bị cắt cụt.
       cot: [
         h.tenHang,
         h.tenHd && h.tenHd !== h.tenHang ? `HĐ: ${h.tenHd}` : "",
         h.dvt ?? "",
-        soTien(ch.giaTuDanhMuc(h)),
       ],
     }));
-  }, [ch]);
+  }, []);
+
+  // ---------- Bảng màu pha ----------
+  // Nhớ lại màu đã thấy để ô chọn màu hiện đúng chấm màu sau khi chọn, và để mở lại đơn
+  // cũ vẫn tô được ô (dòng hàng lưu mã màu, mã hex đọc kèm từ backend).
+  const mauTheoMa = useRef<Map<string, DmMau>>(new Map());
+  const timMau = useCallback(async (tu: string, boQua = 0): Promise<LuaChon<string>[]> => {
+    const r = await nbTimMau(tu, 100, boQua);
+    r.data.forEach((m) => { if (m.maMau) mauTheoMa.current.set(m.maMau, m); });
+    return r.data.filter((m) => m.maMau).map((m) => {
+      // Backend đã ghép sẵn mọi nhóm của mã này bằng " / " (vd "Red / Pastel").
+      // Dịch TỪNG nhóm sang tiếng Việt rồi ghép lại -> "Đỏ / Pastel".
+      const nhomVi = nhomMauTiengViet(m.nhomMau);
+      return {
+        giaTri: m.maMau,
+        // Tìm được bằng mã, nhóm màu (cả Anh lẫn Việt) lẫn ghi chú — thợ pha nhớ mã,
+        // người bán nhớ "đỏ". Cùng bộ trường bản gốc lọc (SalesOrderPage.tsx:
+        // searchColors), thêm tên Việt vì ô này người Việt gõ.
+        nhan: `${m.maMau} ${nhomVi} ${m.nhomMau} ${m.ghiChu ?? ""}`,
+        // Chọn xong ô chỉ hiện MÃ (bản gốc: displayLabel = colorCode) — ô hẹp, mà
+        // thứ đi vào dòng hàng cũng chỉ là mã.
+        nhanHien: m.maMau,
+        mau: m.maHex ?? undefined,      // chấm màu bên trái dòng gợi ý
+        // Chỉ hai cột: mã | nhóm. Ghi chú màu gần như luôn trống — chừa cột thứ ba là
+        // ăn mất bề ngang của cột nhóm rồi tên nhóm bị cắt cụt. Có ghi chú thì ghép
+        // vào sau tên nhóm, hiếm nên không đáng một cột riêng.
+        cot: [m.maMau, m.ghiChu ? `${nhomVi} — ${m.ghiChu}` : nhomVi],
+      };
+    });
+  }, []);
 
   // BR-NB-01: khách và nhân viên chung MỘT danh mục, lọc bằng loaiDt.
   const khTheoMa = useRef<Map<string, DmKhNb>>(new Map());
@@ -426,9 +503,12 @@ function DanhDon({ ch }: { ch: CauHinh }) {
   }, [nhayO]);
 
   // ---------- Tổng tiền ----------
-  const tienHang = useMemo(() => dong.reduce((s, d) => s + d.soLuong * d.donGia, 0), [dong]);
+  // Cả hai dòng dưới đi qua thanhTienDong() để tiền pha màu được cộng vào — và để
+  // VAT tính trên thành tiền ĐÃ có tiền pha, khớp backend (LuuDon: TienVatL tính từ
+  // ThanhTien đã cộng tinh màu). Tính VAT trên phần chưa cộng là lệch thuế.
+  const tienHang = useMemo(() => dong.reduce((s, d) => s + thanhTienDong(d), 0), [dong]);
   const tienVat = useMemo(
-    () => dong.reduce((s, d) => s + (d.soLuong * d.donGia * (d.ptVat || 0)) / 100, 0), [dong]);
+    () => dong.reduce((s, d) => s + (thanhTienDong(d) * (d.ptVat || 0)) / 100, 0), [dong]);
   const tongTien = tienHang + tienVat;
 
   // ---------- Đơn trắng ----------
@@ -453,7 +533,7 @@ function DanhDon({ ch }: { ch: CauHinh }) {
     Modal.confirm({
       title: "Lập đơn mới?",
       content: "Nội dung đang nhập sẽ bị xóa.",
-      okText: "Lập mới", cancelText: "Thôi",
+      okText: "Tạo mới", cancelText: "Thôi",
       onOk: () => { void phieuMoi(); },
     });
   }, [maKh, phieuMoi]);
@@ -469,6 +549,17 @@ function DanhDon({ ch }: { ch: CauHinh }) {
     if (thieuSl) {
       message.error(`Dòng "${thieuSl.tenHang}" chưa nhập số lượng`);
       nhayO(thieuSl.id, "soLuong");
+      return;
+    }
+    // MÃ MÀU và TIỀN TINH MÀU phải đi CÙNG NHAU (bê nguyên luật của bản gốc
+    // USA_Meva — SalesOrderPage.tsx:1393). Chọn màu mà quên tiền pha là mất doanh thu
+    // công pha; nhập tiền pha mà quên màu là thợ không biết pha màu gì.
+    const lechMau = hopLe.find((d) => !!d.maMau !== (d.tienTinhMau > 0));
+    if (lechMau) {
+      message.error(lechMau.maMau
+        ? `Dòng "${lechMau.tenHang}": đã chọn mã màu thì phải nhập tiền tinh màu`
+        : `Dòng "${lechMau.tenHang}": đã nhập tiền tinh màu thì phải chọn mã màu`);
+      nhayO(lechMau.id, lechMau.maMau ? "tienTinhMau" : "maMau");
       return;
     }
 
@@ -489,10 +580,14 @@ function DanhDon({ ch }: { ch: CauHinh }) {
           dvt: d.dvt,
           soLuong: d.soLuong,
           donGia: d.donGia,
-          thanhTien: d.soLuong * d.donGia,
+          thanhTien: thanhTienDong(d),
           ptVat: d.ptVat,
-          tienVatL: (d.soLuong * d.donGia * d.ptVat) / 100,
+          tienVatL: (thanhTienDong(d) * d.ptVat) / 100,
           ghiChu: d.ghiChu || null,
+          maMau: d.maMau,
+          tienTinhMau: d.tienTinhMau || 0,
+          maHex: null,             // chỉ ĐỌC RA, backend không ghi xuống
+
           // v1 chưa quy đổi đơn vị (ngoài phạm vi, SPEC mục 1) -> hệ số luôn 1
           heSoQd: 1,
           slQuyDoi: d.soLuong,
@@ -505,7 +600,7 @@ function DanhDon({ ch }: { ch: CauHinh }) {
       message.success(`${dangSua ? "Đã cập nhật" : "Đã lưu"} đơn ${r.data.maHd}`);
       await phieuMoi();
       // SỬA đơn cũ (mở từ Danh sách phiếu) -> trả người dùng về chỗ họ đi ra, tô sáng
-      // đơn vừa sửa. LẬP MỚI thì ở lại form: cả buổi gõ hết đơn này tới đơn khác,
+      // đơn vừa sửa. TẠO MỚI thì ở lại form: cả buổi gõ hết đơn này tới đơn khác,
       // đá về danh sách sau mỗi lần lưu là phá nhịp gõ liên tục (BR-NB-05).
       if (dangSua) {
         nav("/app/danh-sach-phieu", { state: { maHdVuaLuu: r.data.maHd } });
@@ -533,6 +628,9 @@ function DanhDon({ ch }: { ch: CauHinh }) {
           donGia: Number(l.donGia) || 0,
           ptVat: Number(l.ptVat) || 0,
           ghiChu: l.ghiChu ?? "",
+          maMau: l.maMau,
+          maHex: l.maHex,
+          tienTinhMau: Number(l.tienTinhMau) || 0,
         }))
       : [dongTrong(1)];
 
@@ -586,7 +684,7 @@ function DanhDon({ ch }: { ch: CauHinh }) {
     if (!ma || daMoUrl.current === ma) return;
     daMoUrl.current = ma;
     void moPhieu(ma);
-    // Dọn tham số: để nguyên thì bấm "Lập mới" xong F5 lại lôi đơn cũ lên
+    // Dọn tham số: để nguyên thì bấm "Tạo mới" xong F5 lại lôi đơn cũ lên
     datThamSo({}, { replace: true });
   }, [thamSo, datThamSo, moPhieu]);
 
@@ -995,6 +1093,8 @@ function DanhDon({ ch }: { ch: CauHinh }) {
                 <th style={{ width: 80 }}>ĐVT</th>
                 <th style={{ width: 90 }}>Số lượng</th>
                 <th style={{ width: 110 }}>Đơn giá</th>
+                <th style={{ width: 120 }}>Mã màu</th>
+                <th style={{ width: 110 }}>Tiền tinh màu</th>
                 <th style={{ width: 120 }}>Thành tiền</th>
                 <th style={{ width: 70 }}>%VAT</th>
                 <th style={{ width: 150 }}>Ghi chú</th>
@@ -1011,6 +1111,7 @@ function DanhDon({ ch }: { ch: CauHinh }) {
                       layNhan={() => d.tenHang}
                       timKiem={timHang}
                       goiY="Gõ tên hàng — F2 thêm mới, Ctrl+T tra sổ thuế"
+                      kieuCot="hh3"
                       rongToiThieu={620}
                       onChon={(v) => {
                         if (!v) { suaDong(d.id, { maHang: null, tenHang: "" }); return; }
@@ -1056,7 +1157,39 @@ function DanhDon({ ch }: { ch: CauHinh }) {
                              if (e.key === "Enter") { e.preventDefault(); enterQuaO(d.id, "donGia"); }
                            }} />
                   </td>
-                  <td className="umv__so-tt">{soTien(d.soLuong * d.donGia)}</td>
+                  <td data-dong={d.id} data-o="maMau">
+                    <OGoiYUsa
+                      giaTri={d.maMau}
+                      layNhan={(v) => v}
+                      layMau={(v) => mauTheoMa.current.get(v)?.maHex ?? d.maHex ?? undefined}
+                      timKiem={timMau}
+                      goiY="Mã màu pha"
+                      kieuCot="mau"
+                      rongToiThieu={320}
+                      onChon={(v) => {
+                        if (!v) { suaDong(d.id, { maMau: null, maHex: null, tienTinhMau: 0 }); return; }
+                        suaDong(d.id, {
+                          maMau: v,
+                          maHex: mauTheoMa.current.get(v)?.maHex ?? null,
+                        });
+                        // Chọn xong màu thì sang ngay ô tiền pha: hai ô này luôn đi cùng
+                        // nhau (luật chặn lúc lưu), tách ra là người dùng quên ô thứ hai.
+                        nhayO(d.id, "tienTinhMau");
+                      }}
+                      onXong={() => nhayO(d.id, "tienTinhMau")}
+                    />
+                  </td>
+                  <td data-dong={d.id} data-o="tienTinhMau">
+                    <input className="umv__o umv__o--so" inputMode="decimal"
+                           value={d.tienTinhMau ? soTien(d.tienTinhMau) : ""}
+                           onChange={(e) => suaDong(d.id, {
+                             tienTinhMau: Number(e.target.value.replace(/[^\d]/g, "")) || 0,
+                           })}
+                           onKeyDown={(e) => {
+                             if (e.key === "Enter") { e.preventDefault(); enterQuaO(d.id, "tienTinhMau"); }
+                           }} />
+                  </td>
+                  <td className="umv__so-tt">{soTien(thanhTienDong(d))}</td>
                   <td data-dong={d.id} data-o="ptVat">
                     <input className="umv__o umv__o--so" inputMode="decimal"
                            value={d.ptVat || ""}
@@ -1086,7 +1219,7 @@ function DanhDon({ ch }: { ch: CauHinh }) {
                     onClick={() => { const id = themDong(); setTimeout(() => nhayO(id, "hang"), 0); }}
                     title="Bấm để thêm dòng">
                   <td className="umv__c">{dong.length + i + 1}</td>
-                  <td /><td /><td /><td /><td /><td /><td /><td />
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                 </tr>
               ))}
             </tbody>
@@ -1116,7 +1249,7 @@ function DanhDon({ ch }: { ch: CauHinh }) {
               </span>
             </span>
             <Space>
-              <Button onClick={hoiPhieuMoi}>Lập mới</Button>
+              <Button onClick={hoiPhieuMoi}>Tạo mới</Button>
               <Button onClick={luuNhapCoTen}>Lưu nháp</Button>
               {/* KHÔNG có nút In ở đây (bỏ 08/08). Lý do: đơn chưa lưu thì chưa có số
                   đơn chính thức nên hai nút luôn mờ, chiếm chỗ mà gần như không bấm được.
@@ -1203,6 +1336,9 @@ const CH_NHAP: CauHinh = {
   mau: "#2563eb",
   nhanDoiTac: "Nhà cung cấp",
   nhanNgayNh: "Ngày nhập kho",
+  // Phiếu NHẬP lấy giá mua — đúng nghiệp vụ. Hiện gia_mua chưa khai (NULL cả 85 dòng,
+  // bên nguồn USA_Meva PurchasePrice cũng NULL cả 85) nên ô Đơn giá để trống, người
+  // nhập gõ tay. Khai giá mua vào danh mục là ô này tự điền, không phải sửa code.
   giaTuDanhMuc: (h) => Number(h.giaMua ?? 0) || 0,
 };
 

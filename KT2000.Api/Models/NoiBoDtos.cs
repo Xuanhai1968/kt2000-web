@@ -57,6 +57,17 @@ namespace KT2000.Api.Models
         public string? MaTinh { get; set; }
     }
 
+    // Ngành sơn: khách mua thùng sơn trắng rồi chọn màu trong bảng màu giấy, thợ pha
+    // theo mã. Bảng có ~1131 dòng nên ô chọn màu phải tìm theo mã/nhóm/ghi chú.
+    public class DmMauDto
+    {
+        public string MaMau { get; set; } = "";     // = ColorCode, vd "2532-P"
+        public string NhomMau { get; set; } = "";   // = ColorGroup, vd "Yellow"
+        public string? MaHex { get; set; }          // = HexValue, để tô ô chọn màu
+        public int? ThuTu { get; set; }             // giữ đúng thứ tự bảng màu giấy
+        public string? GhiChu { get; set; }
+    }
+
     // Danh mục nhãn hàng (DM_NHAN) — nạp từ KT_Master.CompanyBrands của hệ cũ
     public class DmNhanDto
     {
@@ -87,6 +98,15 @@ namespace KT2000.Api.Models
         public decimal? SlQuyDoi { get; set; }
         public bool LaHangTang { get; set; }
         public string? QuyCach { get; set; }
+        // Mã màu khách yêu cầu pha (-> DM_MAU.ma_mau). Trống = bán nguyên trạng.
+        // Lưu chuỗi chứ không phải khóa ngoại: mã in trên phiếu là sự thật lịch sử,
+        // sửa danh mục màu về sau không được làm biến hình đơn đã in (script 019).
+        public string? MaMau { get; set; }
+        // Tiền công pha màu CỦA CẢ DÒNG — cộng thẳng vào thành tiền, KHÔNG nhân số
+        // lượng (đúng công thức bản gốc USA_Meva: sl × đơn giá + tiền tinh màu).
+        public decimal TienTinhMau { get; set; }
+        // Mã hex đọc kèm từ DM_MAU để tô ô chọn màu trên lưới. Chỉ ĐỌC RA.
+        public string? MaHex { get; set; }
         // BR-NB-07: mốc rời kho của RIÊNG dòng này (đơn giao nhiều đợt).
         // Để trống thì engine lấy NgayNh của đơn.
         public DateTime? NgayNhL { get; set; }

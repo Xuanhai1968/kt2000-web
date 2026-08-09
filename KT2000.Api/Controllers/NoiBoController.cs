@@ -100,6 +100,17 @@ namespace KT2000.Api.Controllers
             => ChanNeuKhongPhaiNoiBo()
                ?? Ok(await _nb.SearchNhan(TenantCode(), FiscalYear(), Rong(tu)));
 
+        // ============================ DANH MỤC MÀU PHA ============================
+        // Nuôi ô "Mã màu" trên lưới đánh đơn (ngành sơn). ~1131 dòng nên phải chặn số
+        // dòng trả về và cho cuộn tiếp bằng boQua — cùng cơ chế với "hang"/"kh".
+        [HttpGet("mau")]
+        public async Task<IActionResult> TimMau([FromQuery] string? tu,
+                                                [FromQuery] int gioiHan = 50,
+                                                [FromQuery] int boQua = 0)
+            => ChanNeuKhongPhaiNoiBo()
+               ?? Ok(await _nb.SearchMau(TenantCode(), FiscalYear(), Rong(tu),
+                                         Math.Clamp(gioiHan, 1, 500), Math.Max(0, boQua)));
+
         [HttpPost("kh")]
         public async Task<IActionResult> LuuKh([FromBody] DmKhNbDto d)
         {

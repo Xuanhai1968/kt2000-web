@@ -52,7 +52,8 @@ export function inPhieuDon(don: DonNb, dv: ThongTinDonVi) {
     const sl = Number(l.soLuong) || 0;
     const dg = Number(l.donGia) || 0;
     const vat = Number(l.ptVat) || 0;
-    const truocThue = l.laHangTang ? 0 : sl * dg;
+    const tinh = Number(l.tienTinhMau) || 0;
+    const truocThue = l.laHangTang ? 0 : sl * dg + tinh;
     const sauThue = truocThue * (1 + vat / 100);
     tongSauThue += sauThue;
     tongSl += sl;
@@ -60,8 +61,10 @@ export function inPhieuDon(don: DonNb, dv: ThongTinDonVi) {
       <td class="c"><b>${i + 1}</b></td>
       <td>${esc(l.tenHang)}${l.laHangTang ? " <i>(hàng tặng)</i>" : ""}</td>
       <td class="c">${esc(l.dvt)}</td>
+      <td class="c">${esc(l.maMau)}</td>
       <td class="c">${soTienIn(sl)}</td>
       <td class="c">${soTienIn(dg)}</td>
+      <td class="r">${tinh ? soTienIn(tinh) : ""}</td>
       <td class="c">${vat}</td>
       <td class="r">${soTienIn(sauThue)}</td>
       <td>${esc(l.ghiChu)}</td>
@@ -93,20 +96,22 @@ export function inPhieuDon(don: DonNb, dv: ThongTinDonVi) {
 
     <table class="pxk__items">
       <colgroup>
-        <col style="width:5%"/><col style="width:33%"/><col style="width:8%"/>
-        <col style="width:9%"/><col style="width:11%"/><col style="width:7%"/>
-        <col style="width:15%"/><col style="width:12%"/>
+        <col style="width:4%"/><col style="width:25%"/><col style="width:7%"/>
+        <col style="width:9%"/><col style="width:8%"/><col style="width:10%"/>
+        <col style="width:9%"/><col style="width:6%"/>
+        <col style="width:13%"/><col style="width:9%"/>
       </colgroup>
       <thead><tr>
-        <th>STT</th><th>Tên sản phẩm</th><th>ĐVT</th><th>SL</th><th>Đơn giá</th>
+        <th>STT</th><th>Tên sản phẩm</th><th>ĐVT</th><th>Mã màu</th><th>SL</th>
+        <th>Đơn giá</th><th>Tiền tinh màu</th>
         <th>VAT (%)</th><th>Thành tiền sau thuế</th><th>Ghi chú</th>
       </tr></thead>
       <tbody>
         ${hang}
         <tr class="pxk__total">
-          <td colspan="3" class="r"><strong>TỔNG :</strong></td>
+          <td colspan="4" class="r"><strong>TỔNG :</strong></td>
           <td class="c"><strong>${soTienIn(tongSl)}</strong></td>
-          <td></td><td></td>
+          <td></td><td></td><td></td>
           <td class="r"><strong>${soTienIn(tongSauThue)}</strong></td>
           <td></td>
         </tr>
