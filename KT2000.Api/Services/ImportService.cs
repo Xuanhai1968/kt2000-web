@@ -34,7 +34,7 @@ namespace KT2000.Api.Services
         public ImportService(AppDbContext db, TenantDbResolver resolver, IConfiguration config)
         { _db = db; _resolver = resolver; _config = config; }
 
-        public async Task<object> ImportJob(ImportJobRequest req, string userName)
+        public async Task<KetQuaNapJob> ImportJob(ImportJobRequest req, string userName)
         {
             var tenant = await _db.Tenants.FindAsync(req.TenantId)
                 ?? throw new ArgumentException("Không tìm thấy đơn vị");
@@ -62,8 +62,7 @@ namespace KT2000.Api.Services
             await conn.OpenAsync();
 
             // Theo đúng lựa chọn trên màn hình: "Chỉ đầu vào" thì đừng đụng tới file RA
-            var cacHuongNap = req.Huong.Equals("all", StringComparison.OrdinalIgnoreCase)
-                ? new[] { "VAO", "RA" } : new[] { "VAO" };
+            var cacHuongNap = CacHuong(req.Huong);
 
             foreach (var huong in cacHuongNap)
             {
@@ -203,10 +202,14 @@ namespace KT2000.Api.Services
             await LuuLoiNap(tenant.Id, req.Nam, req.Thang, errors, userName);
 
             int lechTong = errors.Count(e => e.LoaiLoi == "LECH_TONG");
-            return new
+            return new KetQuaNapJob
             {
-                inserted, updated, skippedYear, skippedNoDate, khongCoGoc, moved, lechTong,
-                errors = errors.Select(e => new { maHd = e.MaHd, loaiLoi = e.LoaiLoi, reason = e.LyDo })
+                Inserted = inserted, Updated = updated,
+                SkippedYear = skippedYear, SkippedNoDate = skippedNoDate,
+                KhongCoGoc = khongCoGoc, Moved = moved, LechTong = lechTong,
+                Errors = errors
+                    .Select(e => new LoiNapDto { MaHd = e.MaHd, LoaiLoi = e.LoaiLoi, Reason = e.LyDo })
+                    .ToList(),
             };
         }
 
@@ -235,8 +238,7 @@ namespace KT2000.Api.Services
         public async Task<List<object>> DemFileConLai(List<Tenant> dsTenant, int nam,
                                                      int thangBd, int thangKt, string huong)
         {
-            var cacHuong = huong.Equals("all", StringComparison.OrdinalIgnoreCase)
-                ? new[] { "VAO", "RA" } : new[] { "VAO" };
+            var cacHuong = CacHuong(huong);
 
             string jobsRoot = _config["Paths:JobsRoot"]
                 ?? throw new ArgumentException("Chưa cấu hình Paths:JobsRoot trong appsettings.json");
@@ -245,35 +247,39 @@ namespace KT2000.Api.Services
             // xử lý tay" với "chưa nạp", vì nhìn thư mục thì hai thứ đó y hệt nhau.
             var ids = dsTenant.Select(t => t.Id).ToList();
             var loi = await _db.Set<ImportErrorRow>()
+                // Lọc hướng bằng hai tham số thay vì cờ 0/1: có thêm hướng 'ra' rồi thì
+                // "không phải all" không còn đồng nghĩa với "chỉ VAO" nữa.
                 .FromSqlRaw(@"SELECT TenantId, Thang, LoaiLoi, COUNT(*) AS SoLuong
                               FROM ImportError
                               WHERE Nam={0} AND Thang BETWEEN {1} AND {2}
-                                AND ({3} = 1 OR Huong = N'VAO')
+                                AND Huong IN ({3}, {4})
                               GROUP BY TenantId, Thang, LoaiLoi",
-                            nam, thangBd, thangKt, cacHuong.Length > 1 ? 1 : 0)
+                            nam, thangBd, thangKt,
+                            cacHuong[0], cacHuong.Length > 1 ? cacHuong[1] : cacHuong[0])
                 .ToListAsync();
 
             var kq = new List<object>();
             foreach (var t in dsTenant)
             {
                 var loiCuaDv = loi.Where(x => x.TenantId == t.Id).ToList();
-                int tong = 0; var chiTiet = new List<object>();
+                int tong = 0, soVao = 0, soRa = 0; var chiTiet = new List<object>();
                 for (int thang = thangBd; thang <= thangKt; thang++)
                 {
                     string rawDir = Path.Combine(jobsRoot, t.Code, $"NAM{nam}",
                                                  $"T{thang}_{nam}_{t.Code}", "raw");
                     if (!Directory.Exists(rawDir)) continue;
-                    int n = 0;
-                    foreach (var h in cacHuong)
-                    {
-                        string d = Path.Combine(rawDir, h);
-                        if (Directory.Exists(d)) n += Directory.GetFiles(d, "*.xml").Length;
-                    }
+                    // NT-04: ĐẾM CẢ HAI hướng bất kể lựa chọn "chỉ vào" hay "cả vào và ra".
+                    // Hai cột V/R nói hiện trạng trên đĩa; file đầu ra kẹt lại vẫn phải
+                    // hiện ra dù lần này người dùng chỉ định lấy đầu vào.
+                    int nVao = DemXml(Path.Combine(rawDir, "VAO"));
+                    int nRa  = DemXml(Path.Combine(rawDir, "RA"));
+                    soVao += nVao; soRa += nRa;
+                    int n = nVao + nRa;
                     if (n > 0) { tong += n; chiTiet.Add(new { thang, soFile = n }); }
                 }
                 kq.Add(new
                 {
-                    tenantId = t.Id, code = t.Code, soFileConLai = tong, chiTiet,
+                    tenantId = t.Id, code = t.Code, soFileConLai = tong, soVao, soRa, chiTiet,
                     soLechTong = loiCuaDv.Where(x => x.LoaiLoi == "LECH_TONG").Sum(x => x.SoLuong),
                     soLoiKhac  = loiCuaDv.Where(x => x.LoaiLoi != "LECH_TONG").Sum(x => x.SoLuong),
                     lechTheoThang = loiCuaDv.Where(x => x.LoaiLoi == "LECH_TONG")
@@ -284,6 +290,16 @@ namespace KT2000.Api.Services
             return kq;
         }
 
+        // Một chỗ dịch "hướng" của giao diện sang tên thư mục/khuôn tên file.
+        // Có 'ra' vì màn Hóa đơn đầu ra dùng lại đúng bộ máy này, chỉ khác hướng.
+        private static string[] CacHuong(string huong) =>
+            huong.Equals("all", StringComparison.OrdinalIgnoreCase) ? new[] { "VAO", "RA" }
+          : huong.Equals("ra",  StringComparison.OrdinalIgnoreCase) ? new[] { "RA" }
+          : new[] { "VAO" };
+
+        private static int DemXml(string thuMuc) =>
+            Directory.Exists(thuMuc) ? Directory.GetFiles(thuMuc, "*.xml").Length : 0;
+
         // Đọc từng hóa đơn còn nằm lại raw\ để soi "nó bị làm sao".
         // Nguồn là chính file XML của TCT — file lạc không có dòng nào trong Excel tổng
         // nên đọc Excel sẽ ra rỗng. Lý do bị giữ lại thì tra bảng ImportError, khớp theo
@@ -293,8 +309,7 @@ namespace KT2000.Api.Services
         {
             string jobsRoot = _config["Paths:JobsRoot"]
                 ?? throw new ArgumentException("Chưa cấu hình Paths:JobsRoot trong appsettings.json");
-            var cacHuong = huong.Equals("all", StringComparison.OrdinalIgnoreCase)
-                ? new[] { "VAO", "RA" } : new[] { "VAO" };
+            var cacHuong = CacHuong(huong);
 
             var loi = await _db.Set<ImportErrorDetail>()
                 .FromSqlRaw(@"SELECT MaHd, Thang, LyDo FROM ImportError

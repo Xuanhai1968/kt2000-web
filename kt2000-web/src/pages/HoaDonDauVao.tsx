@@ -4,50 +4,51 @@ import {
   Tag, Checkbox, Progress, Alert, Modal, Empty, InputNumber, Popconfirm,
 } from "antd";
 import {
-  getAdminTenants, importJob, getLeftoverFiles, getRawFiles, getRawHtml, importOne,
+  getAdminTenants, getLeftoverFiles, getRawFiles, getRawHtml, importOne,
   getTctCredential, saveTctCredential, fetchStart, fetchProgress, fetchStop,
+  loiApi,
 } from "../api";
 import type {
-  AdminTenant, ImportJobResult, LeftoverInfo, HuongLay, HoaDonConLai, MatHang, PhienLay,
+  AdminTenant, LeftoverInfo, HuongLay, HoaDonConLai, MatHang, PhienLay,
 } from "../api";
 import { useAuth } from "../AuthContext";
 import "./luoi-gon.css";
+import "./mau-huong.css";
 
-// Kết quả nạp của MỘT (đơn vị × tháng) — gom lại thành nhật ký phiên chạy
-interface DongKetQua {
-  key: string;
-  maDonVi: string;
-  thang: number;
-  trangThai: "ok" | "loi";
-  moi: number;
-  capNhat: number;
-  boLai: number;
-  loi: number;
-  khongCoGoc: number;
-  ghiChu: string;
-}
+// NT-06 (Q2): ghi nhớ theo MÁY chứ không theo người — đúng hành vi VFP cũ, nơi
+// trạng thái nằm trong KT2000.INI của máy đó. localStorage là chỗ tương đương.
+const KHOA_CA_HAI = "kt2000_lay_hd_ca_vao_va_ra";
+
+// Hai màn Đầu vào / Đầu ra dùng CHUNG ruột này, chỉ khác hướng mặc định.
+interface Props { huongMacDinh: "vao" | "ra" }
 
 // ============ RUỘT 1: console NỘI BỘ (MDN_NB) — FRM_LAY_HDDT ============
-function ConsoleLayHoaDon() {
+function ConsoleLayHoaDon({ huongMacDinh }: Props) {
   const { session } = useAuth();
   const namLamViec = session?.fiscalYear ?? new Date().getFullYear();
+  const laDauRa = huongMacDinh === "ra";
 
   const [tenants, setTenants] = useState<AdminTenant[]>([]);
   const [selected, setSelected] = useState<React.Key[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Hàng điều khiển (spec mục 2): từ tháng / đến tháng, hướng lấy, không còn chọn năm
   const [tuThang, setTuThang] = useState(1);
   const [denThang, setDenThang] = useState(1);
-  const [huong, setHuong] = useState<HuongLay>("vao");
   const [xoaTruoc, setXoaTruoc] = useState(false);
 
-  // Tiến độ phiên chạy bước 2
-  const [dangChay, setDangChay] = useState(false);
-  const [tienDo, setTienDo] = useState({ xong: 0, tong: 0, dangLam: "" });
-  const [ketQua, setKetQua] = useState<DongKetQua[]>([]);
+  // NT-06: đọc lên từ localStorage ngay lúc dựng chứ không phải sau một vòng render —
+  // để useEffect gán sau thì lần gọi API đầu tiên đã đi với hướng sai.
+  const [caHaiHuong, setCaHaiHuong] = useState(
+    () => localStorage.getItem(KHOA_CA_HAI) === "1");
+  const doiCaHaiHuong = (bat: boolean) => {
+    setCaHaiHuong(bat);
+    localStorage.setItem(KHOA_CA_HAI, bat ? "1" : "0");
+  };
 
-  // Số file gốc còn nằm lại raw\ của từng đơn vị (HĐ lệch Σ line vs master — spec 1.3.3)
+  // Hướng thật sự gửi xuống backend: tích "cả hai" thì bỏ qua hướng của màn hình
+  const huong: HuongLay = caHaiHuong ? "all" : huongMacDinh;
+
+  // Số file gốc còn nằm lại raw\ của từng đơn vị
   const [fileLoi, setFileLoi] = useState<Record<string, LeftoverInfo>>({});
 
   const docFileLoi = (ds: AdminTenant[]) => {
@@ -59,41 +60,43 @@ function ConsoleLayHoaDon() {
       .catch(() => setFileLoi({}));
   };
 
+
   // ===== Modal soi các hóa đơn còn nằm lại raw\ =====
   const [modalMo, setModalMo] = useState(false);
   const [modalTai, setModalTai] = useState(false);
   const [modalDonVi, setModalDonVi] = useState<AdminTenant | null>(null);
   const [dsConLai, setDsConLai] = useState<HoaDonConLai[]>([]);
-  // Hóa đơn đang chọn ở khung trên — khung dưới hiện mặt hàng của đúng nó
   const [chonFile, setChonFile] = useState<string | null>(null);
   const hdDangChon = dsConLai.find((x) => x.tenFile === chonFile) ?? null;
 
-  // Nút chỉ sáng khi đang chọn ĐÚNG MỘT đơn vị và đơn vị đó còn file trong raw\
   const donViDangChon = selected.length === 1
     ? tenants.find((t) => t.id === selected[0]) ?? null : null;
   const soFileCuaDonViChon = donViDangChon
     ? fileLoi[donViDangChon.id]?.soFileConLai ?? 0 : 0;
 
-  const moModalConLai = async () => {
-    if (!donViDangChon) return;
-    setModalDonVi(donViDangChon);
+  const dangHoatDong = useMemo(() => tenants.filter((t) => t.isActive), [tenants]);
+
+  // NT-05: mở được từ nút, và mở được bằng cách bấm thẳng vào con số ở cột V/R
+  const moModalConLai = async (dv?: AdminTenant) => {
+    const t = dv ?? donViDangChon;
+    if (!t) return;
+    setModalDonVi(t);
     setModalMo(true);
     setModalTai(true);
     setDsConLai([]);
     setChonFile(null);
     try {
-      const r = await getRawFiles(donViDangChon.id, namLamViec, tuThang, denThang, huong);
+      const r = await getRawFiles(t.id, namLamViec, tuThang, denThang, huong);
       setDsConLai(r.data);
       // Chọn sẵn dòng đầu để khung dưới có nội dung ngay, khỏi phải bấm thêm
       if (r.data.length) setChonFile(r.data[0].tenFile);
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không đọc được thư mục raw\\");
+    } catch (e) {
+      message.error(loiApi(e, "Không đọc được thư mục raw\\"));
     } finally {
       setModalTai(false);
     }
   };
 
-  // Sửa tại chỗ: ghi đè đúng hóa đơn trong danh sách đang hiển thị
   const suaHoaDon = (tenFile: string, thayDoi: Partial<HoaDonConLai>) =>
     setDsConLai((ds) => ds.map((x) => (x.tenFile === tenFile ? { ...x, ...thayDoi } : x)));
 
@@ -125,11 +128,11 @@ function ConsoleLayHoaDon() {
     } catch (e: any) {
       message.error(e?.response?.status === 404
         ? "Hóa đơn này không có bản HTML kèm theo"
-        : e?.response?.data?.message ?? "Không mở được bản HTML");
+        : loiApi(e, "Không mở được bản HTML"));
     }
   };
 
-  // ===== BƯỚC 1: lấy HĐ từ cổng TCT =====
+  // ===== Lấy HĐ từ cổng TCT — NT-03: lấy xong backend nạp luôn, không còn bước hai =====
   const [phien, setPhien] = useState<PhienLay | null>(null);
   const [dangBatDau, setDangBatDau] = useState(false);
   const [mkMo, setMkMo] = useState(false);
@@ -140,14 +143,19 @@ function ConsoleLayHoaDon() {
   useEffect(() => {
     if (!phien?.dangChay) return;
     const id = setInterval(() => {
-      fetchProgress().then((r) => setPhien(r.data)).catch(() => {});
+      fetchProgress().then((r) => {
+        setPhien(r.data);
+        // Phiên vừa kết thúc: cột V/R và lịch sử phải phản ánh ngay kết quả
+        if (!r.data.dangChay) docFileLoi(dangHoatDong);
+      }).catch(() => {});
     }, 2000);
     return () => clearInterval(id);
   }, [phien?.dangChay]);
 
-  // Mở màn hình là hỏi luôn xem phiên trước còn chạy dở không
+  // Mở màn hình là hỏi luôn phiên trước còn chạy dở không, và đọc lịch sử
   useEffect(() => {
     fetchProgress().then((r) => { if (r.data.cac?.length) setPhien(r.data); }).catch(() => {});
+
   }, []);
 
   const docTrangThaiMk = (t: AdminTenant) =>
@@ -164,8 +172,8 @@ function ConsoleLayHoaDon() {
       message.success(`Đã lưu mật khẩu cổng TCT cho ${donViDangChon.code}`);
       setMkMo(false); setMkGiaTri("");
       docTrangThaiMk(donViDangChon);
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không lưu được mật khẩu");
+    } catch (e) {
+      message.error(loiApi(e, "Không lưu được mật khẩu"));
     }
   };
 
@@ -174,11 +182,12 @@ function ConsoleLayHoaDon() {
     if (denThang < tuThang) { message.error("Đến tháng phải ≥ Từ tháng"); return; }
     setDangBatDau(true);
     try {
-      const r = await fetchStart(selected as string[], namLamViec, tuThang, denThang, huong);
+      const r = await fetchStart(
+        selected as string[], namLamViec, tuThang, denThang, huong, xoaTruoc);
       setPhien(r.data);
-      message.success(`Đã xếp hàng ${r.data.cac.length} lượt (đơn vị × tháng)`);
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không bắt đầu được phiên lấy HĐ");
+      message.success(`Đã xếp hàng ${r.data.cac.length} lượt — lấy xong sẽ tự nạp vào database`);
+    } catch (e) {
+      message.error(loiApi(e, "Không bắt đầu được phiên lấy HĐ"));
     } finally {
       setDangBatDau(false);
     }
@@ -212,16 +221,18 @@ function ConsoleLayHoaDon() {
         return conLai;
       });
       docFileLoi(dangHoatDong);
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không nạp được hóa đơn này");
+    } catch (e) {
+      message.error(loiApi(e, "Không nạp được hóa đơn này"));
     } finally {
       setDangNap(null);
     }
   };
 
+  // NT-02: chiDonViThue = true → bỏ cả 'internal' lẫn 'noibo'. Đơn vị nội bộ không
+  // có hóa đơn trên cổng TCT, hiện lên chỉ tổ chọn nhầm rồi chạy một lượt vô ích.
   const napDanhSach = (baoOnKhiXong = false) => {
     setLoading(true);
-    getAdminTenants()
+    getAdminTenants(false, true)
       .then((r) => {
         setTenants(r.data);
         docFileLoi(r.data.filter((t) => t.isActive));
@@ -247,246 +258,246 @@ function ConsoleLayHoaDon() {
     if (tenants.length) docFileLoi(tenants.filter((t) => t.isActive));
   }, [tuThang, denThang, huong, tenants]);
 
-  const dangHoatDong = useMemo(() => tenants.filter((t) => t.isActive), [tenants]);
   const chonTheoKyKhai = (khaiQuy: boolean) =>
     setSelected(dangHoatDong.filter((t) => t.khaiQuy === khaiQuy).map((t) => t.id));
 
   const cacThang = Array.from({ length: 12 }, (_, i) => i + 1);
 
-  // ===== BƯỚC 2: đưa HĐ từ thư mục job vào HOA_DON / HOA_DON_LINE =====
-  // Chạy tuần tự (đơn vị × tháng) để tiến độ phản ánh đúng việc đang làm,
-  // và để một đơn vị hỏng không kéo cả mẻ chết theo.
-  const chayBuoc2 = async () => {
-    if (selected.length === 0) return;
-    if (denThang < tuThang) { message.error("Đến tháng phải ≥ Từ tháng"); return; }
-
-    const viecs: { tenant: AdminTenant; thang: number }[] = [];
-    for (const id of selected) {
-      const t = dangHoatDong.find((x) => x.id === id);
-      if (!t) continue;
-      for (let m = tuThang; m <= denThang; m++) viecs.push({ tenant: t, thang: m });
-    }
-
-    setDangChay(true);
-    setKetQua([]);
-    setTienDo({ xong: 0, tong: viecs.length, dangLam: "" });
-
-    const gom: DongKetQua[] = [];
-    for (let i = 0; i < viecs.length; i++) {
-      const { tenant, thang } = viecs[i];
-      setTienDo({ xong: i, tong: viecs.length, dangLam: `${tenant.code} — tháng ${thang}` });
-      const key = `${tenant.id}-${thang}`;
-      try {
-        const r = await importJob(tenant.id, namLamViec, thang, huong, xoaTruoc);
-        const d: ImportJobResult = r.data;
-        gom.push({
-          key, maDonVi: tenant.code, thang, trangThai: "ok",
-          moi: d.inserted, capNhat: d.updated,
-          boLai: d.skippedYear + d.skippedNoDate, loi: d.errors.length,
-          khongCoGoc: d.khongCoGoc,
-          ghiChu: d.errors.length
-            ? d.errors.slice(0, 3).map((e) => `${e.maHd}: ${e.reason}`).join(" | ")
-            : `Đã chuyển ${d.moved} file sang SCAN_DOC`,
-        });
-      } catch (e: any) {
-        gom.push({
-          key, maDonVi: tenant.code, thang, trangThai: "loi",
-          moi: 0, capNhat: 0, boLai: 0, loi: 0, khongCoGoc: 0,
-          ghiChu: e?.response?.data?.message ?? "Không gọi được máy chủ",
-        });
-      }
-      setKetQua([...gom]);
-    }
-
-    setTienDo({ xong: viecs.length, tong: viecs.length, dangLam: "" });
-    setDangChay(false);
-    docFileLoi(dangHoatDong);   // nạp xong thì cột "file lỗi còn lại" phải cập nhật theo
-    const soLoi = gom.filter((g) => g.trangThai === "loi" || g.loi > 0).length;
-    if (soLoi) message.warning(`Xong ${viecs.length} lượt — ${soLoi} lượt có vấn đề, xem bảng dưới`);
-    else message.success(`Xong ${viecs.length} lượt, không có lỗi`);
+  // NT-04: luôn hiện SỐ, không có thì 0. Bấm vào số > 0 là mở thẳng form chi tiết.
+  const oDemFile = (r: AdminTenant, lay: (i: LeftoverInfo) => number) => {
+    const info = fileLoi[r.id];
+    const n = info ? lay(info) : 0;
+    if (n === 0) return <Typography.Text type="secondary">0</Typography.Text>;
+    return (
+      <a onClick={(ev) => { ev.stopPropagation(); moModalConLai(r); }}
+         title="Bấm để xem chi tiết từng hóa đơn còn nằm lại">
+        <b style={{ color: "#cf1322" }}>{n}</b>
+      </a>
+    );
   };
 
+  // Màn nào chỉ hiện cột của hướng đó. Tích "Cả vào và ra" thì mới hiện đủ hai cột —
+  // lúc đó người dùng đang thật sự làm việc với cả hai chiều nên cần thấy cả hai.
+  const cotConLai = caHaiHuong
+    ? [
+        { title: "VÀO", width: 66, align: "center" as const,
+          render: (_: unknown, r: AdminTenant) => oDemFile(r, (i) => i.soVao) },
+        { title: "RA", width: 66, align: "center" as const,
+          render: (_: unknown, r: AdminTenant) => oDemFile(r, (i) => i.soRa) },
+      ]
+    : [
+        { title: laDauRa ? "RA" : "VÀO", width: 80, align: "center" as const,
+          render: (_: unknown, r: AdminTenant) =>
+            oDemFile(r, (i) => (laDauRa ? i.soRa : i.soVao)) },
+      ];
+
+  const tenMan = laDauRa ? "Hóa đơn GTGT đầu ra" : "Hóa đơn GTGT đầu vào";
+  const dangChay = !!phien?.dangChay;
+
   return (
+    <div className={laDauRa ? "huong-ra" : "huong-vao"}>
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Card
-        title={`Lấy hóa đơn điện tử — năm làm việc ${namLamViec}`}
-        extra={<Button onClick={() => napDanhSach(true)} loading={loading}>Đọc lại</Button>}
+        title={`${tenMan} — lấy từ cổng TCT, năm làm việc ${namLamViec}`}
+        extra={<Button size="small" onClick={() => napDanhSach(true)} loading={loading}>
+                 Đọc lại
+               </Button>}
+        styles={{ body: { paddingTop: 10 } }}
       >
-        <Space wrap style={{ marginBottom: 12 }}>
-          <Button onClick={() => chonTheoKyKhai(false)}>Đánh dấu tất cả đơn vị khai Tháng</Button>
-          <Button onClick={() => chonTheoKyKhai(true)}>Đánh dấu tất cả đơn vị khai Quý</Button>
-          <Button onClick={() => setSelected([])} disabled={selected.length === 0}>Bỏ đánh dấu</Button>
-          <Typography.Text type="secondary">
-            Đơn vị <span style={{ color: "#cf1322", fontWeight: 600 }}>chữ đỏ</span> là khai THÁNG
-          </Typography.Text>
-        </Space>
-
-        <Table
-          rowKey="id"
-          size="small"
-          loading={loading}
-          dataSource={dangHoatDong}
-          rowSelection={{ selectedRowKeys: selected, onChange: setSelected }}
-          pagination={{ pageSize: 20 }}
-          columns={[
-            { title: "Mã", dataIndex: "code", width: 140,
-              render: (v: string, r: AdminTenant) =>
-                <span style={{ color: r.khaiQuy ? undefined : "#cf1322", fontWeight: r.khaiQuy ? undefined : 600 }}>{v}</span> },
-            { title: "Tên đơn vị", dataIndex: "name",
-              render: (v: string, r: AdminTenant) =>
-                <span style={{ color: r.khaiQuy ? undefined : "#cf1322" }}>{v}</span> },
-            { title: "MST", dataIndex: "taxCode", width: 140 },
-            { title: "Kỳ khai", dataIndex: "khaiQuy", width: 100,
-              render: (q: boolean) => q ? <Tag>Quý</Tag> : <Tag color="red">Tháng</Tag> },
-            // Đếm file .xml còn nằm ở raw\ — gồm cả HĐ chưa nạp lẫn HĐ lệch Σ line phải
-            // xử lý tay. Nạp xong mà vẫn còn số thì phần còn lại chính là số cần xử lý tay.
-            { title: `Còn ở raw\\ (T${tuThang}–T${denThang}, ${huong === "vao" ? "vào" : "vào+ra"})`,
-              width: 190,
-              render: (_: unknown, r: AdminTenant) => {
-                const info = fileLoi[r.id];
-                if (!info) return <Typography.Text type="secondary">—</Typography.Text>;
-                return info.soFileConLai === 0
-                  ? <Tag color="green">Đã vào hết</Tag>
-                  : <Tag color="orange"
-                         title={"Chưa nạp hoặc lệch Σ line phải xử lý tay — "
-                                + info.chiTiet.map((c) => `T${c.thang}: ${c.soFile}`).join(", ")}>
-                      {info.soFileConLai} file
-                    </Tag>;
-              } },
-            // Cột spec 1.3.3 yêu cầu: HĐ lệch Σ line vs master, file gốc nằm lại raw\<HUONG>\
-            // Đếm từ bảng ImportError ghi lúc nạp — nhìn thư mục không suy ra được loại lỗi.
-            { title: "Lệch Σ line ↔ master", width: 180,
-              render: (_: unknown, r: AdminTenant) => {
-                const info = fileLoi[r.id];
-                if (!info) return <Typography.Text type="secondary">—</Typography.Text>;
-                if (info.soLechTong === 0)
-                  return info.soLoiKhac
-                    ? <Tag color="gold" title="Lỗi loại khác: không rõ ngày / lỗi ghi / lỗi dời file">
-                        0 (còn {info.soLoiKhac} lỗi khác)
-                      </Tag>
-                    : <Tag color="green">0</Tag>;
-                return (
-                  <Tag color="red"
-                       title={"File gốc nằm lại raw\\ chờ xử lý tay — "
-                              + info.lechTheoThang.map((c) => `T${c.thang}: ${c.soFile}`).join(", ")}>
-                    {info.soLechTong} HĐ
-                  </Tag>
-                );
-              } },
-          ]}
-        />
-
-        <Space wrap style={{ marginTop: 12 }}>
-          Từ tháng:
-          <Select style={{ width: 90 }} value={tuThang} onChange={setTuThang}
-                  options={cacThang.map((m) => ({ value: m, label: `T${m}` }))} />
-          Đến tháng:
-          <Select style={{ width: 90 }} value={denThang} onChange={setDenThang}
-                  options={cacThang.map((m) => ({ value: m, label: `T${m}` }))} />
-          {/* Không tích = chỉ đầu vào, đúng phần việc của màn hình này */}
-          <Checkbox checked={huong === "all"}
-                    onChange={(e) => setHuong(e.target.checked ? "all" : "vao")}>
-            Cả vào và ra
-          </Checkbox>
-
-          <Button type="primary" loading={dangBatDau}
-                  disabled={selected.length === 0 || !!phien?.dangChay}
-                  onClick={batDauLayHd}>
-            Lấy HĐ điện tử
+        <div className="thanh-dieu-khien"
+             style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+          <Button size="small" onClick={() => chonTheoKyKhai(false)}>
+            Đánh dấu các đơn vị khai Tháng
           </Button>
-          {phien?.dangChay && (
+          <Button size="small" onClick={() => chonTheoKyKhai(true)}>
+            Đánh dấu các đơn vị khai Quý
+          </Button>
+          <Button size="small" onClick={() => setSelected([])}
+                  disabled={selected.length === 0}>
+            Bỏ đánh dấu
+          </Button>
+
+          <Button size="small" type="primary" loading={dangBatDau}
+                  disabled={selected.length === 0 || dangChay}
+                  onClick={batDauLayHd}>
+            Lấy hóa đơn điện tử
+          </Button>
+          {dangChay && (
             <Popconfirm title="Dừng phiên đang chạy?"
                         description="Lượt đang tải sẽ bị hủy giữa chừng."
                         okText="Dừng" cancelText="Thôi" onConfirm={() => fetchStop()}>
-              <Button danger>Dừng</Button>
+              <Button size="small" danger>Dừng</Button>
             </Popconfirm>
           )}
-          <Button type="primary" loading={dangChay}
-                  disabled={selected.length === 0} onClick={chayBuoc2}>
-            Nạp vào database
-          </Button>
 
-          {/* Xám khi chưa chọn đúng 1 đơn vị, hoặc đơn vị đó đã vào hết */}
-          <Button
-            danger={soFileCuaDonViChon > 0}
-            disabled={!donViDangChon || soFileCuaDonViChon === 0}
-            onClick={moModalConLai}
-            title={
-              !donViDangChon
-                ? "Chọn đúng một đơn vị để xem"
-                : soFileCuaDonViChon === 0
-                  ? "Đơn vị này không còn file nào ở raw\\"
-                  : `Xem ${soFileCuaDonViChon} hóa đơn còn lại của ${donViDangChon.code}`
-            }
-          >
-            Xem file còn lại{soFileCuaDonViChon > 0 ? ` (${soFileCuaDonViChon})` : ""}
-          </Button>
+          <span style={{ flex: 1 }} />
 
-          <Button disabled={!donViDangChon} onClick={() => { setMkGiaTri(""); setMkMo(true); }}>
-            Mật Khẩu cổng TCT
-            {donViDangChon ? (mkDaCo[donViDangChon.id] ? " — đã có" : " — CHƯA có") : ""}
-          </Button>
+          <span style={{ fontSize: 13 }}>Từ tháng</span>
+          <Select size="small" style={{ width: 74 }} value={tuThang} onChange={setTuThang}
+                  options={cacThang.map((m) => ({ value: m, label: `T${m}` }))} />
+          <span style={{ fontSize: 13 }}>Đến tháng</span>
+          <Select size="small" style={{ width: 74 }} value={denThang} onChange={setDenThang}
+                  options={cacThang.map((m) => ({ value: m, label: `T${m}` }))} />
+        </div>
 
+        <div className="thanh-dieu-khien"
+             style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          <Checkbox checked={caHaiHuong} onChange={(e) => doiCaHaiHuong(e.target.checked)}>
+            Cả vào và ra
+          </Checkbox>
           <Checkbox checked={xoaTruoc} onChange={(e) => setXoaTruoc(e.target.checked)}>
             <span style={{ color: xoaTruoc ? "#cf1322" : undefined }}>
               Gặp HĐ trùng: XÓA hẳn rồi ghi mới
             </span>
           </Checkbox>
-        </Space>
 
-        <Typography.Text type="secondary" style={{ display: "block", marginTop: 6, fontSize: 12 }}>
-          {selected.length} đơn vị × {Math.max(0, denThang - tuThang + 1)} tháng
-          {huong === "vao" ? " — chỉ đầu vào" : " — cả vào và ra"}.
-          Lấy HĐ chạy tuần tự từng đơn vị-tháng.
+          <span style={{ flex: 1 }} />
+
+          <Button size="small"
+                  danger={soFileCuaDonViChon > 0}
+                  disabled={!donViDangChon || soFileCuaDonViChon === 0}
+                  onClick={() => moModalConLai()}
+                  title={
+                    !donViDangChon
+                      ? "Chọn đúng một đơn vị để xem"
+                      : soFileCuaDonViChon === 0
+                        ? "Đơn vị này không còn file nào ở raw\\"
+                        : `Xem ${soFileCuaDonViChon} hóa đơn còn lại của ${donViDangChon.code}`
+                  }>
+            Xem file còn lại{soFileCuaDonViChon > 0 ? ` (${soFileCuaDonViChon})` : ""}
+          </Button>
+          <Button size="small" disabled={!donViDangChon}
+                  onClick={() => { setMkGiaTri(""); setMkMo(true); }}>
+            Mật khẩu cổng TCT
+            {donViDangChon ? (mkDaCo[donViDangChon.id] ? " — đã có" : " — CHƯA có") : ""}
+          </Button>
+        </div>
+
+        <Table
+          className="luoi-gon"
+          rowKey="id"
+          size="small"
+          loading={loading}
+          dataSource={dangHoatDong}
+          rowSelection={{ selectedRowKeys: selected, onChange: setSelected }}
+          pagination={false}
+          scroll={{ y: 290 }}
+          columns={[
+            { title: "Mã", dataIndex: "code", width: 150,
+              render: (v: string, r: AdminTenant) =>
+                <span style={{ color: r.khaiQuy ? undefined : "#cf1322",
+                               fontWeight: r.khaiQuy ? undefined : 600 }}>{v}</span> },
+            { title: "Tên đơn vị", dataIndex: "name",
+              render: (v: string, r: AdminTenant) =>
+                <span style={{ color: r.khaiQuy ? undefined : "#cf1322" }}>{v}</span> },
+            { title: "MST", dataIndex: "taxCode", width: 130 },
+            { title: "Kỳ khai", dataIndex: "khaiQuy", width: 90,
+              render: (q: boolean) => q ? <Tag>Quý</Tag> : <Tag color="red">Tháng</Tag> },
+            ...cotConLai,
+          ]}
+        />
+
+        <Typography.Text type="secondary"
+                         style={{ display: "block", marginTop: 6, fontSize: 12 }}>
+          {selected.length} đơn vị × {Math.max(0, denThang - tuThang + 1)} tháng —{" "}
+          {huong === "all" ? "cả vào và ra" : laDauRa ? "chỉ đầu ra" : "chỉ đầu vào"}.
+          Chạy tuần tự từng đơn vị-tháng; lấy xong tự nạp vào database.
         </Typography.Text>
 
         {donViDangChon && mkDaCo[donViDangChon.id] === false && (
           <Alert style={{ marginTop: 8 }} type="warning" showIcon
-                 message={`${donViDangChon.code} chưa khai mật khẩu cổng TCT — bấm "Mật Khẩu cổng TCT" để nhập`} />
+                 message={`${donViDangChon.code} chưa khai mật khẩu cổng TCT — bấm "Mật khẩu cổng TCT" để nhập`} />
         )}
       </Card>
 
-      {/* Tiến độ lấy HĐ — chỉ hiện khi thật sự có phiên, không chiếm chỗ lúc rảnh */}
       {phien && phien.cac.length > 0 && (
-        <Card size="small" title="Tiến độ lấy HĐ từ cổng Tổng cục Thuế">
-          <div>
-            <Progress
-              percent={Math.round(
-                (phien.cac.filter((x) => x.trangThai === "xong" || x.trangThai === "loi").length
-                  / phien.cac.length) * 100)}
-              status={phien.dangChay ? "active" : "normal"}
-            />
-            <Table
-              className="luoi-gon" size="small" rowKey={(r) => `${r.tenantId}-${r.thang}`}
-              dataSource={phien.cac} pagination={false}
-              scroll={{ y: 260 }}
-              columns={[
-                { title: "Đơn vị", dataIndex: "code", width: 140 },
-                { title: "Tháng", dataIndex: "thang", width: 70 },
-                { title: "Trạng thái", dataIndex: "trangThai", width: 110,
-                  render: (v: string) => {
-                    const mau: Record<string, string> = {
-                      cho: "default", dang_chay: "blue", xong: "green", loi: "red", huy: "orange",
-                    };
-                    const chu: Record<string, string> = {
-                      cho: "Chờ", dang_chay: "Đang chạy", xong: "Xong", loi: "Lỗi", huy: "Đã hủy",
-                    };
-                    return <Tag color={mau[v]}>{chu[v] ?? v}</Tag>;
-                  } },
-                { title: "Giai đoạn", dataIndex: "giaiDoan", width: 120 },
-                { title: "Tải", width: 110,
-                  render: (_: unknown, r) => r.tong > 0 ? `${r.daTai}/${r.tong}` : "—" },
-                { title: "Diễn biến", dataIndex: "thongDiep", ellipsis: true,
-                  render: (v: string, r) => r.loi
-                    ? <Typography.Text type="danger" title={r.loi}>{r.loi}</Typography.Text>
-                    : v },
-              ]}
-            />
-          </div>
+        <Card size="small" title="Tiến độ lấy và nạp hóa đơn">
+          <Progress
+            percent={Math.round(
+              (phien.cac.filter((x) => x.trangThai === "xong" || x.trangThai === "loi").length
+                / phien.cac.length) * 100)}
+            status={dangChay ? "active" : "normal"}
+          />
+          <Table
+            className="luoi-gon" size="small" rowKey={(r) => `${r.tenantId}-${r.thang}`}
+            dataSource={phien.cac} pagination={false}
+            scroll={{ x: 1420, y: 260 }}
+            columns={[
+              { title: "Đơn vị", dataIndex: "code", width: 140, fixed: "left" },
+              { title: "Kỳ", width: 80,
+                render: (_: unknown, r) => `T${r.thang}/${r.nam}` },
+              { title: "Hướng", dataIndex: "huong", width: 84,
+                render: (v: string) => v
+                  ? <Tag color={v === "RA" ? "blue" : v === "VAO" ? "red" : "purple"}>{v}</Tag>
+                  : <Typography.Text type="secondary">—</Typography.Text> },
+              // Giờ bấm Lấy — không có nó thì nhìn bảng không biết đây là phiên vừa
+              // chạy hay phiên từ hôm kia còn treo trên màn hình
+              { title: "Bắt đầu", dataIndex: "batDau", width: 160,
+                render: (v: string | null) => v
+                  ? <span title={new Date(v).toLocaleString("vi-VN")}>
+                      {new Date(v).toLocaleString("vi-VN",
+                        { day: "2-digit", month: "2-digit", year: "numeric",
+                          hour: "2-digit", minute: "2-digit", second: "2-digit",
+                          hour12: false })}
+                    </span>
+                  : <Typography.Text type="secondary">—</Typography.Text> },
+              { title: "Trạng thái", dataIndex: "trangThai", width: 100,
+                render: (v: string) => {
+                  const mau: Record<string, string> = {
+                    cho: "default", dang_chay: "blue", xong: "green", loi: "red", huy: "orange",
+                  };
+                  const chu: Record<string, string> = {
+                    cho: "Chờ", dang_chay: "Đang chạy", xong: "Xong", loi: "Lỗi", huy: "Đã hủy",
+                  };
+                  return <Tag color={mau[v]}>{chu[v] ?? v}</Tag>;
+                } },
+              { title: "Tải được", width: 100, align: "center",
+                render: (_: unknown, r) => r.tong > 0 || r.taiOk > 0
+                  ? <span title={`Tổng ${r.tong || r.taiOk} hóa đơn trong danh sách`
+                               + (r.nguonDs === "excel" ? " (đếm từ Excel danh sách)" : "")}>
+                      <b>{r.taiOk}</b>/{r.tong || r.taiOk}
+                    </span>
+                  : <Typography.Text type="secondary">—</Typography.Text> },
+              // Hai loại "không tải được" phải nằm riêng: 500-không-có-hồ-sơ-gốc là ca
+              // BÌNH THƯỜNG của hóa đơn điện/viễn thông/ngân hàng, còn 429/504 mới là
+              // thứ đáng đi tìm. Gộp chung thì lần nào cũng đỏ và không ai buồn đọc.
+              { title: "Không có gốc", width: 110, align: "center",
+                render: (_: unknown, r) => r.khongCoGoc > 0
+                  ? <Tag color="gold"
+                         title="HTTP 500 — cổng không giữ bản gốc (điện, viễn thông, ngân hàng). Hợp lệ, không phải lỗi.">
+                      {r.khongCoGoc}
+                    </Tag>
+                  : <Typography.Text type="secondary">0</Typography.Text> },
+              // 0 tô XANH chứ không để xám: đây là cột người dùng liếc vào để yên tâm.
+              // Xám đọc như "chưa có số liệu", xanh mới nói rõ "đã chạy xong, sạch".
+              { title: "Lỗi cần xem", width: 105, align: "center",
+                render: (_: unknown, r) => r.loiThat > 0
+                  ? <Tag color="red" title="429 / 504 / mạng hỏng — xem LOI_TAI_*.txt trong thư mục job">
+                      {r.loiThat}
+                    </Tag>
+                  : <Tag color="green" title="Không có lỗi mạng hay lỗi cổng nào">0</Tag> },
+              { title: "Đã nạp DB", width: 135, align: "center",
+                render: (_: unknown, r) =>
+                  r.phaNap === "dang_nap" ? <Tag color="blue">Đang nạp…</Tag>
+                : r.phaNap === "loi"      ? <Tag color="red" title={r.napThongDiep ?? ""}>Nạp hỏng</Tag>
+                : r.phaNap === "xong"     ? <span title={r.napThongDiep ?? ""}>
+                                              <b>{r.napMoi}</b> mới
+                                              {r.napCapNhat > 0 && ` · ${r.napCapNhat} sửa`}
+                                            </span>
+                : <Typography.Text type="secondary">—</Typography.Text> },
+              { title: "Diễn biến", dataIndex: "thongDiep", ellipsis: true,
+                render: (v: string, r) => r.loi
+                  ? <Typography.Text type="danger" title={r.loi}>{r.loi}</Typography.Text>
+                  : <span title={r.napThongDiep ?? v}>{r.napThongDiep || v}</span> },
+            ]}
+          />
         </Card>
       )}
 
-      {/* Nhập mật khẩu cổng TCT — chỉ nhập đè, không bao giờ hiển thị lại */}
+      {/* Bảng "7 lần gần nhất" đã bỏ theo yêu cầu — chỉ giữ tiến độ. Nhật ký từng
+          lượt vẫn ghi vào ActivityLog, muốn tra thì sang màn Nhật ký hệ thống lọc
+          theo hành động LAY_HD. */}
+
       <Modal
         title={`Tài khoản cổng Tổng cục Thuế — ${donViDangChon?.code ?? ""}`}
         open={mkMo} onCancel={() => setMkMo(false)} onOk={luuMatKhau}
@@ -502,52 +513,10 @@ function ConsoleLayHoaDon() {
                         onPressEnter={luuMatKhau} />
       </Modal>
 
-      {/* Kết quả nạp vào DB — cũng chỉ hiện khi đã chạy ít nhất một lượt */}
-      {(tienDo.tong > 0 || ketQua.length > 0) && (
-        <Card size="small" title="Kết quả nạp vào HOA_DON / HOA_DON_LINE">
-        {tienDo.tong > 0 && (
-          <div>
-            <Progress
-              percent={Math.round((tienDo.xong / tienDo.tong) * 100)}
-              status={dangChay ? "active" : "normal"}
-            />
-            <Typography.Text type="secondary">
-              {dangChay
-                ? `Đang nạp: ${tienDo.dangLam} (${tienDo.xong}/${tienDo.tong})`
-                : `Hoàn tất ${tienDo.xong}/${tienDo.tong} lượt`}
-            </Typography.Text>
-          </div>
-        )}
-
-        {ketQua.length > 0 && (
-          <Table
-            size="small" style={{ marginTop: 12 }} rowKey="key"
-            dataSource={ketQua} pagination={{ pageSize: 15 }}
-            columns={[
-              { title: "Đơn vị", dataIndex: "maDonVi", width: 140 },
-              { title: "Tháng", dataIndex: "thang", width: 70 },
-              { title: "Mới", dataIndex: "moi", width: 70 },
-              { title: "Cập nhật", dataIndex: "capNhat", width: 90 },
-              { title: "Bỏ lại", dataIndex: "boLai", width: 80 },
-              { title: "Không gốc", dataIndex: "khongCoGoc", width: 100,
-                render: (n: number) => n
-                  ? <Tag title="HĐ điện, viễn thông, ngân hàng — chỉ có trong Excel, không có bản gốc trên TCT">{n}</Tag>
-                  : <span>0</span> },
-              { title: "Lỗi", dataIndex: "loi", width: 70,
-                render: (n: number, r: DongKetQua) =>
-                  r.trangThai === "loi" ? <Tag color="red">hỏng</Tag>
-                    : n ? <Tag color="red">{n}</Tag> : <Tag color="green">0</Tag> },
-              { title: "Ghi chú", dataIndex: "ghiChu" },
-            ]}
-          />
-        )}
-        </Card>
-      )}
-
-      {/* ===== Modal: các hóa đơn còn nằm lại raw\ — đọc thẳng từ XML gốc ===== */}
       <Modal
         title={`File còn lại trong raw\\ — ${modalDonVi?.code ?? ""} `
-             + `(T${tuThang}–T${denThang}, ${huong === "vao" ? "đầu vào" : "vào + ra"})`}
+             + `(T${tuThang}–T${denThang}, ${huong === "all" ? "vào + ra"
+                                            : laDauRa ? "đầu ra" : "đầu vào"})`}
         open={modalMo}
         onCancel={() => setModalMo(false)}
         footer={null}
@@ -581,7 +550,7 @@ function ConsoleLayHoaDon() {
           // KHÔNG dùng sticky: nó ghim tiêu đề theo cửa sổ, chồng chéo với khung cuộn
           // mà scroll.y tạo ra. Chỉ scroll.y là đủ — antd tự giữ tiêu đề đứng yên.
           locale={{ emptyText: <Empty description="Không đọc được hóa đơn nào trong raw\" /> }}
-          scroll={{ x: 1600, y: "calc(50vh - 94px)" }}
+          scroll={{ x: 1740, y: "calc(50vh - 94px)" }}
           onRow={(r: HoaDonConLai) => ({
             onClick: () => setChonFile(r.tenFile),
             style: {
@@ -592,7 +561,7 @@ function ConsoleLayHoaDon() {
           columns={[
             { title: "Tháng", dataIndex: "thang", width: 70, fixed: "left" },
             { title: "Hướng", dataIndex: "huong", width: 80,
-              render: (v: string) => <Tag color={v === "VAO" ? "blue" : "purple"}>{v}</Tag> },
+              render: (v: string) => <Tag color={v === "VAO" ? "red" : "blue"}>{v}</Tag> },
             { title: "Ký hiệu", dataIndex: "khHd", width: 120,
               render: (v: string, r: HoaDonConLai) => (
                 <Input size="small" value={v}
@@ -623,6 +592,22 @@ function ConsoleLayHoaDon() {
               ) },
             { title: "Tổng", dataIndex: "tongTien", width: 130, align: "right",
               render: (v: number) => <b>{v.toLocaleString("vi-VN")}</b> },
+            // NT-05: cột "lệch bao nhiêu tiền" chuyển từ lưới chính về đây — lưới
+            // chính chỉ cần biết SỐ LƯỢNG, còn quyết xử lý tay thì phải thấy số tiền.
+            // Ngưỡng 10đ khớp SAI_SO_CHO_PHEP bên ImportService, nếu không thì hóa đơn
+            // backend đã chấp nhận vẫn hiện đỏ ở đây.
+            { title: "Lệch Σ line", width: 140, align: "right",
+              render: (_: unknown, r: HoaDonConLai) => {
+                const sum = r.matHangs.reduce((s, x) => s + x.thanhTien, 0);
+                const lech = r.tienHang - sum;
+                return Math.abs(lech) < 10
+                  ? <Typography.Text type="secondary">0</Typography.Text>
+                  : <b style={{ color: "#cf1322" }}
+                       title={`Tiền hàng ${r.tienHang.toLocaleString("vi-VN")} `
+                            + `− Σ line ${sum.toLocaleString("vi-VN")}`}>
+                      {lech.toLocaleString("vi-VN")}
+                    </b>;
+              } },
             { title: "Vì sao còn nằm lại", dataIndex: "lyDo", width: 300, ellipsis: true,
               render: (v: string, r: HoaDonConLai) => (
                 <Typography.Text type={r.coTrongExcel ? "danger" : "warning"} title={v}>
@@ -634,7 +619,6 @@ function ConsoleLayHoaDon() {
         />
         </div>
 
-        {/* ---------- KHUNG DƯỚI: mặt hàng của hóa đơn đang chọn ---------- */}
         {/* ---------- KHUNG DƯỚI: mặt hàng — nửa dưới màn hình, thanh trượt riêng ---------- */}
         <div style={{ flex: "1 1 50%", minHeight: 0,
                       display: "flex", flexDirection: "column",
@@ -756,15 +740,17 @@ function ConsoleLayHoaDon() {
         </div>
       </Modal>
     </Space>
+    </div>
   );
 }
 
 // ============ RUỘT 2: đơn vị thường (TUAN_NGA…) ============
-function HoaDonCuaDonVi() {
+function HoaDonCuaDonVi({ huongMacDinh }: Props) {
   const { session } = useAuth();
+  const ten = huongMacDinh === "ra" ? "Hóa đơn GTGT đầu ra" : "Hóa đơn GTGT đầu vào";
   return (
-    <Card title={`Hóa đơn GTGT đầu vào — ${session?.tenant.name}`}>
-      <Input.Search placeholder="Tìm theo số HĐ, MST, tên người bán…" disabled />
+    <Card title={`${ten} — ${session?.tenant.name}`}>
+      <Input.Search placeholder="Tìm theo số HĐ, MST, tên đối tác…" disabled />
       <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
         Danh sách hóa đơn của đơn vị sẽ hiện ở đây sau khi có dữ liệu từ chức
         năng Lấy HĐ điện tử (WP-03) và màn hình làm kho (WP-04).
@@ -774,9 +760,11 @@ function HoaDonCuaDonVi() {
 }
 
 // ============ BỘ CHIA: nhìn claim tenant_type để chọn ruột ============
-export default function HoaDonDauVao() {
+// Hai màn Đầu vào / Đầu ra là CÙNG một màn, chỉ khác hướng — nên chỉ có một chỗ
+// sửa khi nghiệp vụ đổi, không có chuyện vá một bên quên bên kia.
+export default function HoaDonDauVao({ huongMacDinh = "vao" }: Partial<Props> = {}) {
   const { session } = useAuth();
   return session?.tenant.tenantType === "internal"
-    ? <ConsoleLayHoaDon />
-    : <HoaDonCuaDonVi />;
+    ? <ConsoleLayHoaDon huongMacDinh={huongMacDinh} />
+    : <HoaDonCuaDonVi huongMacDinh={huongMacDinh} />;
 }

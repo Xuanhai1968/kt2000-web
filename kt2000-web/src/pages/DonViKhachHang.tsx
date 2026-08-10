@@ -1,10 +1,19 @@
 import { useEffect, useState } from "react";
 import {
   Card, Table, Button, Modal, Form, Input, InputNumber, Switch, Tag, Select, message,
+  Typography,
 } from "antd";
 import { getAdminTenants, createTenant, updateTenant } from "../api";
 import type { AdminTenant } from "../api";
 import { useAuth } from "../AuthContext";
+
+// Nâu cho đơn vị nội bộ, đỏ cho đơn vị khai THÁNG, còn lại để màu mặc định.
+// Nội bộ xét trước: nó không có kỳ khai nên không được nhuộm theo khaiQuy — mà
+// khaiQuy của tenant nội bộ mặc định false, để nguyên là cả đám hiện đỏ như khai tháng.
+const mauDong = (t: AdminTenant): string | undefined =>
+  t.tenantType === "noibo" ? "#873800"      // volcano-8, đúng tông với Tag "Nội bộ"
+  : t.khaiQuy ? undefined
+  : "#cf1322";
 
 export default function DonViKhachHang() {
   const { session } = useAuth();
@@ -74,10 +83,33 @@ export default function DonViKhachHang() {
         rowKey="id" size="small" loading={loading} dataSource={tenants}
         pagination={{ pageSize: 20 }}
         columns={[
-          { title: "Mã", dataIndex: "code", width: 130 },
+          // Màu ở đây trả lời một câu duy nhất: "đơn vị này thuộc thế giới nào".
+          // Nâu = nội bộ (không có hóa đơn thuế, không có kỳ khai). Đỏ = khai THÁNG,
+          // đúng quy ước đang dùng ở form Lấy HĐĐT nên nhìn hai màn không phải đổi não.
+          { title: "Mã", dataIndex: "code", width: 130,
+            render: (v: string, r: AdminTenant) => (
+              <span style={{ color: mauDong(r), fontWeight: mauDong(r) ? 600 : undefined }}>
+                {v}
+              </span>
+            ) },
           { title: "Tên đơn vị", dataIndex: "name",
-            render: (v: string, r) => r.isActive ? v
-              : <span style={{ color: "#999" }}>{v} <Tag color="red">Ngừng</Tag></span> },
+            render: (v: string, r: AdminTenant) => (
+              <span style={{ color: r.isActive ? mauDong(r) : "#999" }}>
+                {v}{!r.isActive && <> <Tag color="red">Ngừng</Tag></>}
+              </span>
+            ) },
+          { title: "Loại", dataIndex: "tenantType", width: 110,
+            render: (v: string) =>
+              v === "noibo"  ? <Tag color="volcano">Nội bộ</Tag>
+            : v === "branch" ? <Tag>Chi nhánh</Tag>
+            : <Tag color="blue">Đơn vị thuế</Tag> },
+          // Đơn vị nội bộ KHÔNG khai thuế nên ô này để trống — điền Tháng/Quý vào đó
+          // là bịa ra một thuộc tính nghiệp vụ không tồn tại.
+          { title: "Kỳ khai", dataIndex: "khaiQuy", width: 100,
+            render: (q: boolean, r: AdminTenant) =>
+              r.tenantType === "noibo"
+                ? <Typography.Text type="secondary">—</Typography.Text>
+                : q ? <Tag>Quý</Tag> : <Tag color="red">Tháng</Tag> },
           { title: "MST", dataIndex: "taxCode", width: 130 },
           { title: "Các năm", dataIndex: "fiscalYears", width: 220,
             render: (ys: number[]) => ys.map((y) => <Tag key={y}>{y}</Tag>) },

@@ -22,8 +22,10 @@ export default function App() {
           <Route path="/" element={<LoginPage />} />
           <Route path="/app" element={<AppShell />}>
             <Route index element={<DashboardPage />} />
-            <Route path="hoa-don-vao" element={<HoaDonDauVao />} />
-            <Route path="hoa-don-ra" element={<ChoPhatTrien title="Hóa đơn GTGT đầu ra" />} />
+            {/* Cùng MỘT màn hình, chỉ khác hướng — sửa nghiệp vụ một chỗ là xong,
+                không có chuyện vá bên vào mà quên bên ra */}
+            <Route path="hoa-don-vao" element={<HoaDonDauVao huongMacDinh="vao" />} />
+            <Route path="hoa-don-ra" element={<HoaDonDauVao huongMacDinh="ra" />} />
             <Route path="phieu-thu" element={<ChoPhatTrien title="Phiếu thu" />} />
             <Route path="phieu-chi" element={<ChoPhatTrien title="Phiếu chi" />} />
             <Route path="bao-cao-thue" element={<ChoPhatTrien title="Báo cáo thuế" />} />
