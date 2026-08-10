@@ -447,13 +447,108 @@
 
 /* ============================ MÀN HẸP ============================ */
 @media (max-width: 768px) {
-  /* Nhãn phím tắt vẫn giữ trên màn hẹp: nó chỉ chiếm một chip, và máy tính bảng
-     có bàn phím rời vẫn dùng được. */
-
-  /* Lưới không co thêm được nữa thì cho cuộn ngang, thà kéo ngang còn hơn
-     bóp mỗi cột còn vài ký tự rồi không đọc được gì.
-     960 chứ không phải 720: thêm hai cột Mã màu + Tiền tinh màu (~230px). */
   .umv__bang { table-layout: auto; min-width: 960px; }
+
+  .umv__bang {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .umv__bang thead th { border-left: 1px solid #e2e8f0; }
+  .umv__bang td { border-left: 1px solid #eef0f2; }
+
+  .umv__cot-stt {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: #fff;
+    box-shadow: inset -1px 0 0 #cbd5e1;
+  }
+  .umv__cot-xoa {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: #fff;
+    box-shadow: inset 1px 0 0 #cbd5e1;
+  }
+
+  .umv__bang thead th.umv__cot-stt,
+  .umv__bang thead th.umv__cot-xoa {
+    z-index: 3;
+    background: #f1f5f9;
+  }
+
+  .umv__dong--tang .umv__cot-stt,
+  .umv__dong--tang .umv__cot-xoa { background: #dcfce7; }
+  .umv__dong-ke .umv__cot-stt,
+  .umv__dong-ke .umv__cot-xoa { background: #fff; }
+  .umv__bang td { height: 40px; }
+  .umv__o,
+  .umv-ac__o {
+    height: 36px;
+    font-size: 16px;
+    padding: 0 8px;
+  }
+  .umv__so-tt { font-size: 15px; }
+
+  .umv__info .umv-ac__o {
+    height: 34px;
+    font-size: 16px;
+  }
+  .umv__info .ant-input,
+  .umv__info .ant-input-affix-wrapper,
+  .umv__info .ant-select-selector {
+    min-height: 34px;
+    font-size: 16px;
+  }
+
+  .umv__nut-xoa {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    font-size: 15px;
+  }
+
+  .umv-drop {
+    max-width: calc(100vw - 16px);
+    font-size: 15px;
+  }
+  .umv-drop__dong { padding: 9px 10px; }
+
+  .umv__nhan { font-size: 12px; }
+
+  .umv__tong-wrap {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .umv__doc-tien { display: none; }
+
+  .umv__tong-phai {
+    margin-left: 0;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: nowrap;
+  }
+  .umv__tong-o {
+    align-items: flex-start;
+    min-width: 0;
+  }
+  .umv__tong-so { font-size: 14px; }
+  .umv__tong-so--lon { font-size: 18px; }
+
+  .umv__tong-nut {
+    width: 100%;
+    display: flex;
+  }
+  .umv__tong-nut > .ant-space-item {
+    flex: 1;
+  }
+  .umv__tong-nut .ant-btn {
+    width: 100%;
+    height: 40px;
+  }
 }
 
 /* ============================ MÃ MÀU TRÊN LƯỚI DANH SÁCH ============================ */

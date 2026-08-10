@@ -1088,7 +1088,7 @@ function DanhDon({ ch }: { ch: CauHinh }) {
           <table className="umv__bang" ref={bangRef}>
             <thead>
               <tr>
-                <th style={{ width: 42 }}>STT</th>
+                <th style={{ width: 42 }} className="umv__cot-stt">STT</th>
                 <th>Tên hàng hóa</th>
                 <th style={{ width: 80 }}>ĐVT</th>
                 <th style={{ width: 90 }}>Số lượng</th>
@@ -1098,13 +1098,13 @@ function DanhDon({ ch }: { ch: CauHinh }) {
                 <th style={{ width: 120 }}>Thành tiền</th>
                 <th style={{ width: 70 }}>%VAT</th>
                 <th style={{ width: 150 }}>Ghi chú</th>
-                <th style={{ width: 44 }} />
+                <th style={{ width: 44 }} className="umv__cot-xoa" />
               </tr>
             </thead>
             <tbody>
               {dong.map((d, i) => (
                 <tr key={d.id}>
-                  <td className="umv__c"><b>{i + 1}</b></td>
+                  <td className="umv__c umv__cot-stt"><b>{i + 1}</b></td>
                   <td data-dong={d.id} data-o="hang">
                     <OGoiYUsa
                       giaTri={d.maHang}
@@ -1207,8 +1207,8 @@ function DanhDon({ ch }: { ch: CauHinh }) {
                              if (e.key === "Enter") { e.preventDefault(); enterQuaO(d.id, "ghiChu"); }
                            }} />
                   </td>
-                  <td className="umv__c">
-                    <Button size="small" danger type="text"
+                  <td className="umv__c umv__cot-xoa">
+                    <Button size="small" danger type="text" className="umv__nut-xoa"
                             onClick={() => xoaDong(d.id)} title="Xóa dòng">✕</Button>
                   </td>
                 </tr>
@@ -1218,8 +1218,9 @@ function DanhDon({ ch }: { ch: CauHinh }) {
                 <tr key={`ke-${i}`} className="umv__dong-ke"
                     onClick={() => { const id = themDong(); setTimeout(() => nhayO(id, "hang"), 0); }}
                     title="Bấm để thêm dòng">
-                  <td className="umv__c">{dong.length + i + 1}</td>
-                  <td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td className="umv__c umv__cot-stt">{dong.length + i + 1}</td>
+                  <td /><td /><td /><td /><td /><td /><td /><td /><td />
+                  <td className="umv__cot-xoa" />
                 </tr>
               ))}
             </tbody>
@@ -1230,7 +1231,7 @@ function DanhDon({ ch }: { ch: CauHinh }) {
       {/* ---------- Thanh tổng cộng ---------- */}
       <Card size="small" className="umv__tong" styles={{ body: { padding: "6px 14px" } }}>
         <div className="umv__tong-wrap">
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <Typography.Text type="secondary" className="umv__doc-tien" style={{ fontSize: 12 }}>
             {docTien(tongTien)}
           </Typography.Text>
           <div className="umv__tong-phai">
@@ -1248,7 +1249,7 @@ function DanhDon({ ch }: { ch: CauHinh }) {
                 {soTien(tongTien)}
               </span>
             </span>
-            <Space>
+            <Space className="umv__tong-nut">
               <Button onClick={hoiPhieuMoi}>Tạo mới</Button>
               <Button onClick={luuNhapCoTen}>Lưu nháp</Button>
               {/* KHÔNG có nút In ở đây (bỏ 08/08). Lý do: đơn chưa lưu thì chưa có số
