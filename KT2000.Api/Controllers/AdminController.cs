@@ -50,12 +50,19 @@ namespace KT2000.Api.Controllers
         // baoGomNoiBo: QT-02 muốn mở năm cho CHÍNH MDN_NB nên cần thấy tenant 'internal'.
         // Mặc định false vì cùng endpoint này còn nuôi màn Đơn vị khách hàng và
         // FRM_LAY_HDDT — nơi MDN_NB xuất hiện là vô nghĩa (không có hóa đơn để lấy).
-        public async Task<IActionResult> GetTenants(bool baoGomNoiBo = false)
+        // chiDonViThue (NT-02): chỉ đơn vị mảng THUẾ — bỏ cả 'internal' lẫn 'noibo'.
+        // Đơn vị nội bộ không có hóa đơn trên cổng TCT để lấy, hiện lên chỉ tổ chọn nhầm.
+        // Mọi màn hình nghiệp vụ thuế về sau dùng chung đúng cờ này, không form nào
+        // được tự lọc danh sách riêng.
+        public async Task<IActionResult> GetTenants(bool baoGomNoiBo = false,
+                                                    bool chiDonViThue = false)
         {
             if (!IsInternal())
                 return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
             var list = await _db.Tenants
-                .Where(t => baoGomNoiBo || t.TenantType != "internal")
+                .Where(t => chiDonViThue
+                            ? (t.TenantType != "internal" && t.TenantType != "noibo")
+                            : (baoGomNoiBo || t.TenantType != "internal"))
                 .OrderBy(t => t.SortName ?? t.Name)
                 .Select(t => new
                 {
@@ -513,10 +520,38 @@ namespace KT2000.Api.Controllers
             {
                 var phien = _tct.BatDauPhien(
                     ds.Select(x => (x.Id, x.Code)).ToList(),
-                    req.Nam, req.ThangBd, req.ThangKt, req.Huong, CurrentLoginName());
+                    req.Nam, req.ThangBd, req.ThangKt, req.Huong,
+                    req.XoaTruocKhiGhi, CurrentLoginName());
                 return Ok(phien);
             }
             catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
+        // GET api/admin/fetch-history — NT-07: mở form là thấy ngay các lần lấy gần nhất.
+        // Đọc từ ActivityLog (luật #7 của repo — không đẻ bảng mới). Mặc định 7 lần,
+        // vì đây là "liếc qua cho biết", không phải màn tra cứu; muốn xem đủ thì sang
+        // màn Nhật ký hệ thống lọc theo hành động LAY_HD.
+        [HttpGet("fetch-history")]
+        public async Task<IActionResult> LichSuLayHd(int soDong = 7)
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            soDong = Math.Clamp(soDong, 1, 50);
+
+            var ds = await _db.ActivityLogs
+                .Where(a => a.Action == "LAY_HD" || a.Action == "LAY_HD_LOI")
+                .OrderByDescending(a => a.At).ThenByDescending(a => a.Id)
+                .Take(soDong)
+                .Select(a => new
+                {
+                    id = a.Id, at = a.At, nguoiChay = a.UserName,
+                    thanhCong = a.Action == "LAY_HD",
+                    nam = a.Nam, thang = a.Thang, noiDung = a.Detail,
+                    donVi = _db.Tenants.Where(t => t.Id == a.TenantId)
+                                .Select(t => t.Code).FirstOrDefault(),
+                })
+                .ToListAsync();
+            return Ok(ds);
         }
 
         // GET api/admin/fetch-progress — giao diện hỏi tiến độ mỗi vài giây

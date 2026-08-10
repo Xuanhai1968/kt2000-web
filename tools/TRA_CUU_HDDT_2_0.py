@@ -79,6 +79,85 @@ def short_exc(e):
     except Exception:
         return str(e)
 
+# Lấy danh sách hóa đơn từ chính file Excel danh sách vừa tải, thay cho việc gọi
+# API search phân trang. Bản 1.3 đã làm như vậy; bản 2.0 lỡ bỏ mất nên mỗi tháng
+# lại bắn thêm hàng chục request search — vừa chậm vừa dễ ăn 429.
+# Excel đã có đủ 4 trường cần để dựng URL tải XML, không phải hỏi lại cổng.
+DUNG_EXCEL_THAY_SEARCH = True
+
+
+def build_ds_hd_tu_excel(excel_path, header_row=6):
+    """
+    Doc 4 truong can de tai XML tu file Excel danh sach (export-excel cua GDT):
+      Ky hieu mau so -> khmshdon, Ky hieu hoa don -> khhdon,
+      So hoa don -> shdon, MST nguoi ban -> nbmst.
+    Tra ve list dict giong cau truc 'datas' cua search (du cho tai_hd dung).
+    Dedup theo (khhdon, shdon).
+    """
+    def _norm(x):
+        return re.sub(r"\s+", " ", str(x)).strip().lower() if x is not None else ""
+
+    want = {
+        "khmshdon": ["ky hieu mau so", "ky hiệu mẫu số"],
+        "khhdon":   ["ky hieu hoa don", "ký hiệu hóa đơn"],
+        "shdon":    ["so hoa don", "số hóa đơn"],
+        "nbmst":    ["mst nguoi ban/mst nguoi xuat hang",
+                     "mst người bán/mst người xuất hàng"],
+    }
+    want_norm = {k: [_norm(x) for x in v] for k, v in want.items()}
+
+    wb = openpyxl.load_workbook(excel_path, data_only=True)
+    try:
+        ws = wb.active
+        idx = {}
+        for c in range(1, ws.max_column + 1):
+            h = _norm(ws.cell(header_row, c).value)
+            for key, cands in want_norm.items():
+                if key not in idx and h in cands:
+                    idx[key] = c
+
+        missing = [k for k in want if k not in idx]
+        if missing:
+            raise ValueError(f"Excel thieu cot cho: {missing}")
+
+        def _txt(r, c):
+            v = ws.cell(r, c).value
+            if v is None:
+                return ""
+            t = str(v).strip()
+            if re.fullmatch(r"\d+\.0+", t):   # Excel luu so -> bo duoi .0
+                t = t.split(".", 1)[0]
+            return t
+
+        ds_hd, seen = [], set()
+        for r in range(header_row + 1, ws.max_row + 1):
+            khhdon = _txt(r, idx["khhdon"])
+            shdon = _txt(r, idx["shdon"])
+            if not khhdon or not shdon:
+                continue
+            key = (khhdon, shdon)
+            if key in seen:
+                continue
+            seen.add(key)
+            ds_hd.append({
+                "khmshdon": _txt(r, idx["khmshdon"]),
+                "khhdon": khhdon,
+                "shdon": shdon,
+                "nbmst": _txt(r, idx["nbmst"]),
+            })
+        return ds_hd
+    finally:
+        wb.close()
+
+
+# "Khong ton tai ho so goc" (HTTP 500) la ca HOP LE: hoa don dien/vien thong/ngan
+# hang chi co trong Excel, cong khong giu ban goc. Gop chung voi 429/504 thi lan
+# nao cung thay "loi" va khong ai biet cai nao dang di tim.
+def la_khong_co_goc(lydo):
+    t = str(lydo)
+    return ("hồ sơ gốc" in t) or ("ho so goc" in t.lower())
+
+
 # =========================
 # STATUS + EVENTS (NEW)
 # =========================
@@ -117,6 +196,13 @@ class EventWriter:
 def make_job_paths(base_dir, job_id, MA_DONVI):
     # job_dir = os.path.join(base_dir, MA_DONVI, job_id)
     # Va #7a: chen tang NAM<nam> (doc nam tu job_id dang T{m}_{yyyy}_...)
+    # Chi lay TEN job, bo moi thanh phan thu muc nguoi goi lo kem vao. Backend .NET
+    # truyen job_id = "NAM2026\\T5_2026_HUY_THANH" (no tu ghep tang NAM de dung
+    # duong dan status/stage), ma ham nay CUNG tu chen "NAM<nam>" -> ra cay long
+    # nhau NAM2026\\NAM2026\\T5_... Ket qua: run.log lac sang cay rong, con raw/
+    # outputs nam o cay dung, nhin thu muc thay hai ban giong het nhau.
+    job_id = os.path.basename(str(job_id).replace("\\", "/").rstrip("/"))
+
     m_nam = re.search(r'_(20\d{2})_', str(job_id) + "_")
     nam_dir = f"NAM{m_nam.group(1)}" if m_nam else ""
     job_dir = os.path.join(base_dir, MA_DONVI, nam_dir, job_id)
@@ -1176,12 +1262,31 @@ class tra_cuu_hdt:
         # status = StatusWriter(status)
         # events = EventWriter(events)
 
+        # NT-01: mọi "message" ghi ra status.json phải là tiếng Việt CÓ DẤU. Trước đây
+        # viết không dấu nên giao diện web hiện "Dang dang nhap..." — người dùng tưởng
+        # lỗi font, thực ra chuỗi nguồn vốn đã không dấu. StatusWriter ghi UTF-8 với
+        # ensure_ascii=False sẵn rồi nên chỉ cần sửa chuỗi tại nguồn.
+        #
+        # loai_xuat / nam / thang_bd / thang_kt: web cần biết lượt này lấy hướng nào,
+        # kỳ nào để hiện thành cột riêng thay vì bắt người đọc đoán từ câu message.
         state = {
             "job_id": job_id,
             "ma_donvi": MA_DONVI,
             "mst": mst_value,
+            "loai_xuat": loai_xuat,
+            "nam": nam,
+            "thang_bd": thang_bd,
+            "thang_kt": thang_kt,
             "state": "INIT",
-            "message": "Khoi tao Khởi tạo",
+            "message": "Khởi tạo",
+            # Bo dem CONG DON CA JOB, dat trong state nen moi status.write ({**state,...})
+            # deu mang theo. Truoc day chung chi nam trong dict cua tung lan write, nen
+            # lan write cuoi cung khong co -> web giu lai so cu ("10/29") du da xong.
+            "tong_hd": 0,          # tong hoa don phai tai, dem tu Excel danh sach
+            "tai_ok": 0,           # tai ve duoc
+            "khong_co_goc": 0,     # HTTP 500 "khong ton tai ho so goc" — HOP LE
+            "loi_that": 0,         # 429 / 504 / mang hong — dang di tim
+            "nguon_ds": "",        # excel | search
             "stage_dbf_dir": stagedir,
             "run_log": run_log,
             "pid": os.getpid(),
@@ -1293,7 +1398,7 @@ class tra_cuu_hdt:
 
         try:
             if not (1 <= thang_bd <= 12 and 1 <= thang_kt <= 12 and thang_bd <= thang_kt):
-                status.write({**state, "state": "ERROR", "message": "invalid_month_range"})
+                status.write({**state, "state": "ERROR", "message": "Khoảng tháng không hợp lệ"})
                 events.log("JOB_ERROR", error="invalid_month_range")
                 return "invalid_month_range"
             khoang_cach = []
@@ -1396,7 +1501,7 @@ class tra_cuu_hdt:
                     password_input.click()
                     password_input.find_element(By.TAG_NAME, "input").send_keys(password_value)
                     events.log("LOGIN", message=f"Da nhap MST: {mst_value}")
-                    status.write({**state, "state": "LOGIN", "message": "Dang dang nhap..."})
+                    status.write({**state, "state": "LOGIN", "message": "Đang đăng nhập cổng Tổng cục Thuế..."})
 
                     ocr = ddddocr.DdddOcr(show_ad=False)
                     CAPTCHA_IMG_XPATH = '/html/body/div[2]/div/div[2]/div/div[2]/div[2]/form/div/div[3]/div/div[2]/div/span/div/img'
@@ -1481,12 +1586,12 @@ class tra_cuu_hdt:
                                     append_run_log(run_log, f"CAPTCHA_ATTEMPT_{attempt}_SAI_MK")
                                     raise DangNhapSai("login_failed")
                             if len(drv.find_elements(By.ID, "username")) == 0:
-                                status.write({**state, "state": "LOGIN_OK", "message": "Dang nhap thanh cong"})
+                                status.write({**state, "state": "LOGIN_OK", "message": "Đăng nhập thành công"})
                                 events.log("LOGIN_OK", message="DANG NHAP THANH CONG!")
                                 append_run_log(run_log, f"LOGIN_OK_ON_ATTEMPT_{attempt}")
                                 break   # thanh cong
                         except StaleElementReferenceException:
-                            status.write({**state, "state": "LOGIN_OK", "message": "Dang nhap thanh cong"})
+                            status.write({**state, "state": "LOGIN_OK", "message": "Đăng nhập thành công"})
                             events.log("LOGIN_OK", message="DANG NHAP THANH CONG!")
                             append_run_log(run_log, f"LOGIN_OK_ON_ATTEMPT_{attempt}")
                             break   # trang da chuyen -> thanh cong
@@ -1530,11 +1635,11 @@ class tra_cuu_hdt:
                     _ly_do = str(_de)
                     if _ly_do == "captcha_near_lock":
                         append_run_log(run_log, "LOGIN_STOP_CAPTCHA_NEAR_LOCK")
-                        status.write({**state, "state": "ERROR", "message": "captcha_sai_nhieu_dung_tranh_khoa"})
+                        status.write({**state, "state": "ERROR", "message": "Sai captcha nhiều lần — dừng để tránh bị khóa tài khoản"})
                         events.log("JOB_ERROR", error="captcha_near_lock")
                         return "captcha_failed"
                     append_run_log(run_log, "LOGIN_SAI_MK -> dung han, khong retry")
-                    status.write({**state, "state": "ERROR", "message": "login_failed"})
+                    status.write({**state, "state": "ERROR", "message": "Đăng nhập thất bại"})
                     events.log("JOB_ERROR", error="login_failed")
                     return "login_failed"
                 except Exception as _e:
@@ -1546,7 +1651,7 @@ class tra_cuu_hdt:
 
             if not token:
                 append_run_log(run_log, "LOGIN_OUTER_GIVEUP")
-                status.write({**state, "state": "ERROR", "message": "login_failed_after_retries"})
+                status.write({**state, "state": "ERROR", "message": "Đăng nhập thất bại sau nhiều lần thử"})
                 events.log("JOB_ERROR", error="login_failed_after_retries")
                 return "login_failed"
 
@@ -1615,7 +1720,7 @@ class tra_cuu_hdt:
                 if not os.path.exists(save_dir):
                     os.makedirs(save_dir, exist_ok=True)
 
-                status.write({**state, "state": "DOWNLOAD", "message": "Bat dau tai hoa don"})
+                status.write({**state, "state": "DOWNLOAD", "message": "Bắt đầu tải hóa đơn"})
                 events.log("DOWNLOAD_START", loai_xuat=loai_xuat)
 
                 def make_headers(action):
@@ -1737,7 +1842,7 @@ class tra_cuu_hdt:
                         # Tai file Excel danh sach
                         ten_file = f"HD_{loai['huong']}_{MA_DONVI}_T{thang}{loai['hau_to']}.xlsx"
                         #print(f"Dang tai: HD_{loai['huong']}{loai['hau_to']} ({tu_ngay} -> {den_ngay})")
-                        status.write({**state, "state": "EXCEL", "message": f"Tai Excel: HD_{loai['huong']}{loai['hau_to']} T{thang}"})
+                        status.write({**state, "state": "EXCEL", "message": f"Tải Excel: HD_{loai['huong']}{loai['hau_to']} T{thang}"})
                         events.log("EXCEL_FETCH", huong=loai['huong'], hau_to=loai['hau_to'], thang=thang)
                         resp = None
                         append_run_log(run_log, f"EXCEL_FETCH_START url={api_url}") ###
@@ -1772,8 +1877,28 @@ class tra_cuu_hdt:
                         seen_ids = set()
                         page = 0
                         page_state = None
+                        da_co_tu_excel = False
+                        nguon_ds = "search"
 
-                        while True:
+                        # Uu tien dung chinh Excel vua tai: no da co du khmshdon/khhdon/
+                        # shdon/nbmst de dung URL tai XML. Excel hong hoac doi khuon thi
+                        # quay ve search chu khong lam chet ca thang.
+                        excel_ds_path = os.path.join(sub_dir, ten_file)
+                        if DUNG_EXCEL_THAY_SEARCH and os.path.exists(excel_ds_path):
+                            try:
+                                ds_hd = build_ds_hd_tu_excel(excel_ds_path)
+                                da_co_tu_excel = True
+                                nguon_ds = "excel"
+                                append_run_log(run_log, f"DS_HD_FROM_EXCEL file={excel_ds_path} count={len(ds_hd)}")
+                                status.write({**state, "state": "EXCEL",
+                                              "message": f"Doc danh sach tu Excel: {len(ds_hd)} hoa don"})
+                            except Exception as e_ex:
+                                append_run_log(run_log, f"DS_HD_FROM_EXCEL_ERROR {short_exc(e_ex)} -> fallback search")
+                                ds_hd = []
+                                da_co_tu_excel = False
+                        state["nguon_ds"] = nguon_ds
+
+                        while not da_co_tu_excel:
                             search_url = f"{loai['search_url']}?sort=tdlap:desc&size=50&search={search_param}"
                             heartbeat(
                                 f"Search danh sach {loai['huong']}{loai['hau_to']} T{thang} trang {page}",
@@ -1823,7 +1948,10 @@ class tra_cuu_hdt:
                             continue
 
                         #print(f"   Tong: {len(ds_hd)} hoa don. Tai XML + HTML (convert song song)...")
-                        status.write({**state, "state": "XML", "message": f"Tai XML: HD_{loai['huong']}{loai['hau_to']} T{thang}", "total": len(ds_hd), "downloaded": 0})
+                        state["tong_hd"] = state.get("tong_hd", 0) + len(ds_hd)
+                        status.write({**state, "state": "XML",
+                                      "message": f"Tải XML: HD_{loai['huong']}{loai['hau_to']} T{thang}",
+                                      "total": len(ds_hd), "downloaded": 0})
                         events.log("XML_FETCH_START", huong=loai['huong'], hau_to=loai['hau_to'], thang=thang, total=len(ds_hd))
 
                         # Tai tuan tu, push XML vao queue de worker convert song song
@@ -1868,7 +1996,18 @@ class tra_cuu_hdt:
                                 ds_loi.append(kq)
                             if i % 10 == 0 or i == len(ds_hd):
                                 #print(f"   Da tai {i}/{len(ds_hd)} (OK: {thanh_cong}, Loi: {len(ds_loi)}, Queue convert: {xml_queue.qsize()})")
-                                status.write({**state, "state": "XML", "message": f"HD_{loai['huong']}{loai['hau_to']} T{thang}: {i}/{len(ds_hd)}", "total": len(ds_hd), "downloaded": i, "ok": thanh_cong, "err": len(ds_loi), "convert_ok": ket_qua_convert["ok"], "convert_err": ket_qua_convert["err"]})
+                                # Tach 500-khong-co-goc khoi loi that ngay tu day, de nguoi
+                                # doc biet cai nao dang di tim, cai nao chi la hoa don dien
+                                # nuoc vien thong von khong co ban goc tren cong.
+                                so_khong_goc = sum(1 for l in ds_loi if la_khong_co_goc(l.get("lydo", "")))
+                                status.write({**state, "state": "XML",
+                                              "message": f"HD_{loai['huong']}{loai['hau_to']} T{thang}: {i}/{len(ds_hd)}",
+                                              "total": len(ds_hd), "downloaded": i,
+                                              "ok": thanh_cong, "err": len(ds_loi),
+                                              "tai_ok": state.get("tai_ok", 0) + thanh_cong,
+                                              "khong_co_goc": state.get("khong_co_goc", 0) + so_khong_goc,
+                                              "loi_that": state.get("loi_that", 0) + len(ds_loi) - so_khong_goc,
+                                              "convert_ok": ket_qua_convert["ok"], "convert_err": ket_qua_convert["err"]})
                                 append_run_log(
                                     run_log,
                                     f"XML_PROGRESS {i}/{len(ds_hd)} ok={thanh_cong} err={len(ds_loi)} queue={xml_queue.qsize()} convert_ok={ket_qua_convert['ok']} convert_err={ket_qua_convert['err']}"
@@ -1917,6 +2056,17 @@ class tra_cuu_hdt:
                                 ds_loi = ds_loi_final + ds_loi_500
 
 
+                        # Chot so lieu cua luot nay vao bo dem ca job. Lam sau retry nen
+                        # con so la ket qua CUOI CUNG, khong phai anh chup giua chung.
+                        so_khong_goc = sum(1 for l in ds_loi if la_khong_co_goc(l.get("lydo", "")))
+                        state["tai_ok"] = state.get("tai_ok", 0) + thanh_cong
+                        state["khong_co_goc"] = state.get("khong_co_goc", 0) + so_khong_goc
+                        state["loi_that"] = state.get("loi_that", 0) + (len(ds_loi) - so_khong_goc)
+                        append_run_log(run_log,
+                            f"LUOT_DONE {loai['huong']}{loai['hau_to']} T{thang} "
+                            f"tong={len(ds_hd)} ok={thanh_cong} khong_goc={so_khong_goc} "
+                            f"loi_that={len(ds_loi) - so_khong_goc} nguon={state.get('nguon_ds')}")
+
                         if ds_loi:
                             log_path = os.path.join(paths["job_dir"], f"LOI_TAI_{loai['huong']}{loai['hau_to']}_T{thang}.txt")
                             with open(log_path, "w", encoding="utf-8") as f:
@@ -1937,7 +2087,7 @@ class tra_cuu_hdt:
                         #print(f"   [BO QUA] Loi xu ly HD_{loai['huong']}{loai['hau_to']} T{thang}: {e_loai}")
                         logging.error(f"Loi HD_{loai['huong']}{loai['hau_to']} T{thang}: {e_loai}", exc_info=True)
                         events.log("LOAI_ERROR", huong=loai['huong'], hau_to=loai['hau_to'], thang=thang, error=str(e_loai))
-                        status.write({**state, "state": "LOAI_ERROR", "message": f"Bo qua HD_{loai['huong']}{loai['hau_to']} T{thang}: {e_loai}"})
+                        status.write({**state, "state": "LOAI_ERROR", "message": f"Bỏ qua HD_{loai['huong']}{loai['hau_to']} T{thang}: {e_loai}"})
                         continue
 
                 # === Cho worker parse het queue ===
@@ -2059,7 +2209,7 @@ class tra_cuu_hdt:
                 status.write({
                     **state,
                     "state": "DONE_PARSE",
-                    "message": "Da tao DBF stage",
+                    "message": "Đã tạo DBF stage",
                     "dbf_stage_path": stage_dir,
                     "ready_for_vfp_import": True
                 })
@@ -2074,7 +2224,17 @@ class tra_cuu_hdt:
                 status.write({
                     **state,
                     "state": "DONE_PARSE",
-                    "message": "Hoan tat",
+                    # Con so CHOT. Truoc day dong nay khong mang total/downloaded nen web
+                    # giu nguyen anh chup giua chung ("10/29") du job da xong tu lau.
+                    "total": state.get("tong_hd", 0),
+                    "downloaded": state.get("tong_hd", 0),
+                    "ok": state.get("tai_ok", 0),
+                    "err": state.get("khong_co_goc", 0) + state.get("loi_that", 0),
+                    "message": (f"Hoàn tất — {state.get('tai_ok', 0)}/{state.get('tong_hd', 0)} hóa đơn"
+                                + (f", {state.get('khong_co_goc', 0)} không có hồ sơ gốc"
+                                   if state.get("khong_co_goc", 0) else "")
+                                + (f", {state.get('loi_that', 0)} lỗi cần xem lại"
+                                   if state.get("loi_that", 0) else "")),
                     "alive": False,
                     "pid": os.getpid(),
                     "total_files": len(result),
@@ -2092,7 +2252,7 @@ class tra_cuu_hdt:
                                                 "stage_dir": paths["stage_dir"]
                                             }              
                   
-                # status.write({**state, "state": "DONE_PARSE", "message": "Hoan tat", "total_files": len(result), "parse_ok": ket_qua_convert["ok"], "parse_err": ket_qua_convert["err"], "excel_tong": excel_tong, "finished_at": datetime.datetime.now().isoformat(timespec="seconds")})
+                # status.write({**state, "state": "DONE_PARSE", "message": "Hoàn tất", "total_files": len(result), "parse_ok": ket_qua_convert["ok"], "parse_err": ket_qua_convert["err"], "excel_tong": excel_tong, "finished_at": datetime.datetime.now().isoformat(timespec="seconds")})
                 # events.log("JOB_DONE", total_files=len(result), parse_ok=ket_qua_convert["ok"], parse_err=ket_qua_convert["err"])
                 # return result, excel_tong,{
                 #                                 "status": "DONE_PARSE",

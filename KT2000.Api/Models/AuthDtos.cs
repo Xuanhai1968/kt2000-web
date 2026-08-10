@@ -148,6 +148,8 @@ namespace KT2000.Api.Models
         public int ThangBd { get; set; } = 1;
         public int ThangKt { get; set; } = 1;
         public string Huong { get; set; } = "vao";
+        // NT-03: lấy xong nạp luôn, nên lựa chọn của pha nạp phải gửi kèm ngay từ đầu
+        public bool XoaTruocKhiGhi { get; set; } = false;
     }
 
     // Xem chi tiết các hóa đơn còn nằm lại raw\ của MỘT đơn vị
@@ -202,5 +204,27 @@ namespace KT2000.Api.Models
         public int Thang { get; set; }
         public bool XoaTruocKhiGhi { get; set; } = false;
         public string Huong { get; set; } = "vao";   // vao = chỉ đầu vào, all = cả vào và ra
+    }
+
+    // NT-03: trước đây ImportJob trả anonymous type — controller serialize thì tiện,
+    // nhưng TctFetchService (gộp lấy + nạp) không đọc nổi kết quả để báo lên Diễn biến.
+    // Đặt tên hẳn hoi; hình dạng JSON camelCase giữ nguyên nên frontend không phải sửa.
+    public class LoiNapDto
+    {
+        public string MaHd { get; set; } = "";
+        public string LoaiLoi { get; set; } = "";
+        public string? Reason { get; set; }
+    }
+
+    public class KetQuaNapJob
+    {
+        public int Inserted { get; set; }
+        public int Updated { get; set; }
+        public int SkippedYear { get; set; }
+        public int SkippedNoDate { get; set; }
+        public int KhongCoGoc { get; set; }
+        public int Moved { get; set; }
+        public int LechTong { get; set; }
+        public List<LoiNapDto> Errors { get; set; } = new();
     }
 }

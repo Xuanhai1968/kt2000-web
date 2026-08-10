@@ -168,8 +168,12 @@ export const updateTenant = (id: string, p: UpdateTenantPayload) =>
 
 // baoGomNoiBo = true chỉ dùng ở màn Mở năm (QT-02) để thấy cả MDN_NB.
 // Các màn khác giữ mặc định false — MDN_NB xuất hiện ở đó là vô nghĩa.
-export const getAdminTenants = (baoGomNoiBo = false) =>
-  api.get<AdminTenant[]>("/admin/tenants", { params: { baoGomNoiBo } });
+//
+// chiDonViThue = true (NT-02): bỏ luôn cả tenant 'noibo'. Dùng cho MỌI màn hình
+// nghiệp vụ thuế — form Lấy HĐĐT hôm nay, Báo cáo thuế mai sau. Một chỗ lọc dùng
+// chung, không form nào tự lọc lấy.
+export const getAdminTenants = (baoGomNoiBo = false, chiDonViThue = false) =>
+  api.get<AdminTenant[]>("/admin/tenants", { params: { baoGomNoiBo, chiDonViThue } });
 
 export interface CreateTenantPayload {
   code: string;
@@ -192,8 +196,9 @@ export const createTenant = (p: CreateTenantPayload) =>
 
 export const openFiscalYears = (year: number, tenantIds: string[]) =>
   api.post<OpenYearResult[]>("/admin/fiscal-years", { year, tenantIds });
-// "vao" = chỉ hóa đơn đầu vào, "all" = cả đầu vào lẫn đầu ra
-export type HuongLay = "vao" | "all";
+// "vao" = chỉ đầu vào, "ra" = chỉ đầu ra, "all" = cả hai.
+// Có "ra" từ khi màn Hóa đơn đầu ra dùng lại đúng bộ máy này, chỉ khác hướng.
+export type HuongLay = "vao" | "ra" | "all";
 
 export interface ImportJobResult {
   inserted: number;
@@ -211,6 +216,10 @@ export interface LeftoverInfo {
   tenantId: string;
   code: string;
   soFileConLai: number;                              // .xml còn ở raw\ (chưa nạp HOẶC lỗi)
+  // NT-04: đếm CẢ HAI hướng bất kể lần này lấy hướng nào — hai cột V/R nói hiện
+  // trạng trên đĩa, không nói lựa chọn sắp tới
+  soVao: number;
+  soRa: number;
   chiTiet: { thang: number; soFile: number }[];
   soLechTong: number;                                // riêng HĐ lệch Σ line vs master
   soLoiKhac: number;                                 // không rõ ngày / lỗi ghi / lỗi dời file
@@ -245,7 +254,40 @@ export interface TienDoLay {
   loi: string | null;
   batDau: string | null;
   ketThuc: string | null;
+
+  // NT-01: hướng + số tải thực tế, đọc thẳng từ status.json
+  huong: string;          // VAO | RA | VAO+RA
+  taiOk: number;
+  taiLoi: number;
+  soFile: number;
+  // Tách hai loại "không tải được": 500-không-có-hồ-sơ-gốc là ca HỢP LỆ (điện,
+  // viễn thông, ngân hàng), còn 429/504 mới là thứ phải đi xem lại
+  khongCoGoc: number;
+  loiThat: number;
+  nguonDs: string;        // excel | search
+
+  // NT-03: pha nạp chạy ngay sau pha lấy, trong cùng một lượt
+  phaNap: string;         // "" | dang_nap | xong | loi
+  napMoi: number;
+  napCapNhat: number;
+  napLoi: number;
+  napThongDiep: string | null;
 }
+
+// NT-07: lịch sử các lần lấy, đọc từ ActivityLog nên theo TÀI KHOẢN, không theo máy
+export interface LichSuLay {
+  id: number;
+  at: string;             // ISO, vd 2026-08-08T09:15:30
+  nguoiChay: string;
+  thanhCong: boolean;
+  nam: number | null;
+  thang: number | null;
+  noiDung: string | null;
+  donVi: string | null;
+}
+
+export const getFetchHistory = (soDong = 7) =>
+  api.get<LichSuLay[]>("/admin/fetch-history", { params: { soDong } });
 
 export interface PhienLay {
   dangChay: boolean;
@@ -254,9 +296,13 @@ export interface PhienLay {
   cac: TienDoLay[];
 }
 
+// NT-03: một nút duy nhất — lấy xong backend nạp luôn, nên xoaTruocKhiGhi (lựa chọn
+// của pha nạp) phải gửi kèm ngay từ lúc bắt đầu.
 export const fetchStart = (
-  tenantIds: string[], nam: number, thangBd: number, thangKt: number, huong: HuongLay
-) => api.post<PhienLay>("/admin/fetch-start", { tenantIds, nam, thangBd, thangKt, huong });
+  tenantIds: string[], nam: number, thangBd: number, thangKt: number,
+  huong: HuongLay, xoaTruocKhiGhi: boolean
+) => api.post<PhienLay>("/admin/fetch-start",
+      { tenantIds, nam, thangBd, thangKt, huong, xoaTruocKhiGhi });
 
 export const fetchProgress = () => api.get<PhienLay>("/admin/fetch-progress");
 export const fetchStop = () => api.post("/admin/fetch-stop");

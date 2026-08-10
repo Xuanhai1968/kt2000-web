@@ -1,0 +1,40 @@
+/* NT-11 — nhìn màu biết đang ở đầu vào hay đầu ra.
+   Q3 đã chốt: chỉ nhuộm VÙNG TIÊU ĐỀ + HEADER LƯỚI, không nhuộm cả form, và phải
+   rất nhạt. Dùng đúng thang red-1 / blue-1 của antd — nhạt nhất trong thang, chữ
+   đen trên nền này vẫn thừa tương phản để đọc.
+
+   Quy ước V = đỏ, R = xanh dùng xuyên suốt hệ thống, không đảo ở đâu cả. */
+
+.huong-vao .ant-card-head {
+  background: #fff1f0;
+  border-bottom-color: #ffccc7;
+}
+.huong-ra .ant-card-head {
+  background: #e6f4ff;
+  border-bottom-color: #bae0ff;
+}
+
+/* Header lưới: !important vì antd đặt nền th bằng token nội bộ, selector thường
+   không thắng nổi. */
+.huong-vao .ant-table-thead > tr > th {
+  background: #fff1f0 !important;
+}
+.huong-ra .ant-table-thead > tr > th {
+  background: #e6f4ff !important;
+}
+
+/* Thanh điều khiển ngay dưới tiêu đề — cùng tông nhưng nhạt hơn nữa, để mắt vẫn
+   phân biệt được nó với vùng tiêu đề. */
+.thanh-dieu-khien {
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+.huong-vao .thanh-dieu-khien {
+  background: #fff7f6;
+  border: 1px solid #ffe3e0;
+}
+.huong-ra .thanh-dieu-khien {
+  background: #f2f9ff;
+  border: 1px solid #d6ebff;
+}
