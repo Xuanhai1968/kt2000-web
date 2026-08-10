@@ -32,14 +32,14 @@ import {
   Card, Space, Button, Tag, Typography, Input, Table, Select, message, Empty, Row, Col,
   Tooltip,
 } from "antd";
-import { EditOutlined, PrinterOutlined } from "@ant-design/icons";
+import { EditOutlined, PrinterOutlined, FileTextOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   nbDanhSachDonTatCa, nbLayDon, loiApi,
 } from "../../api";
 import type { DonNb, DonNbLine, HuongDon } from "../../api";
 import { useAuth } from "../../AuthContext";
-import { inPhieuDon } from "../mauInPhieu";
+import { inPhieuDon, xemTruocHoaDon } from "../mauInPhieu";
 import { inHaiLien } from "./mauInHaiLien";
 import "../phieu-xuat-nhap.css";
 
@@ -304,6 +304,24 @@ export default function DanhSachPhieuUsa() {
     }
   }, [session, ctChiTiet, haiLien]);
 
+  // XUẤT HÓA ĐƠN — tạm thời chỉ MỞ BẢN XEM TRƯỚC để soát tên hàng (ten_hd) trước khi
+  // đẩy sang hóa đơn điện tử. Chưa cấp số hóa đơn, chưa ký số, chưa gửi Viettel.
+  // Dùng chung cache ctChiTiet với nút In: đơn đã mở rồi thì không gọi lại API.
+  const [dangXuat, setDangXuat] = useState<string | null>(null);
+  const xuatHoaDon = useCallback(async (d: DonNb) => {
+    if (!d.maHd) return;
+    setDangXuat(d.maHd);
+    try {
+      const ct = ctChiTiet.get(d.maHd) ?? (await nbLayDon(d.maHd)).data;
+      setCtChiTiet((m) => new Map(m).set(d.maHd!, ct));
+      xemTruocHoaDon(ct, { ten: session?.tenant.name });
+    } catch (e) {
+      message.error(loiApi(e, "Không mở được bản xem trước hóa đơn"));
+    } finally {
+      setDangXuat(null);
+    }
+  }, [session, ctChiTiet]);
+
   const cot = useMemo(() => [
     {
       title: "Loại", dataIndex: "huong", width: 110,
@@ -326,10 +344,9 @@ export default function DanhSachPhieuUsa() {
     },
     { title: "Đối tác", dataIndex: "tenKh", ellipsis: true },
     { title: "NV giao", dataIndex: "tenNvvc", width: 130, ellipsis: true },
-    {
-      title: "Gói", dataIndex: "maGoi", width: 85,
-      render: (v: string | null) => (v ? <Tag color="purple">{v}</Tag> : "—"),
-    },
+    // Cột "Gói" đã bỏ: gần như luôn rỗng với đơn vị không dùng gói (USA_MEVA_NB nằm
+    // trong KHONG_DUNG_GOI), chiếm chỗ mà không mang tin. Mã gói vẫn xem được ở màn
+    // GÓI HÀNG — nơi có đủ vòng đời gói (BR-NB-08).
     {
       title: "Tiền hàng", dataIndex: "tienHang", width: 120, align: "right" as const,
       render: (v: number) => <span style={kieuSo}>{soTien(v)}</span>,
@@ -339,7 +356,7 @@ export default function DanhSachPhieuUsa() {
       render: (v: number) => <b style={kieuSo}>{soTien(v)}</b>,
     },
     {
-      title: "", width: 80, align: "center" as const,
+      title: "", width: 110, align: "center" as const,
       render: (_: unknown, r: DonNb) => (
         <Space size={0}>
           <Tooltip title="Chỉnh sửa">
@@ -350,10 +367,14 @@ export default function DanhSachPhieuUsa() {
             <Button size="small" type="link" icon={<PrinterOutlined />}
                     loading={dangIn === r.maHd} onClick={() => inDon(r)} />
           </Tooltip>
+          <Tooltip title="Xuất hóa đơn — mở bản xem trước (tên hàng theo tên hóa đơn)">
+            <Button size="small" type="link" icon={<FileTextOutlined />}
+                    loading={dangXuat === r.maHd} onClick={() => xuatHoaDon(r)} />
+          </Tooltip>
         </Space>
       ),
     },
-  ], [moDon, inDon, dangIn, haiLien]);
+  ], [moDon, inDon, dangIn, haiLien, xuatHoaDon, dangXuat]);
 
   return (
     <div className="pxn-trang">

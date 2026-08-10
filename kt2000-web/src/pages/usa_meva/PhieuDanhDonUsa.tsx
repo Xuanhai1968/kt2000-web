@@ -46,7 +46,7 @@ import {
   loiApi,
 } from "../../api";
 import type {
-  DmHangNb, DmKhNb, DmMau, DonNb, HuongDon, LoaiDoiTuong,
+  DmHangNb, DmKhNb, DmMau, DonNb, HuongDon, LoaiDoiTuong, QuyCachNb,
 } from "../../api";
 // Không import mẫu in ở đây nữa: form không có nút In (xem khối "IN: không làm ở màn này").
 // Hai mẫu vẫn sống và được màn Danh sách phiếu dùng.
@@ -70,6 +70,15 @@ interface DongHang {
   maHang: string | null;
   tenHang: string;
   dvt: string;
+  // Quy cách đang chọn (018). Chỉ có giá trị khi người dùng chọn từ danh sách quy cách;
+  // mặt hàng chưa khai quy cách thì vẫn gõ tay vào dvt như cũ và ô này để null.
+  // Lưu riêng vì dvt là CHỮ hiển thị/in ra phiếu, còn maDvt mới là thứ tra ngược được
+  // sang DM_QUY_CACH_NB để lấy hệ số quy đổi.
+  maDvt: string | null;
+  // Các quy cách bán được của mặt hàng đang chọn. Chép vào STATE của dòng chứ không đọc
+  // từ ref hangTheoMa lúc vẽ: ref đổi không kích hoạt render, chọn hàng xong ô ĐVT sẽ
+  // còn rỗng tới lần vẽ sau (react-hooks bắt đúng lỗi này).
+  cacQuyCach: QuyCachNb[];
   soLuong: number;
   donGia: number;
   ptVat: number;
@@ -83,7 +92,8 @@ interface DongHang {
 }
 
 const dongTrong = (id: number): DongHang => ({
-  id, maHang: null, tenHang: "", dvt: "", soLuong: 0, donGia: 0, ptVat: 0, ghiChu: "",
+  id, maHang: null, tenHang: "", dvt: "", maDvt: null, cacQuyCach: [],
+  soLuong: 0, donGia: 0, ptVat: 0, ghiChu: "",
   maMau: null, maHex: null, tienTinhMau: 0,
 });
 
@@ -116,6 +126,32 @@ const nhomMauTiengViet = (nhom: string): string =>
 // thanh tổng cộng và payload lưu. Khớp công thức backend (script 019) và bản gốc
 // USA_Meva: tiền pha màu cộng thẳng, không nhân số lượng.
 const thanhTienDong = (d: DongHang) => d.soLuong * d.donGia + (d.tienTinhMau || 0);
+
+// ============================ QUY CÁCH (018) ============================
+// MỘT mặt hàng NHIỀU quy cách: sơn bán cả thùng 18L, hộp 5L lẫn lon 1Kg — mỗi quy cách
+// một giá riêng, không suy ra nhau bằng hệ số. Ba hàm dưới là chỗ DUY NHẤT đọc mảng
+// quyCach2, để đổi luật chỉ phải sửa một nơi.
+
+// Quy cách mặc định: dòng có laDvtGoc, không có thì lấy dòng đầu (backend đã sắp xếp
+// gốc trước, rồi hệ số giảm dần — thùng đứng trên lon).
+const quyCachGoc = (h?: DmHangNb | null): QuyCachNb | undefined =>
+  h?.quyCach2?.find((q) => q.laDvtGoc) ?? h?.quyCach2?.[0];
+
+// Chữ hiện trong ô ĐVT và IN RA PHIẾU. Ưu tiên tên tắt ("18L") vì lưới hẹp, cột ĐVT chỉ
+// rộng 80px — "Thùng 18 lít" vào đó là cụt. Không có tên tắt thì dùng tên đầy đủ.
+const nhanQuyCach = (q: QuyCachNb) => q.tenTat || q.tenDvt || q.maDvt;
+
+// Giá của một quy cách. Thứ tự lùi: giá riêng của quy cách -> giá trên danh mục mặt
+// hàng -> 0. Phiếu NHẬP lấy giá mua, phiếu XUẤT lấy giá bán (theo ch.giaTuDanhMuc).
+const giaTheoQuyCach = (
+  h: DmHangNb | undefined | null,
+  q: QuyCachNb | undefined | null,
+  ch: CauHinh,
+): number => {
+  const giaRieng = ch.huong === "RA" ? q?.giaBan : q?.giaMua;
+  if (giaRieng != null) return Number(giaRieng) || 0;
+  return h ? ch.giaTuDanhMuc(h) : 0;
+};
 
 // Khuôn một bản nháp (cả tự động lẫn có tên đều dùng khuôn này)
 interface BanNhap {
@@ -370,22 +406,12 @@ function DanhDon({ ch }: { ch: CauHinh }) {
     const r = await nbTimMau(tu, 100, boQua);
     r.data.forEach((m) => { if (m.maMau) mauTheoMa.current.set(m.maMau, m); });
     return r.data.filter((m) => m.maMau).map((m) => {
-      // Backend đã ghép sẵn mọi nhóm của mã này bằng " / " (vd "Red / Pastel").
-      // Dịch TỪNG nhóm sang tiếng Việt rồi ghép lại -> "Đỏ / Pastel".
       const nhomVi = nhomMauTiengViet(m.nhomMau);
       return {
         giaTri: m.maMau,
-        // Tìm được bằng mã, nhóm màu (cả Anh lẫn Việt) lẫn ghi chú — thợ pha nhớ mã,
-        // người bán nhớ "đỏ". Cùng bộ trường bản gốc lọc (SalesOrderPage.tsx:
-        // searchColors), thêm tên Việt vì ô này người Việt gõ.
         nhan: `${m.maMau} ${nhomVi} ${m.nhomMau} ${m.ghiChu ?? ""}`,
-        // Chọn xong ô chỉ hiện MÃ (bản gốc: displayLabel = colorCode) — ô hẹp, mà
-        // thứ đi vào dòng hàng cũng chỉ là mã.
         nhanHien: m.maMau,
         mau: m.maHex ?? undefined,      // chấm màu bên trái dòng gợi ý
-        // Chỉ hai cột: mã | nhóm. Ghi chú màu gần như luôn trống — chừa cột thứ ba là
-        // ăn mất bề ngang của cột nhóm rồi tên nhóm bị cắt cụt. Có ghi chú thì ghép
-        // vào sau tên nhóm, hiếm nên không đáng một cột riêng.
         cot: [m.maMau, m.ghiChu ? `${nhomVi} — ${m.ghiChu}` : nhomVi],
       };
     });
@@ -443,13 +469,9 @@ function DanhDon({ ch }: { ch: CauHinh }) {
       const inp = oDom?.querySelector<HTMLInputElement>("input");
       if (!inp) return;
 
-      // preventScroll: lưới là khung cuộn riêng, focus() mặc định kéo ô vào tầm nhìn
-      // làm cả bảng giật về chỗ khác, mất dấu đang gõ tới đâu.
       inp.focus({ preventScroll: true });
       inp.select?.();
 
-      // Chỉ cuộn khi ô THẬT SỰ khuất, và cuộn tối thiểu vừa đủ thấy — trừ hẳn chiều cao
-      // dòng tiêu đề dính để nó không che mất ô vừa nhảy tới.
       const khung = thanLuoiRef.current;
       if (!khung) return;
       const caoDau = bangRef.current?.querySelector("thead")?.clientHeight ?? 0;
@@ -487,8 +509,6 @@ function DanhDon({ ch }: { ch: CauHinh }) {
     setDong((ds) => {
       const cuoi = ds.at(-1)?.id === id;
       const dongNay = ds.find((x) => x.id === id);
-      // Enter ở dòng CUỐI mà dòng đó còn trống = đã gõ xong cả phiếu -> bấm Lưu luôn.
-      // Nét này của bản gốc: gõ một mạch từ đầu tới cuối không phải rời tay khỏi bàn phím.
       if (cuoi && !dongNay?.maHang) {
         setTimeout(() => luuPhieuRef.current(), 0);
         return ds;
@@ -543,17 +563,13 @@ function DanhDon({ ch }: { ch: CauHinh }) {
     if (!maKh) { message.warning(`Chưa chọn ${ch.nhanDoiTac.toLowerCase()}`); return; }
     const hopLe = dong.filter((d) => d.maHang && d.soLuong > 0);
     if (hopLe.length === 0) { message.warning("Phiếu chưa có dòng hàng nào hợp lệ"); return; }
-    // Dòng có hàng mà quên số lượng là gõ THIẾU, không phải dòng thừa — chặn lại để
-    // người dùng biết, thay vì lặng lẽ bỏ qua lúc lưu.
     const thieuSl = dong.find((d) => d.maHang && !(d.soLuong > 0));
     if (thieuSl) {
       message.error(`Dòng "${thieuSl.tenHang}" chưa nhập số lượng`);
       nhayO(thieuSl.id, "soLuong");
       return;
     }
-    // MÃ MÀU và TIỀN TINH MÀU phải đi CÙNG NHAU (bê nguyên luật của bản gốc
-    // USA_Meva — SalesOrderPage.tsx:1393). Chọn màu mà quên tiền pha là mất doanh thu
-    // công pha; nhập tiền pha mà quên màu là thợ không biết pha màu gì.
+
     const lechMau = hopLe.find((d) => !!d.maMau !== (d.tienTinhMau > 0));
     if (lechMau) {
       message.error(lechMau.maMau
@@ -624,6 +640,14 @@ function DanhDon({ ch }: { ch: CauHinh }) {
           maHang: l.maHang,
           tenHang: l.tenHang ?? "",
           dvt: l.dvt ?? "",
+          // Đơn đã lưu chỉ mang dvt dạng CHỮ (HOA_DON_LINE không có cột mã ĐVT), nên mở
+          // lại thì chưa biết nó ứng với quy cách nào. Để null: dòng vẫn sửa/lưu bình
+          // thường, chỉ là chưa gắn quy cách cho tới khi người dùng chọn lại ô ĐVT.
+          maDvt: null,
+          // Đơn cũ mở lên chưa biết mặt hàng có những quy cách nào (chưa gọi tìm hàng).
+          // Để rỗng -> ô ĐVT hiện dạng gõ tay, giữ nguyên chữ đã lưu; muốn đổi quy cách
+          // thì chọn lại mặt hàng, lúc đó danh sách mới nạp về.
+          cacQuyCach: [],
           soLuong: Number(l.soLuong) || 0,
           donGia: Number(l.donGia) || 0,
           ptVat: Number(l.ptVat) || 0,
@@ -839,10 +863,8 @@ function DanhDon({ ch }: { ch: CauHinh }) {
       // Bê từ PurchaseOrderPage (phím riêng của phiếu nhập, không có bên phiếu bán).
       // Dùng khi gõ nhầm ĐVT hoặc sửa giá lung tung rồi muốn quay về mốc chuẩn.
       //
-      // KHÁC bản gốc: bên đó F6 chọn giữa NHIỀU đơn vị của một mặt hàng (mua thùng
-      // bán lon). Hệ số quy đổi đơn vị nằm NGOÀI PHẠM VI v1 (SPEC mục 1), DM_HANG_NB
-      // mỗi mặt hàng chỉ có một dvt — nên ở đây F6 = lấy lại dvt + giá gốc.
-      // Khi nào làm quy đổi thì mở rộng đúng chỗ này.
+      // Nay một mặt hàng CÓ THỂ có nhiều quy cách (018 — DM_QUY_CACH_NB), nên F6 trả
+      // dòng về QUY CÁCH GỐC + giá của quy cách đó, không còn về cột dvt phẳng.
       if (e.key === "F6") {
         const el = document.activeElement as HTMLElement | null;
         const oDong = el?.closest<HTMLElement>("[data-dong][data-o]");
@@ -853,12 +875,19 @@ function DanhDon({ ch }: { ch: CauHinh }) {
         if (!d?.maHang) { message.info("Dòng này chưa chọn mặt hàng"); return; }
         const h = hangTheoMa.current.get(d.maHang);
         if (!h) { message.info("Chưa có thông tin mặt hàng để lấy lại"); return; }
+        // Trả về QUY CÁCH GỐC (018) chứ không còn về dvt phẳng: nay một mặt hàng có thể
+        // có ba quy cách, "giá gốc" phải là giá của quy cách mặc định.
+        const qcGoc = quyCachGoc(h);
+        const dvtVe = qcGoc ? nhanQuyCach(qcGoc) : (h.dvt ?? "");
+        const giaVe = giaTheoQuyCach(h, qcGoc, ch);
         suaDong(idDong, {
-          dvt: h.dvt ?? "",
-          donGia: ch.giaTuDanhMuc(h),
+          dvt: dvtVe,
+          maDvt: qcGoc?.maDvt ?? null,
+          cacQuyCach: h.quyCach2 ?? [],
+          donGia: giaVe,
           ptVat: h.ptVat != null ? Number(h.ptVat) : d.ptVat,
         });
-        message.success(`Đã lấy lại đơn vị & giá gốc: ${h.dvt ?? "-"} — ${soTien(ch.giaTuDanhMuc(h))}`);
+        message.success(`Đã lấy lại đơn vị & giá gốc: ${dvtVe || "-"} — ${soTien(giaVe)}`);
         return;
       }
       // Ctrl+T — tra tên hàng bên sổ thuế (BR-NB-03). Chỉ có nghĩa khi con trỏ ở ô hàng:
@@ -1114,13 +1143,25 @@ function DanhDon({ ch }: { ch: CauHinh }) {
                       kieuCot="hh3"
                       rongToiThieu={620}
                       onChon={(v) => {
-                        if (!v) { suaDong(d.id, { maHang: null, tenHang: "" }); return; }
+                        if (!v) {
+                          suaDong(d.id, {
+                            maHang: null, tenHang: "", dvt: "", maDvt: null, cacQuyCach: [],
+                          });
+                          return;
+                        }
                         const h = hangTheoMa.current.get(v);
+                        // Điền sẵn theo QUY CÁCH GỐC của mặt hàng (018) — giống USA_Meva:
+                        // chọn hàng xong là ĐVT + giá của quy cách mặc định đã nằm sẵn,
+                        // người bán chỉ đổi khi khách lấy quy cách khác.
+                        // Mặt hàng chưa khai quy cách thì lùi về dvt/giá trên danh mục.
+                        const qcGoc = quyCachGoc(h);
                         suaDong(d.id, {
                           maHang: v,
                           tenHang: h?.tenHang ?? "",
-                          dvt: h?.dvt ?? "",
-                          donGia: h ? ch.giaTuDanhMuc(h) : 0,
+                          dvt: qcGoc ? nhanQuyCach(qcGoc) : (h?.dvt ?? ""),
+                          maDvt: qcGoc?.maDvt ?? null,
+                          cacQuyCach: h?.quyCach2 ?? [],
+                          donGia: giaTheoQuyCach(h, qcGoc, ch),
                           ptVat: h?.ptVat != null ? Number(h.ptVat) : d.ptVat,
                         });
                         deSanDongCuoi(d.id);
@@ -1130,12 +1171,58 @@ function DanhDon({ ch }: { ch: CauHinh }) {
                       onXong={() => enterQuaO(d.id, "hang")}
                     />
                   </td>
+                  {/* Ô ĐVT = CHỌN QUY CÁCH (018), theo đúng lối USA_Meva.
+                      Mặt hàng có khai quy cách thì xổ danh sách (thùng 18L / hộp 5L /
+                      lon 1Kg), đổi quy cách là ĐƠN GIÁ TỰ NHẢY theo bảng giá của quy
+                      cách đó — trước đây ô này gõ chữ tự do nên giá phải sửa tay, quên
+                      là xuất thùng mà tính tiền lon.
+                      Mặt hàng CHƯA khai quy cách vẫn giữ ô gõ tay như cũ, không ép
+                      người dùng phải khai danh mục mới đánh được đơn. */}
                   <td data-dong={d.id} data-o="dvt">
-                    <input className="umv__o" value={d.dvt}
-                           onChange={(e) => suaDong(d.id, { dvt: e.target.value })}
-                           onKeyDown={(e) => {
-                             if (e.key === "Enter") { e.preventDefault(); enterQuaO(d.id, "dvt"); }
-                           }} />
+                    {d.cacQuyCach.length === 0 ? (
+                      <input className="umv__o" value={d.dvt}
+                             onChange={(e) => suaDong(d.id, { dvt: e.target.value })}
+                             onKeyDown={(e) => {
+                               if (e.key === "Enter") { e.preventDefault(); enterQuaO(d.id, "dvt"); }
+                             }} />
+                    ) : (
+                        <OGoiYUsa
+                          giaTri={d.maDvt}
+                          cac={d.cacQuyCach.map((q) => ({
+                            giaTri: q.maDvt,
+                            // Tìm được bằng cả tên tắt lẫn tên đầy đủ: người bán gõ "18L",
+                            // người mới gõ "thùng".
+                            nhan: `${q.tenTat ?? ""} ${q.tenDvt ?? ""} ${q.maDvt}`,
+                            nhanHien: nhanQuyCach(q),
+                            // Hiện kèm giá để chọn đúng quy cách khách hỏi mà không phải
+                            // chọn thử rồi nhìn ô Đơn giá.
+                            cot: [
+                              nhanQuyCach(q),
+                              q.tenDvt && q.tenDvt !== nhanQuyCach(q) ? q.tenDvt : "",
+                              // Giá RIÊNG của quy cách; chưa khai thì lùi về giá danh mục
+                              // (giaTheoQuyCach lo phần đó, ở đây không cần bản ghi hàng).
+                              soTien(giaTheoQuyCach(null, q, ch)),
+                            ],
+                          }))}
+                          layNhan={() => d.dvt}
+                          goiY="ĐVT"
+                          rongToiThieu={320}
+                          onChon={(v) => {
+                            if (!v) { suaDong(d.id, { maDvt: null }); return; }
+                            const q = d.cacQuyCach.find((x) => x.maDvt === v);
+                            if (!q) return;
+                            suaDong(d.id, {
+                              maDvt: q.maDvt,
+                              dvt: nhanQuyCach(q),
+                              // Đổi quy cách -> ĐƠN GIÁ TỰ NHẢY. Đây là điểm chính của
+                              // cả thay đổi này: trước kia đổi ĐVT mà quên sửa giá là
+                              // xuất thùng 18L nhưng tính tiền lon 1Kg.
+                              donGia: giaTheoQuyCach(null, q, ch),
+                            });
+                          }}
+                          onXong={() => enterQuaO(d.id, "dvt")}
+                        />
+                    )}
                   </td>
                   <td data-dong={d.id} data-o="soLuong">
                     <input className="umv__o umv__o--so" inputMode="decimal"
@@ -1298,11 +1385,17 @@ function DanhDon({ ch }: { ch: CauHinh }) {
         giaTuDanhMuc={ch.giaTuDanhMuc}
         onChonHang={(dongId, h) => {
           if (h.maHang) hangTheoMa.current.set(h.maHang, h);
+          // Mặt hàng vừa thêm nhanh (F2) hoặc chép từ sổ thuế thường CHƯA có quy cách —
+          // khi đó qcGoc rỗng và ô ĐVT giữ dạng gõ tay. Vẫn xử lý theo quy cách để
+          // trường hợp chọn lại mặt hàng đã khai đủ cũng chạy đúng một đường.
+          const qcGoc = quyCachGoc(h);
           suaDong(dongId, {
             maHang: h.maHang,
             tenHang: h.tenHang,
-            dvt: h.dvt ?? "",
-            donGia: ch.giaTuDanhMuc(h),
+            dvt: qcGoc ? nhanQuyCach(qcGoc) : (h.dvt ?? ""),
+            maDvt: qcGoc?.maDvt ?? null,
+            cacQuyCach: h.quyCach2 ?? [],
+            donGia: giaTheoQuyCach(h, qcGoc, ch),
             ptVat: h.ptVat != null ? Number(h.ptVat) : 0,
           });
           deSanDongCuoi(dongId);

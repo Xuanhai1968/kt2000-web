@@ -373,6 +373,44 @@ export interface DmHangNb {
   dvtLon: string | null;      // 1 dvtLon = heSoLon × dvt
   heSoLon: number | null;
   giaBanLon: number | null;
+  // 018 — MỘT mặt hàng NHIỀU quy cách (bảng DM_QUY_CACH_NB).
+  // Backend trả kèm ngay trong kết quả tìm hàng, không phải gọi thêm vòng nữa: gõ tên
+  // hàng xong Enter là ô ĐVT xổ ra được ngay, không chờ mạng (BR-NB-05).
+  // Mảng rỗng = mặt hàng chưa khai quy cách -> ô ĐVT lùi về gõ tay như trước.
+  quyCach2: QuyCachNb[];
+}
+
+// Một quy cách bán được của mặt hàng (dòng DM_QUY_CACH_NB ghép DM_DVT_NB).
+export interface QuyCachNb {
+  maDvt: string;
+  tenDvt: string | null;
+  tenTat: string | null;      // "18L" — thứ người bán gõ
+  heSoQd: number | null;      // 1 ĐVT này = heSoQd × dvtGoc
+  dvtGoc: string | null;      // "L" / "KG"
+  laDvtGoc: boolean;          // quy cách mặc định của mặt hàng
+  giaBan: number | null;
+  giaMua: number | null;
+  maVach: string | null;
+}
+
+// KHUYẾN MÃI "mua N tặng M" (DM_KM_NB, script 018).
+// KM gắn theo CẶP (mặt hàng, quy cách): H00021 có ba KM khác nhau cho thùng 18L và hộp
+// 5L. Quy cách TẶNG có thể khác quy cách MUA (mua 3 thùng tặng 1 hộp 5L).
+export interface DmKmNb {
+  maKm: string | null;          // để trống khi thêm mới -> backend sinh KM0028...
+  tenKm: string;
+  maHang: string;
+  maDvt: string;                // quy cách phải MUA
+  maDvtTang: string;            // quy cách được TẶNG
+  slMua: number;
+  slTang: number;
+  tuNgay: string | null;        // null = không giới hạn thời gian
+  denNgay: string | null;
+  ghiChu: string | null;
+  // Backend đọc kèm để hiện chữ, không phải tra thêm danh mục. Chỉ có khi ĐỌC.
+  tenHang?: string | null;
+  tenDvt?: string | null;
+  tenDvtTang?: string | null;
 }
 
 // BR-NB-01: DM_KH_NB là danh mục ĐỐI TƯỢNG CÔNG NỢ — khách VÀ nhân viên chung một
@@ -422,7 +460,12 @@ export interface DmMau {
 export interface DonNbLine {
   sttLine: number;
   maHang: string | null;
-  tenHang: string | null;
+  tenHang: string | null;      // nguyên văn lúc lập đơn — phiếu giao hàng in cái này
+  // Tên CHUẨN lên hóa đơn điện tử, backend đọc SỐNG từ DM_HANG_NB.ten_hd lúc tra đơn.
+  // Trống = mặt hàng chỉ có một tên, dùng luôn tenHang.
+  // KHÔNG bắt buộc: chỉ có khi ĐỌC đơn về; lúc dựng payload để LƯU thì không gửi (và
+  // backend cũng bỏ qua) — tên hóa đơn sống ở danh mục, không lưu xuống dòng đơn.
+  tenHd?: string | null;
   dvt: string | null;
   soLuong: number;
   donGia: number;
@@ -553,6 +596,16 @@ export const nbLuuKh = (d: Partial<DmKhNb>) => api.post<DmKhNb>("/nb/kh", d);
 // bằng boQua. Tìm theo mã màu, nhóm màu và ghi chú.
 export const nbTimMau = (tu?: string, gioiHan = 50, boQua = 0) =>
   api.get<DmMau[]>("/nb/mau", { params: { tu, gioiHan, boQua } });
+
+// Khuyến mãi. chiConHieuLuc = true -> chỉ KM đang chạy theo mốc hôm nay (form đánh
+// đơn dùng); màn danh mục để mặc định false để còn thấy KM đã hết hạn mà sửa.
+export const nbTimKm = (tu?: string, gioiHan = 200, boQua = 0, chiConHieuLuc = false) =>
+  api.get<DmKmNb[]>("/nb/km", { params: { tu, gioiHan, boQua, chiConHieuLuc } });
+
+export const nbLuuKm = (d: Partial<DmKmNb>) => api.post<DmKmNb>("/nb/km", d);
+
+export const nbXoaKm = (maKm: string) =>
+  api.delete<{ message: string }>(`/nb/km/${encodeURIComponent(maKm)}`);
 
 // BR-NB-03: tra tên hàng bên sổ thuế. Đơn vị thuế lấy từ LinkedTenantCode của
 // chính tenant đang đăng nhập — frontend không gửi mã đơn vị nào cả.

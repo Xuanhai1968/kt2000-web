@@ -38,26 +38,53 @@ namespace KT2000.Api.Services
 
         // ============================ DANH MỤC HÀNG ============================
 
+        // user: để xếp mặt hàng NGƯỜI NÀY hay dùng lên đầu (USER_HANG, script 018).
+        // Bỏ trống -> xếp theo tên như cũ. Tham số có mặc định để mọi chỗ gọi sẵn có
+        // không phải sửa.
         public async Task<List<DmHangNbDto>> SearchHang(string code, int year, string? tu,
-                                                        int gioiHan, int boQua = 0)
+                                                        int gioiHan, int boQua = 0,
+                                                        string? user = null)
         {
             using var conn = await OpenAsync(code, year);
-            var sql = @"SELECT ma_hang, ten_hang, dvt, quy_cach, gia_ban, gia_mua,
-                               pt_vat, ma_ngan, ma_hang_thue, ghi_chu,
-                               ten_tat, ma_vach, nhom_hang, dvt_lon, he_so_lon, gia_ban_lon,
-                               ten_hd
-                        FROM DM_HANG_NB
-                        WHERE ngung_dung = 0
-                          AND (@tu IS NULL OR ten_hang LIKE @like OR ma_hang LIKE @like
-                               OR ten_tat LIKE @like OR ma_vach LIKE @like
-                               OR ten_hd LIKE @like)
-                        ORDER BY ten_hang, ma_hang
+
+            // Bảng USER_HANG chỉ có từ script 018. Đơn vị dựng trước đó vẫn tìm hàng
+            // bình thường, chỉ là không có xếp hạng theo thói quen.
+            var coBangXep = false;
+            if (!string.IsNullOrWhiteSpace(user))
+            {
+                using var kiemTra = new SqlCommand(
+                    "SELECT CASE WHEN OBJECT_ID('USER_HANG') IS NULL THEN 0 ELSE 1 END", conn);
+                coBangXep = (int)(await kiemTra.ExecuteScalarAsync() ?? 0) == 1;
+            }
+
+            // XẾP THEO THÓI QUEN rồi mới tới tên: người bán quen tay chỉ đánh đi đánh lại
+            // chục mặt hàng trong số 50, gõ một hai chữ là thứ hay dùng phải nhảy lên đầu.
+            // LEFT JOIN nên mặt hàng chưa dùng lần nào vẫn ra, chỉ xếp sau (so_lan = 0).
+            var xepTheo = coBangXep
+                ? @"ORDER BY ISNULL(u.so_lan, 0) DESC, u.lan_cuoi DESC, h.ten_hang, h.ma_hang"
+                : @"ORDER BY h.ten_hang, h.ma_hang";
+            var noiBang = coBangXep
+                ? "LEFT JOIN USER_HANG u ON u.ma_hang = h.ma_hang AND u.login_name = @user"
+                : "";
+
+            var sql = $@"SELECT h.ma_hang, h.ten_hang, h.dvt, h.quy_cach, h.gia_ban, h.gia_mua,
+                               h.pt_vat, h.ma_ngan, h.ma_hang_thue, h.ghi_chu,
+                               h.ten_tat, h.ma_vach, h.nhom_hang, h.dvt_lon, h.he_so_lon,
+                               h.gia_ban_lon, h.ten_hd
+                        FROM DM_HANG_NB h
+                        {noiBang}
+                        WHERE h.ngung_dung = 0
+                          AND (@tu IS NULL OR h.ten_hang LIKE @like OR h.ma_hang LIKE @like
+                               OR h.ten_tat LIKE @like OR h.ma_vach LIKE @like
+                               OR h.ten_hd LIKE @like)
+                        {xepTheo}
                         OFFSET (@boqua) ROWS FETCH NEXT (@top) ROWS ONLY";
             using var cmd = new SqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("@top", gioiHan);
             cmd.Parameters.AddWithValue("@boqua", boQua);
             cmd.Parameters.AddWithValue("@tu", (object?)tu ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@like", $"%{tu}%");
+            if (coBangXep) cmd.Parameters.AddWithValue("@user", user!);
             var ds = new List<DmHangNbDto>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -81,7 +108,63 @@ namespace KT2000.Api.Services
                     GiaBanLon = r.IsDBNull(15) ? null : r.GetDecimal(15),
                     TenHd = r.IsDBNull(16) ? null : r.GetString(16),
                 });
+            r.Close();
+
+            // Nạp quy cách cho CẢ TRANG bằng MỘT câu, không lặp mỗi mặt hàng một lần:
+            // combobox trả 50 dòng thì lối kia thành 51 vòng gọi DB cho mỗi lần gõ phím.
+            await NapQuyCach(conn, ds);
             return ds;
+        }
+
+        // Gắn danh sách quy cách vào các mặt hàng đã đọc. Tách hàm vì cả SearchHang lẫn
+        // endpoint tra riêng một mặt hàng đều dùng.
+        //
+        // Bảng DM_QUY_CACH_NB chỉ có từ script 018 — đơn vị NB dựng trước đó chưa có.
+        // Không kiểm tra thì cả màn đánh đơn ngã vì thiếu một bảng danh mục phụ; thiếu
+        // thì đơn giản là không mặt hàng nào có quy cách, form lùi về ô ĐVT gõ tay.
+        private static async Task NapQuyCach(SqlConnection conn, List<DmHangNbDto> ds)
+        {
+            if (ds.Count == 0) return;
+
+            using (var kiemTra = new SqlCommand(
+                "SELECT CASE WHEN OBJECT_ID('DM_QUY_CACH_NB') IS NULL THEN 0 ELSE 1 END", conn))
+            {
+                if ((int)(await kiemTra.ExecuteScalarAsync() ?? 0) == 0) return;
+            }
+
+            // Truyền danh sách mã hàng bằng THAM SỐ từng cái (@h0, @h1...), không nối
+            // chuỗi giá trị vào SQL (luật #3 CLAUDE.md).
+            var thamSo = string.Join(",", ds.Select((_, i) => $"@h{i}"));
+            var sql = $@"SELECT q.ma_hang, q.ma_dvt, d.ten_dvt, d.ten_tat, d.he_so_qd, d.dvt_goc,
+                                q.la_dvt_goc, q.gia_ban, q.gia_mua, q.ma_vach
+                         FROM DM_QUY_CACH_NB q
+                         LEFT JOIN DM_DVT_NB d ON d.ma_dvt = q.ma_dvt
+                         WHERE q.ma_hang IN ({thamSo})
+                         ORDER BY q.ma_hang, q.la_dvt_goc DESC, d.he_so_qd DESC, q.ma_dvt";
+            using var cmd = new SqlCommand(sql, conn);
+            for (int i = 0; i < ds.Count; i++)
+                cmd.Parameters.AddWithValue($"@h{i}", ds[i].MaHang ?? "");
+
+            var theoMa = ds.Where(x => x.MaHang != null)
+                           .GroupBy(x => x.MaHang!)
+                           .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+            {
+                if (!theoMa.TryGetValue(r.GetString(0), out var h)) continue;
+                h.QuyCach2.Add(new QuyCachNbDto
+                {
+                    MaDvt    = r.GetString(1),
+                    TenDvt   = r.IsDBNull(2) ? null : r.GetString(2),
+                    TenTat   = r.IsDBNull(3) ? null : r.GetString(3),
+                    HeSoQd   = r.IsDBNull(4) ? null : r.GetDecimal(4),
+                    DvtGoc   = r.IsDBNull(5) ? null : r.GetString(5),
+                    LaDvtGoc = !r.IsDBNull(6) && r.GetBoolean(6),
+                    GiaBan   = r.IsDBNull(7) ? null : r.GetDecimal(7),
+                    GiaMua   = r.IsDBNull(8) ? null : r.GetDecimal(8),
+                    MaVach   = r.IsDBNull(9) ? null : r.GetString(9),
+                });
+            }
         }
 
         // Thêm nhanh mặt hàng ngay trên form (phím F2). Mã tự sinh nếu để trống.
@@ -225,38 +308,10 @@ namespace KT2000.Api.Services
             return ds;
         }
 
-        // Danh mục MÀU PHA — nuôi ô "Mã màu" trên lưới đánh đơn (ngành sơn).
-        // ~1131 dòng nên KHÔNG trả hết như DM_NHAN: phải lọc + chặn số dòng, giống
-        // SearchHang/SearchKh. Tìm theo mã, nhóm và ghi chú — đúng bộ trường mà bản gốc
-        // USA_Meva lọc (SalesOrderPage.tsx: searchColors).
-        //
-        // ORDER BY thu_tu TRƯỚC: bảng màu giấy của thợ pha xếp theo dải màu, không theo
-        // bảng chữ cái. Xếp lại theo mã là người dùng không dò được theo tờ giấy họ cầm.
-        // thu_tu NULL dồn xuống cuối (SQL Server xếp NULL trước, nên phải nói rõ).
         public async Task<List<DmMauDto>> SearchMau(string code, int year, string? tu,
                                                     int gioiHan, int boQua = 0)
         {
             using var conn = await OpenAsync(code, year);
-            // GOM VỀ MỘT DÒNG MỖI MÃ MÀU, GHÉP TÊN MỌI NHÓM — bê đúng cách bản gốc
-            // USA_Meva làm (SalesOrderPage.tsx: buildColorOptions), vì dữ liệu thật có
-            // 1131 dòng nhưng chỉ 1003 mã: 128 mã xếp ở HAI nhóm (vd "2001-P" nằm cả
-            // Red lẫn Pastel), và KHÔNG mã nào trùng mà khác mã hex — nhóm chỉ là cách
-            // xếp ngăn của bảng màu giấy, cùng một màu sơn. Dòng hàng lại chỉ lưu
-            // ma_mau (không lưu nhóm) nên để nguyên là ô gợi ý hiện hai dòng y hệt nhau.
-            //
-            // HAI ĐIỂM PHẢI GIỮ ĐÚNG BẢN GỐC, sai một cái là hỏng:
-            //
-            // 1. LỌC THEO MÃ RỒI BUNG LẠI ĐỦ NHÓM (bản gốc: gom `codes` xong mới
-            //    `filter(c => codes.has(c.colorCode))`). Lọc thẳng trong GROUP BY thì
-            //    gõ "Red" ra dòng 2001-P nhưng nhãn chỉ còn "Pastel" — đúng cái nhóm
-            //    người ta vừa gõ lại biến mất. Vì thế điều kiện tìm nằm trong EXISTS
-            //    con, còn STRING_AGG chạy trên MỌI dòng của mã đó.
-            //
-            // 2. GHÉP TÊN NHÓM bằng " / " (bản gốc: `descs.join(' / ')`) chứ không lấy
-            //    MIN — "2001-P - Đỏ / Pastel" cho người dùng biết màu này nằm ở cả hai
-            //    ngăn của bảng màu giấy. Lấy MIN là giấu mất một ngăn.
-            //
-            // STRING_AGG cần SQL Server 2017+. Máy chủ đang chạy 2022 (SQLEXPRESS).
             using var cmd = new SqlCommand(
                 @"SELECT m.ma_mau,
                          STRING_AGG(m.nhom_mau, N' / ')
@@ -289,6 +344,101 @@ namespace KT2000.Api.Services
                     GhiChu = r.IsDBNull(4) ? null : r.GetString(4),
                 });
             return ds;
+        }
+
+        public async Task<List<DmKmNbDto>> SearchKm(string code, int year, string? tu,
+                                                    int gioiHan, int boQua = 0,
+                                                    bool chiConHieuLuc = false)
+        {
+            using var conn = await OpenAsync(code, year);
+            var sql = @"SELECT k.ma_km, k.ten_km, k.ma_hang, k.ma_dvt, k.ma_dvt_tang,
+                               k.sl_mua, k.sl_tang, k.tu_ngay, k.den_ngay, k.ghi_chu,
+                               h.ten_hang, dm.ten_tat, dt.ten_tat
+                        FROM DM_KM_NB k
+                        LEFT JOIN DM_HANG_NB h  ON h.ma_hang = k.ma_hang
+                        LEFT JOIN DM_DVT_NB  dm ON dm.ma_dvt = k.ma_dvt
+                        LEFT JOIN DM_DVT_NB  dt ON dt.ma_dvt = k.ma_dvt_tang
+                        WHERE (@tu IS NULL OR k.ten_km LIKE @like OR k.ma_km LIKE @like
+                               OR k.ma_hang LIKE @like OR h.ten_hang LIKE @like)
+                          AND (@loc = 0 OR ((k.tu_ngay  IS NULL OR k.tu_ngay  <= CAST(SYSDATETIME() AS DATE))
+                                        AND (k.den_ngay IS NULL OR k.den_ngay >= CAST(SYSDATETIME() AS DATE))))
+                        ORDER BY k.ma_hang, k.sl_mua DESC, k.ma_km
+                        OFFSET (@boqua) ROWS FETCH NEXT (@top) ROWS ONLY";
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@top", gioiHan);
+            cmd.Parameters.AddWithValue("@boqua", boQua);
+            cmd.Parameters.AddWithValue("@tu", (object?)tu ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@like", $"%{tu}%");
+            cmd.Parameters.AddWithValue("@loc", chiConHieuLuc ? 1 : 0);
+
+            var ds = new List<DmKmNbDto>();
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+                ds.Add(new DmKmNbDto
+                {
+                    MaKm       = r.GetString(0),
+                    TenKm      = r.IsDBNull(1) ? "" : r.GetString(1),
+                    MaHang     = r.IsDBNull(2) ? "" : r.GetString(2),
+                    MaDvt      = r.IsDBNull(3) ? "" : r.GetString(3),
+                    MaDvtTang  = r.IsDBNull(4) ? "" : r.GetString(4),
+                    SlMua      = r.IsDBNull(5) ? 0 : r.GetDecimal(5),
+                    SlTang     = r.IsDBNull(6) ? 0 : r.GetDecimal(6),
+                    TuNgay     = r.IsDBNull(7) ? null : r.GetDateTime(7),
+                    DenNgay    = r.IsDBNull(8) ? null : r.GetDateTime(8),
+                    GhiChu     = r.IsDBNull(9) ? null : r.GetString(9),
+                    TenHang    = r.IsDBNull(10) ? null : r.GetString(10),
+                    TenDvt     = r.IsDBNull(11) ? null : r.GetString(11),
+                    TenDvtTang = r.IsDBNull(12) ? null : r.GetString(12),
+                });
+            return ds;
+        }
+
+        public async Task<DmKmNbDto> LuuKm(string code, int year, DmKmNbDto d, string user)
+        {
+            using var conn = await OpenAsync(code, year);
+            var ma = string.IsNullOrWhiteSpace(d.MaKm)
+                ? await SinhMaKm(conn)
+                : d.MaKm.Trim();
+
+            var dvtTang = string.IsNullOrWhiteSpace(d.MaDvtTang) ? d.MaDvt : d.MaDvtTang;
+
+            var sql = @"MERGE DM_KM_NB AS t
+                        USING (SELECT @ma AS ma_km) AS s ON t.ma_km = s.ma_km
+                        WHEN MATCHED THEN UPDATE SET
+                            ten_km = @ten, ma_hang = @mahang, ma_dvt = @dvt,
+                            ma_dvt_tang = @dvttang, sl_mua = @slmua, sl_tang = @sltang,
+                            tu_ngay = @tu, den_ngay = @den, ghi_chu = @gc,
+                            updated_by = @user, updated_at = SYSDATETIME()
+                        WHEN NOT MATCHED THEN INSERT
+                            (ma_km, ten_km, ma_hang, ma_dvt, ma_dvt_tang,
+                             sl_mua, sl_tang, tu_ngay, den_ngay, ghi_chu, created_by)
+                            VALUES (@ma, @ten, @mahang, @dvt, @dvttang,
+                                    @slmua, @sltang, @tu, @den, @gc, @user);";
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@ma", ma);
+            cmd.Parameters.AddWithValue("@ten", d.TenKm ?? "");
+            cmd.Parameters.AddWithValue("@mahang", d.MaHang ?? "");
+            cmd.Parameters.AddWithValue("@dvt", d.MaDvt ?? "");
+            cmd.Parameters.AddWithValue("@dvttang", dvtTang ?? "");
+            cmd.Parameters.AddWithValue("@slmua", d.SlMua);
+            cmd.Parameters.AddWithValue("@sltang", d.SlTang);
+            cmd.Parameters.AddWithValue("@tu", (object?)d.TuNgay ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@den", (object?)d.DenNgay ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@gc", (object?)d.GhiChu ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@user", user);
+            await cmd.ExecuteNonQueryAsync();
+
+            d.MaKm = ma;
+            d.MaDvtTang = dvtTang ?? "";
+            return d;
+        }
+
+        public async Task<bool> XoaKm(string code, int year, string maKm)
+        {
+            using var conn = await OpenAsync(code, year);
+            using var cmd = new SqlCommand("DELETE FROM DM_KM_NB WHERE ma_km = @ma", conn);
+            cmd.Parameters.AddWithValue("@ma", maKm);
+            return await cmd.ExecuteNonQueryAsync() > 0;
         }
 
         public async Task<DmKhNbDto> LuuKh(string code, int year, DmKhNbDto d, string user)
@@ -363,11 +513,6 @@ namespace KT2000.Api.Services
             return $"{prefix}{tiep}";
         }
 
-        // Tiền hàng của đơn = tổng thành tiền các dòng, ĐÃ CỘNG tiền tinh màu và ĐÃ LOẠI
-        // hàng tặng. Phải khớp từng đồng với công thức tính lại lúc lưu (LuuDon) và với
-        // ThanhTien đọc ra ở LayDon — lệch nhau là lưới hiện một số, mở đơn ra một số
-        // khác. Đây là chỗ DUY NHẤT tính tiền hàng cho mọi câu SELECT (danh sách + chi
-        // tiết), nên sửa ở đây là sửa hết.
         private const string SqlTienHang =
             @"ISNULL((SELECT SUM(CASE WHEN l.la_hang_tang = 1 THEN 0
                                       ELSE l.so_luong * l.don_gia
@@ -411,16 +556,6 @@ namespace KT2000.Api.Services
             return ds;
         }
 
-        // Đơn GẦN NHẤT của một khách, kèm đủ dòng hàng — phục vụ "dùng lại đơn trước"
-        // trên màn đánh đơn (khách quen tuần nào cũng lấy gần đúng một giỏ hàng).
-        //
-        // Vì sao phải có endpoint riêng thay vì lọc bằng DanhSachDon: tham số `tu` của
-        // hàm đó tìm trong ma_hd và ten_kh, KHÔNG tìm ma_kh. Truyền mã khách vào đó sẽ
-        // ra rỗng, hoặc tệ hơn là trúng đơn của khách khác có tên chứa đúng chuỗi đó.
-        // Lọc thẳng theo ma_kh ở đây là cách duy nhất chắc chắn đúng khách.
-        //
-        // Chỉ tìm trong đơn ĐÃ LƯU của cùng hướng; chưa có đơn nào thì trả null (không
-        // phải lỗi — khách mới thì im lặng bỏ qua, frontend không hỏi gì cả).
         public async Task<DonNbDto?> DonGanNhatCuaKhach(string code, int year,
                                                         string huong, string maKh)
         {
@@ -442,8 +577,7 @@ namespace KT2000.Api.Services
                 var o = await cmd.ExecuteScalarAsync();
                 maHd = o as string;
             }
-            // Lấy chi tiết bằng LayDon cho chắc chắn ra ĐÚNG khuôn mà màn hình đang đọc
-            // (gồm cả dòng hàng) — không dựng một câu SELECT thứ hai dễ lệch cột về sau.
+
             return maHd == null ? null : await LayDon(code, year, maHd);
         }
 
@@ -470,17 +604,14 @@ namespace KT2000.Api.Services
             if (don == null) return null;
 
             using (var cmd = new SqlCommand(
-                // JOIN DM_MAU chỉ để lấy MÃ HEX tô ô màu trên lưới — mã màu bản thân nó
-                // đã nằm sẵn trong dòng hàng. OUTER APPLY TOP 1 chứ không LEFT JOIN:
-                // DM_MAU có khóa chính GHÉP (ma_mau, nhom_mau) nên một mã màu có thể
-                // trùng ở nhiều nhóm; LEFT JOIN thẳng sẽ NHÂN ĐÔI dòng hàng.
                 @"SELECT l.stt_line, l.ma_hang, l.ten_hang_goc, l.dvt, l.so_luong, l.don_gia,
                          l.pt_vat, l.tien_vat_l, l.ghi_chu, l.he_so_qd, l.sl_quy_doi,
                          l.la_hang_tang, l.quy_cach, l.ngay_nh_l,
-                         l.ma_mau, l.tien_tinh_mau, m.ma_hex
+                         l.ma_mau, l.tien_tinh_mau, m.ma_hex, h.ten_hd
                   FROM HOA_DON_LINE l
                   OUTER APPLY (SELECT TOP 1 ma_hex FROM DM_MAU
                                WHERE ma_mau = l.ma_mau) m
+                  LEFT JOIN DM_HANG_NB h ON h.ma_hang = l.ma_hang
                   WHERE l.ma_hd = @ma ORDER BY l.stt_line, l.auto_num", conn))
             {
                 cmd.Parameters.AddWithValue("@ma", maHd);
@@ -499,8 +630,6 @@ namespace KT2000.Api.Services
                         Dvt = r.IsDBNull(3) ? null : r.GetString(3),
                         SoLuong = sl,
                         DonGia = dg,
-
-                        // Tiền tinh màu CỘNG THẲNG, không nhân số lượng (script 019).
                         ThanhTien = tang ? 0 : decimal.Round(sl * dg + tinhMau, 2),
                         PtVat = r.IsDBNull(6) ? 0 : r.GetDecimal(6),
                         TienVatL = r.IsDBNull(7) ? 0 : r.GetDecimal(7),
@@ -511,9 +640,9 @@ namespace KT2000.Api.Services
                         QuyCach = r.IsDBNull(12) ? null : r.GetString(12),
                         NgayNhL = r.IsDBNull(13) ? null : r.GetDateTime(13),
                         MaMau = r.IsDBNull(14) ? null : r.GetString(14),
-                        // Hàng tặng không tính tiền pha màu, cùng lẽ với ThanhTien.
                         TienTinhMau = tang ? 0 : tinhMau,
                         MaHex = r.IsDBNull(16) ? null : r.GetString(16),
+                        TenHd = r.IsDBNull(17) ? null : r.GetString(17),
                     });
                 }
             }
@@ -566,15 +695,9 @@ namespace KT2000.Api.Services
             {
                 var l = lines[i];
                 l.SttLine = i + 1;
-                // Chuẩn hóa cặp MÃ MÀU / TIỀN TINH MÀU trước khi tính tiền: mã màu trắng
-                // thì tiền pha vô nghĩa, và ngược lại. Bản gốc USA_Meva chặn bằng thông
-                // báo ở form (SalesOrderPage.tsx:1393); ở đây chặn thêm một lớp tại
-                // backend vì API còn phục vụ Excel/import, không chỉ mỗi form.
                 l.MaMau = string.IsNullOrWhiteSpace(l.MaMau) ? null : l.MaMau.Trim();
                 if (l.MaMau == null) l.TienTinhMau = 0;
                 if (l.TienTinhMau < 0) l.TienTinhMau = 0;
-                // Tiền tinh màu là tiền công pha CỦA CẢ DÒNG — cộng thẳng, không nhân
-                // số lượng (script 019, khớp bản gốc USA_Meva).
                 l.ThanhTien = decimal.Round(l.SoLuong * l.DonGia + l.TienTinhMau, 2);
                 l.TienVatL = decimal.Round(l.ThanhTien * l.PtVat / 100m, 2);
                 if (l.LaHangTang) { l.ThanhTien = 0; l.TienVatL = 0; l.TienTinhMau = 0; }
@@ -678,6 +801,12 @@ namespace KT2000.Api.Services
                 }
 
                 tran.Commit();
+
+                // Đếm mặt hàng vừa dùng để lần sau ô gợi ý xếp nó lên đầu (USER_HANG).
+                // Đặt SAU Commit và nuốt mọi lỗi bên trong: đây là thống kê tiện dụng,
+                // hỏng nó không được phép làm hỏng việc lưu đơn — đơn đã ghi xong rồi.
+                await GhiVetHangDaDung(conn, user, lines);
+
                 d.MaHd = maHd;
                 d.Ngay = ngay;
                 d.TienHang = tienHang;
@@ -1228,6 +1357,67 @@ namespace KT2000.Api.Services
             var max = await cmd.ExecuteScalarAsync();
             var tiep = (max == null || max == DBNull.Value ? 0 : Convert.ToInt64(max)) + 1;
             return $"G{tiep}";
+        }
+
+        // Ghi vết "user này vừa dùng những mặt hàng nào" (USER_HANG) để ô gợi ý lần sau
+        // xếp hàng quen lên đầu. Bê từ USA_Meva (DeliveriesController.TrackProductUsage).
+        //
+        // NUỐT MỌI LỖI: gọi sau khi đơn đã Commit, nên hỏng ở đây mà ném ra ngoài thì
+        // người dùng thấy báo lỗi trong khi đơn ĐÃ LƯU THÀNH CÔNG — họ sẽ lưu lại lần
+        // nữa và sinh đơn trùng. Mất một lượt đếm không đáng gì so với chuyện đó.
+        //
+        // Bảng chỉ có từ script 018 nên phải kiểm tra tồn tại: đơn vị NB dựng trước đó
+        // vẫn lưu đơn bình thường, chỉ là chưa có xếp hạng.
+        private static async Task GhiVetHangDaDung(SqlConnection conn, string user,
+                                                   List<DonNbLineDto> lines)
+        {
+            try
+            {
+                // Mỗi mặt hàng đếm MỘT lần cho mỗi đơn, dù đơn có ba dòng cùng mặt hàng
+                // (khác màu pha chẳng hạn) — đang đo "hay chọn", không đo số dòng.
+                var cacMa = lines.Where(l => !string.IsNullOrWhiteSpace(l.MaHang))
+                                 .Select(l => l.MaHang!)
+                                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                                 .ToList();
+                if (cacMa.Count == 0) return;
+
+                using (var kiemTra = new SqlCommand(
+                    "SELECT CASE WHEN OBJECT_ID('USER_HANG') IS NULL THEN 0 ELSE 1 END", conn))
+                {
+                    if ((int)(await kiemTra.ExecuteScalarAsync() ?? 0) == 0) return;
+                }
+
+                // MERGE để chạy bao nhiêu lần cũng chỉ CỘNG DỒN, không vỡ khóa chính.
+                // Tham số hóa từng mã (@m0, @m1...) — không nối chuỗi (luật #3).
+                var thamSo = string.Join(",", cacMa.Select((_, i) => $"(@u, @m{i})"));
+                var sql = $@"MERGE USER_HANG AS t
+                             USING (VALUES {thamSo}) AS s (login_name, ma_hang)
+                                ON t.login_name = s.login_name AND t.ma_hang = s.ma_hang
+                             WHEN MATCHED THEN
+                                 UPDATE SET so_lan = t.so_lan + 1, lan_cuoi = SYSDATETIME()
+                             WHEN NOT MATCHED THEN
+                                 INSERT (login_name, ma_hang, so_lan, lan_cuoi)
+                                 VALUES (s.login_name, s.ma_hang, 1, SYSDATETIME());";
+                using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@u", user);
+                for (int i = 0; i < cacMa.Count; i++)
+                    cmd.Parameters.AddWithValue($"@m{i}", cacMa[i]);
+                await cmd.ExecuteNonQueryAsync();
+            }
+            catch { /* thống kê là phụ — không làm hỏng việc lưu đơn */ }
+        }
+
+        // Mã KM theo đúng dạng dữ liệu gốc USA_Meva: "KM" + 4 chữ số (KM0001..KM0027).
+        // KHÔNG dùng lại SinhMa: hàm đó ép LEN = 6 với prefix MỘT ký tự (H + 5 số), còn
+        // "KM" dài hai ký tự — dùng nó sẽ ra KM00001 (7 ký tự), lệch hẳn bộ mã đang có.
+        private static async Task<string> SinhMaKm(SqlConnection conn)
+        {
+            using var cmd = new SqlCommand(
+                @"SELECT MAX(CAST(RIGHT(ma_km, 4) AS INT)) FROM DM_KM_NB
+                  WHERE ma_km LIKE N'KM[0-9][0-9][0-9][0-9]' AND LEN(ma_km) = 6", conn);
+            var max = await cmd.ExecuteScalarAsync();
+            var tiep = (max == null || max == DBNull.Value ? 0 : Convert.ToInt32(max)) + 1;
+            return $"KM{tiep:D4}";
         }
 
         private static async Task<string> SinhMa(SqlConnection conn, string bang,

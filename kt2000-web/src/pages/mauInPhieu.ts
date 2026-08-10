@@ -6,7 +6,7 @@
 
 import type { DonNb, GoiHd } from "../api";
 import {
-  inGiay, esc, soTienIn, ngayIn, khoiDau, khoiChuKy, khoiChan,
+  inGiay, xemTruocGiay, esc, soTienIn, ngayIn, khoiDau, khoiChuKy, khoiChan,
 } from "./inGiay";
 
 // Lấy phần số của mã đơn (R125 -> 125) để in "Đơn hàng số: 125 /T8-2026" kiểu Hoa_Sang
@@ -123,6 +123,125 @@ export function inPhieuDon(don: DonNb, dv: ThongTinDonVi) {
   </div>`;
 
   inGiay(`${tieuDe} - ${don.maHd}`, than);
+}
+
+/**
+ * XEM TRƯỚC HÓA ĐƠN — bản nháp để ĐỐI CHIẾU trước khi đẩy sang hóa đơn điện tử.
+ *
+ * Khác PHIẾU XUẤT/NHẬP KHO ở đúng một chỗ, và đó là mục đích của tờ này:
+ * cột tên hàng in **ten_hd** (tên chuẩn trên hóa đơn) thay vì ten_hang (tên đánh đơn
+ * mang ghi chú thực địa như "nắp trắng", "V1"). Ví dụ thật của USA_Meva:
+ *
+ *     ten_hang (phiếu kho)                      ten_hd (hóa đơn)
+ *     Sơn lót nội V1( nắp trắng )               Sơn lót nội thất
+ *     Kiềm nội cao cấp (nắp xanh)               Sơn lót kháng kiềm nội thất
+ *
+ * 35/50 mặt hàng có hai tên khác nhau, nên nhìn tờ này mới biết hóa đơn sắp xuất ra
+ * mang tên gì. Dòng nào ten_hd trống thì lùi về ten_hang (mặt hàng chỉ có một tên) —
+ * và ĐÁNH DẤU để người xem biết đó là tên chưa khai riêng, không phải tên chuẩn.
+ *
+ * CHƯA phải hóa đơn thật: chưa có số hóa đơn, chưa ký số, chưa gửi Viettel. Đây chỉ là
+ * bản xem để soát tên hàng — nên tờ giấy ghi rõ "BẢN XEM TRƯỚC" tránh ai đó cầm nhầm
+ * đi giao cho khách.
+ */
+export function xemTruocHoaDon(don: DonNb, dv: ThongTinDonVi) {
+  const lines = don.lines ?? [];
+  let tongTruocThue = 0;
+  let tongVat = 0;
+  // Đếm số dòng chưa khai tên hóa đơn riêng — hiện thành cảnh báo ở cuối tờ, vì đó
+  // chính là thứ người dùng cần phát hiện khi soát.
+  let soDongThieuTenHd = 0;
+
+  const hang = lines.map((l, i) => {
+    const sl = Number(l.soLuong) || 0;
+    const dg = Number(l.donGia) || 0;
+    const vat = Number(l.ptVat) || 0;
+    const tinh = Number(l.tienTinhMau) || 0;
+    const truocThue = l.laHangTang ? 0 : sl * dg + tinh;
+    const tienVat = truocThue * (vat / 100);
+    tongTruocThue += truocThue;
+    tongVat += tienVat;
+
+    // Đây là điểm cần soi: lấy ten_hd, thiếu thì lùi về ten_hang và đánh dấu.
+    const coTenHd = !!(l.tenHd && l.tenHd.trim());
+    if (!coTenHd) soDongThieuTenHd += 1;
+    const tenIn = coTenHd ? l.tenHd : l.tenHang;
+
+    return `<tr>
+      <td class="c"><b>${i + 1}</b></td>
+      <td>${esc(tenIn)}${l.laHangTang ? " <i>(hàng tặng)</i>" : ""}
+        ${coTenHd ? "" : `<span class="hd__canh">(chưa khai tên HĐ)</span>`}</td>
+      <td class="c">${esc(l.dvt)}</td>
+      <td class="c">${soTienIn(sl)}</td>
+      <td class="r">${soTienIn(dg)}</td>
+      <td class="r">${soTienIn(truocThue)}</td>
+      <td class="c">${vat}</td>
+      <td class="r">${soTienIn(tienVat)}</td>
+    </tr>`;
+  }).join("");
+
+  const ng = don.ngay ? new Date(don.ngay) : new Date();
+  const than = `<div class="pxk">
+    <style>
+      .hd__nhan{display:inline-block;border:2px solid #b91c1c;color:#b91c1c;
+        font-weight:700;letter-spacing:.08em;padding:3px 10px;border-radius:4px;
+        font-size:12px;margin-bottom:6px}
+      .hd__canh{color:#b45309;font-size:11px;font-style:italic;white-space:nowrap}
+      .hd__doi{margin-top:8px;font-size:12px}
+      .hd__doi td{padding:1px 0}
+      .hd__canhbao{margin-top:10px;padding:6px 10px;border:1px solid #fde68a;
+        background:#fffbeb;color:#92400e;font-size:12px;border-radius:4px}
+    </style>
+    ${khoiDau(`${dv.ten ?? ""}${dv.dienThoai ? " - Tel : " + dv.dienThoai : ""}`,
+              "Trang: 1", "")}
+
+    <div class="c"><span class="hd__nhan">BẢN XEM TRƯỚC — CHƯA PHẢI HÓA ĐƠN</span></div>
+    <h1 class="pxk__title">HÓA ĐƠN GIÁ TRỊ GIA TĂNG</h1>
+    <div class="pxk__subtitle">Lập từ đơn hàng số:
+      <strong>${esc(soDon(don.maHd))} /T${ng.getMonth() + 1}-${ng.getFullYear()}</strong></div>
+
+    <table class="pxk__info"><tbody>
+      <tr><td class="pxk__lbl">Ngày tháng :</td><td>${esc(ngayIn(don.ngay))}</td></tr>
+      <tr><td class="pxk__lbl">Đơn vị bán :</td><td>${esc(dv.ten)}</td></tr>
+      <tr><td class="pxk__lbl">Người mua :</td><td>${esc(don.tenKh)}</td></tr>
+      <tr><td class="pxk__lbl">Mã số thuế :</td><td>${esc(don.mst)}</td></tr>
+      <tr><td class="pxk__lbl">Địa chỉ :</td><td>${esc(don.diaChi)}</td></tr>
+    </tbody></table>
+
+    <table class="pxk__items">
+      <colgroup>
+        <col style="width:5%"/><col style="width:34%"/><col style="width:8%"/>
+        <col style="width:9%"/><col style="width:12%"/><col style="width:13%"/>
+        <col style="width:7%"/><col style="width:12%"/>
+      </colgroup>
+      <thead><tr>
+        <th>STT</th><th>Tên hàng hóa, dịch vụ</th><th>ĐVT</th><th>Số lượng</th>
+        <th>Đơn giá</th><th>Thành tiền</th><th>Thuế suất (%)</th><th>Tiền thuế</th>
+      </tr></thead>
+      <tbody>
+        ${hang}
+      </tbody>
+    </table>
+
+    <table class="hd__doi" align="right"><tbody>
+      <tr><td class="pxk__lbl">Cộng tiền hàng :</td>
+          <td class="r"><strong>${soTienIn(tongTruocThue)}</strong></td></tr>
+      <tr><td class="pxk__lbl">Tiền thuế GTGT :</td>
+          <td class="r"><strong>${soTienIn(tongVat)}</strong></td></tr>
+      <tr><td class="pxk__lbl">Tổng tiền thanh toán :</td>
+          <td class="r"><strong>${soTienIn(tongTruocThue + tongVat)}</strong></td></tr>
+    </tbody></table>
+
+    ${soDongThieuTenHd > 0
+      ? `<div class="hd__canhbao">Có <strong>${soDongThieuTenHd}</strong> dòng chưa khai
+         tên hóa đơn riêng (ten_hd) — đang tạm dùng tên đánh đơn. Khai bổ sung trong
+         Danh mục hàng hóa nếu tên trên hóa đơn phải khác tên xuất kho.</div>`
+      : ""}
+
+    ${khoiChan(dv.diaChi ?? "")}
+  </div>`;
+
+  xemTruocGiay(`Xem trước hóa đơn - ${don.maHd}`, than);
 }
 
 /**

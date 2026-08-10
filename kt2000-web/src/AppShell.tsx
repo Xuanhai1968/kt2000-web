@@ -54,6 +54,12 @@ const menuNoiBo = (maDonVi: string) => {
       type: "group" as const, label: "KHO / GIAO HÀNG",
       children: khoGiaoHang,
     },
+    {
+      type: "group" as const, label: "DANH MỤC",
+      children: [
+        { key: "/app/khuyen-mai", label: "Khuyến mãi" },
+      ],
+    },
   ];
 };
 

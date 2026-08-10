@@ -120,6 +120,55 @@ export function inGiay(tieuDe: string, than: string, kho = "A4", le = "12mm") {
   }, 250);
 }
 
+/**
+ * XEM TRƯỚC trong cửa sổ mới — KHÔNG bung hộp thoại in.
+ *
+ * Khác inGiay() ở chỗ đó: inGiay dựng iframe ẩn rồi gọi print() ngay, hợp cho tờ giấy
+ * đã chốt. Còn bản xem trước là để ĐỌC và ĐỐI CHIẾU trước khi quyết định in, nên phải
+ * hiện ra màn hình; ép hộp thoại in lên là bắt người dùng bấm Hủy mỗi lần chỉ muốn nhìn.
+ *
+ * Nút "In" nằm ngay trong trang xem trước, và nó tự ẩn khi in (@media print).
+ */
+export function xemTruocGiay(tieuDe: string, than: string, kho = "A4", le = "12mm") {
+  const win = window.open("", "_blank");
+  // Trình duyệt chặn cửa sổ bật lên thì báo cho biết, đừng im lặng không làm gì —
+  // người dùng bấm nút mà không thấy phản ứng sẽ tưởng chức năng hỏng.
+  if (!win) {
+    alert("Trình duyệt đang chặn cửa sổ bật lên.\n"
+        + "Cho phép pop-up với trang này rồi bấm lại.");
+    return;
+  }
+  win.document.open();
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8">
+    <title>${esc(tieuDe)}</title>
+    <style>@page{size:${kho};margin:${le}}
+    html,body{margin:0;padding:0;background:#f1f5f9}
+    ${CSS_IN}
+    /* Khung giấy giả lập trên nền xám để thấy rõ mép trang khi xem trên màn hình */
+    .xt__giay{background:#fff;max-width:210mm;margin:14px auto;padding:12mm;
+              box-shadow:0 2px 12px rgba(15,23,42,.15)}
+    .xt__thanh{position:sticky;top:0;z-index:9;display:flex;gap:8px;align-items:center;
+               background:#0f172a;color:#fff;padding:8px 14px;font:600 13px/1.4 system-ui}
+    .xt__thanh button{font:600 13px/1 system-ui;padding:7px 14px;border:0;border-radius:6px;
+                      background:#2563eb;color:#fff;cursor:pointer}
+    .xt__thanh button:hover{background:#1d4ed8}
+    .xt__nhan{margin-left:auto;font-weight:400;opacity:.8}
+    @media print{
+      html,body{background:#fff}
+      .xt__thanh{display:none}
+      .xt__giay{max-width:none;margin:0;padding:0;box-shadow:none}
+    }</style>
+    </head><body>
+      <div class="xt__thanh">
+        <button onclick="window.print()">In tờ này</button>
+        <span class="xt__nhan">${esc(tieuDe)}</span>
+      </div>
+      <div class="xt__giay">${than}</div>
+    </body></html>`);
+  win.document.close();
+  win.focus();
+}
+
 // ============================ KHỐI DÙNG CHUNG CHO MỌI MẪU ============================
 
 /** Khối đầu trang: tên đơn vị + số trang + người giao hàng (kiểu Hoa_Sang). */

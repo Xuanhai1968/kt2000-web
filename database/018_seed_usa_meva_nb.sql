@@ -216,6 +216,174 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_DM_MAU_nhom' AND object_
     CREATE INDEX IX_DM_MAU_nhom ON DM_MAU(nhom_mau);
 GO
 
+IF OBJECT_ID('DM_DVT_NB') IS NULL
+BEGIN
+    CREATE TABLE DM_DVT_NB (
+        ma_dvt     NVARCHAR(20)   NOT NULL,   -- = UnitCode, vd "DV0001"
+        ten_dvt    NVARCHAR(200)  NOT NULL,   -- = UnitName, vd "Thùng 18 lít"
+        ghi_chu    NVARCHAR(500)  NULL,       -- = Note,     vd "Quy cách 18L"
+        ten_tat    NVARCHAR(100)  NULL,       -- = SortName, vd "18L" — gõ tắt để tìm
+        dvt_goc    NVARCHAR(20)   NULL,       -- = BaseUnit, vd "L" / "KG"
+        he_so_qd   DECIMAL(18,3)  NULL,
+        created_by NVARCHAR(50)   NULL,
+        created_at DATETIME2      NOT NULL DEFAULT SYSDATETIME(),
+        updated_by NVARCHAR(50)   NULL,
+        updated_at DATETIME2      NULL,
+        CONSTRAINT PK_DM_DVT_NB PRIMARY KEY (ma_dvt)
+    );
+    PRINT N'[+] Đã tạo bảng DM_DVT_NB';
+END
+ELSE PRINT N'[=] DM_DVT_NB đã có';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_DM_DVT_NB_ten' AND object_id=OBJECT_ID('DM_DVT_NB'))
+    CREATE INDEX IX_DM_DVT_NB_ten ON DM_DVT_NB(ten_dvt);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_DM_DVT_NB_tat' AND object_id=OBJECT_ID('DM_DVT_NB'))
+    CREATE INDEX IX_DM_DVT_NB_tat ON DM_DVT_NB(ten_tat);
+GO
+
+--
+-- Chưa bê sang (chốt): bảng giá theo KHÁCH (UserProductPrices) và lịch sử giá
+-- (ProductPriceHistory) — chính sách giá là SPEC riêng, không gộp vào đây.
+IF OBJECT_ID('DM_QUY_CACH_NB') IS NULL
+BEGIN
+    CREATE TABLE DM_QUY_CACH_NB (
+        ma_hang    NVARCHAR(50)   NOT NULL,   -- -> DM_HANG_NB.ma_hang (mã GỐC, không đuôi)
+        ma_dvt     NVARCHAR(20)   NOT NULL,   -- -> DM_DVT_NB.ma_dvt
+        la_dvt_goc BIT            NOT NULL DEFAULT 0,
+        gia_ban    DECIMAL(18,2)  NULL,
+        gia_mua    DECIMAL(18,2)  NULL,
+        ma_vach    NVARCHAR(100)  NULL,       -- = Barcode, quét tem theo từng quy cách
+        sl_thung   INT            NULL,       -- = UnitsPerBox, số hộp xếp trong một thùng
+        ghi_chu    NVARCHAR(500)  NULL,
+        created_by NVARCHAR(50)   NULL,
+        created_at DATETIME2      NOT NULL DEFAULT SYSDATETIME(),
+        updated_by NVARCHAR(50)   NULL,
+        updated_at DATETIME2      NULL,
+        CONSTRAINT PK_DM_QUY_CACH_NB PRIMARY KEY (ma_hang, ma_dvt)
+    );
+    PRINT N'[+] Đã tạo bảng DM_QUY_CACH_NB';
+END
+ELSE PRINT N'[=] DM_QUY_CACH_NB đã có';
+GO
+
+SET QUOTED_IDENTIFIER ON;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='UQ_DM_QUY_CACH_NB_goc' AND object_id=OBJECT_ID('DM_QUY_CACH_NB'))
+    CREATE UNIQUE INDEX UQ_DM_QUY_CACH_NB_goc
+        ON DM_QUY_CACH_NB(ma_hang) WHERE la_dvt_goc = 1;
+GO
+
+-- Tra ngược "ĐVT này đang dùng cho những mặt hàng nào" (vd sắp ngưng một quy cách).
+-- Khóa chính dẫn đầu bằng ma_hang nên không đỡ được chiều tra này.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_DM_QUY_CACH_NB_dvt' AND object_id=OBJECT_ID('DM_QUY_CACH_NB'))
+    CREATE INDEX IX_DM_QUY_CACH_NB_dvt ON DM_QUY_CACH_NB(ma_dvt);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_DM_QUY_CACH_NB_vach' AND object_id=OBJECT_ID('DM_QUY_CACH_NB'))
+    CREATE INDEX IX_DM_QUY_CACH_NB_vach
+        ON DM_QUY_CACH_NB(ma_vach) WHERE ma_vach IS NOT NULL;
+GO
+
+-- ================= DM_KM_NB — KHUYẾN MÃI (mua N tặng M) =================
+-- Nguồn: USA_MEVA.dbo.Promotions (27 dòng, soi ngày 10/08/2026).
+--
+-- SOI DỮ LIỆU RỒI MỚI CẮT CỘT — bên nguồn có 26 cột, ở đây giữ 8. Bỏ đi cái gì và vì sao:
+--
+-- * Type            : 27/27 dòng đều 'BUY_GET'. Cột hằng số thì không phải là dữ liệu.
+--                     Khi nào có kiểu KM thứ hai (giảm giá) thì thêm cột lúc đó.
+-- * DiscountPrice / DiscountPct / MinOrderQty / DiscountMode : NULL cả 27/27 — đó là
+--                     bộ cột của KM GIẢM GIÁ, chưa dùng bao giờ.
+-- * GroupId         : NULL 27/27. KM khai theo từng mặt hàng, không theo nhóm hàng.
+-- * ColorId         : NULL 27/27. KM không phân biệt màu pha.
+-- * IsForCustomer   : 0 cả 27/27 (không có dòng nào riêng cho khách mới).
+-- * StartDate/EndDate: NULL 27/27 — KM hiện chạy vô thời hạn. Vẫn GIỮ hai cột này:
+--                     KM có mùa vụ là chuyện bình thường sẽ tới, mà thêm cột ngày vào
+--                     bảng đã có dữ liệu thì tốn một script nữa.
+-- * IsActive        : bỏ. KM hết hiệu lực thì XÓA DÒNG hoặc đặt den_ngay, không giữ
+--                     thêm một cờ bật/tắt song song. Bên nguồn chỉ 1/27 dòng tắt.
+--
+-- KM GẮN THEO QUY CÁCH, KHÔNG PHẢI THEO MẶT HÀNG — điểm dễ làm sai nhất:
+--     H00021 có BA khuyến mãi: mua 10 thùng tặng 2, mua 5 thùng tặng 1,
+--                              và mua 3 hộp 5L tặng 1 hộp 5L.
+-- Nên khóa chính phải gồm cả ma_dvt. Gộp về mặt hàng là ba dòng đè nhau còn một.
+--
+-- QUY CÁCH TẶNG CÓ THỂ KHÁC QUY CÁCH MUA: KM0018 mua 3 thùng 18L tặng 1 hộp 5L.
+-- Vì vậy có RIÊNG ma_dvt_tang, không dùng lại ma_dvt.
+IF OBJECT_ID('DM_KM_NB') IS NULL
+BEGIN
+    CREATE TABLE DM_KM_NB (
+        ma_km       NVARCHAR(20)   NOT NULL,   -- = PromotionCode, vd "KM0001"
+        ten_km      NVARCHAR(255)  NOT NULL,   -- = PromotionName, vd "Mua 10 tặng 4"
+        ma_hang     NVARCHAR(50)   NOT NULL,   -- -> DM_HANG_NB.ma_hang
+        ma_dvt      NVARCHAR(20)   NOT NULL,   -- quy cách PHẢI MUA  -> DM_DVT_NB
+        ma_dvt_tang NVARCHAR(20)   NOT NULL,   -- quy cách ĐƯỢC TẶNG -> DM_DVT_NB
+        sl_mua      DECIMAL(18,3)  NOT NULL,   -- = BuyQty
+        sl_tang     DECIMAL(18,3)  NOT NULL,   -- = GetQty
+        tu_ngay     DATE           NULL,       -- = StartDate. NULL = không giới hạn
+        den_ngay    DATE           NULL,       -- = EndDate.   NULL = không giới hạn
+        ghi_chu     NVARCHAR(500)  NULL,
+        created_by  NVARCHAR(50)   NULL,
+        created_at  DATETIME2      NOT NULL DEFAULT SYSDATETIME(),
+        updated_by  NVARCHAR(50)   NULL,
+        updated_at  DATETIME2      NULL,
+        CONSTRAINT PK_DM_KM_NB PRIMARY KEY (ma_km)
+    );
+    PRINT N'[+] Đã tạo bảng DM_KM_NB';
+END
+ELSE PRINT N'[=] DM_KM_NB đã có';
+GO
+
+-- Tra "mặt hàng + quy cách này đang có KM nào" — đây là câu form đánh đơn hỏi mỗi lần
+-- bấm F4, nên phải có index. Khóa chính là ma_km nên không đỡ được chiều tra này.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_DM_KM_NB_hang' AND object_id=OBJECT_ID('DM_KM_NB'))
+    CREATE INDEX IX_DM_KM_NB_hang ON DM_KM_NB(ma_hang, ma_dvt);
+GO
+
+-- ============ USER_HANG — mặt hàng ai hay dùng (xếp ô gợi ý) ============
+-- Nguồn: USA_MEVA.dbo.UserProductUsages.
+--
+-- KHÔNG PHẢI DANH MỤC nên KHÔNG mang tiền tố DM_: các bảng DM_* trong repo này là thứ
+-- người dùng KHAI TAY và có màn hình quản lý (DM_HANG_NB, DM_KM_NB...). Bảng này do
+-- MÁY tự ghi mỗi lần lưu đơn, không ai nhập, không có màn hình. Xóa sạch bảng cũng
+-- không mất dữ liệu nghiệp vụ — chỉ là ô gợi ý mất thứ tự ưu tiên vài hôm rồi tự học lại.
+--
+-- CÔNG DỤNG: người bán quen tay chỉ đánh đi đánh lại chục mặt hàng trong số 50. Ô gợi ý
+-- xếp theo số lần đã dùng thì gõ một hai chữ là mặt hàng quen nhảy lên đầu, đỡ phải
+-- đọc hết danh sách. Bên nguồn ProductsController có tham số sortByUsage đúng để làm việc này.
+--
+-- KHÁC NGUỒN MỘT CHỖ: nguồn khóa theo UserId (GUID) vì bảng Users nằm cùng database.
+-- Bên kt2000, user sống ở KT2000_Master còn bảng này ở database ĐƠN VỊ-NĂM — hai
+-- database khác nhau, không tham chiếu GUID xuyên qua được (và cũng không nên: luật #9).
+-- Nên khóa theo login_name, đúng thứ token mang sẵn (claim login_name).
+--
+-- Không có bộ tứ audit created_by/updated_by: bảng chỉ có MỘT người ghi là chính chủ,
+-- mà so_lan/lan_cuoi đã tự nói ai làm gì lúc nào.
+IF OBJECT_ID('USER_HANG') IS NULL
+BEGIN
+    CREATE TABLE USER_HANG (
+        login_name NVARCHAR(50)  NOT NULL,   -- = UserId, nhưng theo tên đăng nhập
+        ma_hang    NVARCHAR(50)  NOT NULL,   -- -> DM_HANG_NB.ma_hang
+        so_lan     INT           NOT NULL DEFAULT 0,          -- = UseCount
+        lan_cuoi   DATETIME2     NOT NULL DEFAULT SYSDATETIME(),  -- = LastUsedAt
+        CONSTRAINT PK_USER_HANG PRIMARY KEY (login_name, ma_hang)
+    );
+    PRINT N'[+] Đã tạo bảng USER_HANG';
+END
+ELSE PRINT N'[=] USER_HANG đã có';
+GO
+
+-- Xếp hạng "hàng hay dùng của TÔI": lọc theo login_name rồi sắp theo số lần giảm dần,
+-- cùng số lần thì lấy cái vừa dùng gần đây. INCLUDE ma_hang để câu này đọc xong index
+-- là đủ, không phải quay lại bảng (bê đúng IX_UserProductUsages_User_Rank bên nguồn).
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_USER_HANG_xep' AND object_id=OBJECT_ID('USER_HANG'))
+    CREATE INDEX IX_USER_HANG_xep ON USER_HANG(login_name, so_lan DESC, lan_cuoi DESC)
+        INCLUDE (ma_hang);
+GO
+
 IF OBJECT_ID('DM_NHAN') IS NULL
 BEGIN
     CREATE TABLE DM_NHAN (
@@ -293,22 +461,6 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_DM_KH_NB_tinh' AND objec
     CREATE INDEX IX_DM_KH_NB_tinh ON DM_KH_NB(ma_tinh);
 GO
 
--- ============================ DM_HANG_NB — cột bổ sung ============================
--- HAI TÊN cho một mặt hàng. Dữ liệu thật của USA_Meva: 35/50 mặt hàng có hai tên khác
--- nhau, nên đây không phải trường hợp hiếm:
---
---   ten_hang (đánh đơn)                            ten_hd (lên hóa đơn)
---   --------------------------------------------   -------------------------------
---   Sơn lót nội V1( nắp trắng )                    Sơn lót nội thất
---   Kiềm nội cao cấp (nắp xanh)                    Sơn lót kháng kiềm nội thất
---   Sơn lót kháng kiềm ngoại thất KV8( nắp vàng )  Sơn lót kháng kiềm ngoại thất
---
--- Tên đánh đơn mang ghi chú thực địa (màu nắp, mã lô) để thủ kho bốc đúng thùng — thứ
--- KHÔNG được xuất hiện trên hóa đơn thuế. ten_hd là tên chuẩn đưa lên hệ thống hóa đơn
--- điện tử (Viettel). Gộp làm một cột là mất một trong hai: lấy tên kho thì hóa đơn sai
--- chuẩn, lấy tên hóa đơn thì kho bốc nhầm nắp.
---
--- Để TRỐNG = "dùng luôn ten_hang", không bắt khai lại cho mặt hàng chỉ có một tên.
 IF COL_LENGTH('DM_HANG_NB', 'ten_hd') IS NULL
 BEGIN
     ALTER TABLE DM_HANG_NB ADD ten_hd NVARCHAR(500) NULL;
@@ -317,16 +469,6 @@ END
 ELSE PRINT N'[=] DM_HANG_NB.ten_hd đã có';
 GO
 
--- ============================ HOA_DON — cột bổ sung ============================
--- HAI địa chỉ trên một phiếu (theo form gốc USA_Meva):
---   dia_chi      — địa chỉ CỬA HÀNG của khách (nơi đặt hàng, ghi trên giấy tờ)
---   dia_chi_giao — địa chỉ GIAO hàng, khi khách muốn chở tới chỗ khác (kho, công trình)
---
--- Vì sao lưu xuống ĐƠN chứ không đọc sống từ DM_KH_NB: đơn hàng là sự thật lịch sử.
--- Khách đổi địa chỉ sang năm thì đơn CŨ in lại vẫn phải ra đúng chỗ đã giao hôm đó —
--- cùng nguyên tắc với ten_kh nguyên văn trên HOA_DON (BR-NB-02).
---
--- Để trống = giao đúng địa chỉ cửa hàng (thực tế 1626/1677 khách như vậy).
 IF COL_LENGTH('HOA_DON', 'dia_chi_giao') IS NULL
 BEGIN
     ALTER TABLE HOA_DON ADD dia_chi_giao NVARCHAR(500) NULL;
@@ -349,6 +491,57 @@ GO
 -- DECIMAL(18,2) khớp các cột tiền khác của HOA_DON_LINE (tien_ck, tien_vat_l).
 IF COL_LENGTH('HOA_DON_LINE', 'tien_tinh_mau') IS NULL
     ALTER TABLE HOA_DON_LINE ADD tien_tinh_mau DECIMAL(18,2) NULL;
+GO
+    -- (N'DV0001', N'Thùng 18 lít', N'18L',  N'L',  18.000, N'Quy cách 18L'),
+    -- (N'DV0002', N'Hộp 5 lít',    N'5L',   N'L',   5.000, N'Quy cách 5L'),
+    -- (N'DV0003', N'Hộp 1 lít',    N'1L',   N'L',   1.000, N'Quy cách 1L'),
+    -- (N'DV0004', N'Lon 1 Kg',     N'1 KG', N'KG',  1.000, N'Quy cách 1kg'),
+    -- (N'DV0005', N'Bao 5 Kg',     N'5KG',  N'KG',  5.000, N'Quy cách 5kg'),
+    -- (N'DV0006', N'Bao 40 Kg',    N'40KG', N'KG', 40.000, N'Quy cách 40kg')
+
+IF EXISTS (SELECT 1 FROM DM_HANG_NB
+           WHERE ma_hang LIKE N'%-[0-9]' OR ma_hang LIKE N'%-[0-9][0-9]')
+BEGIN
+    BEGIN TRAN;
+
+    -- Bảng tạm: mã đuôi -> mã gốc. Chỉ nhận cặp mà MÃ GỐC CÓ THẬT trong danh mục;
+    -- mã đuôi mồ côi (không có gốc) thì GIỮ NGUYÊN, không dám tự bịa gốc cho nó.
+    SELECT h.ma_hang AS ma_duoi,
+           LEFT(h.ma_hang, LEN(h.ma_hang) - CHARINDEX(N'-', REVERSE(h.ma_hang))) AS ma_goc
+    INTO #doi_ma
+    FROM DM_HANG_NB h
+    WHERE h.ma_hang LIKE N'%-[0-9]' OR h.ma_hang LIKE N'%-[0-9][0-9]';
+
+    DELETE d FROM #doi_ma d
+    WHERE NOT EXISTS (SELECT 1 FROM DM_HANG_NB g WHERE g.ma_hang = d.ma_goc);
+
+    DECLARE @so_moi_coi INT = (
+        SELECT COUNT(*) FROM DM_HANG_NB h
+        WHERE (h.ma_hang LIKE N'%-[0-9]' OR h.ma_hang LIKE N'%-[0-9][0-9]')
+          AND NOT EXISTS (SELECT 1 FROM #doi_ma d WHERE d.ma_duoi = h.ma_hang));
+    IF @so_moi_coi > 0
+        PRINT N'    CẢNH BÁO: ' + CAST(@so_moi_coi AS NVARCHAR(10))
+            + N' mã đuôi KHÔNG tìm thấy mã gốc — giữ nguyên, cần xem tay';
+
+    UPDATE l SET l.ma_hang = d.ma_goc
+    FROM HOA_DON_LINE l JOIN #doi_ma d ON d.ma_duoi = l.ma_hang;
+    PRINT N'    HOA_DON_LINE: đã trỏ ' + CAST(@@ROWCOUNT AS NVARCHAR(10)) + N' dòng về mã gốc';
+
+    IF OBJECT_ID('GOI_HD_LINE') IS NOT NULL
+    BEGIN
+        UPDATE l SET l.ma_hang = d.ma_goc
+        FROM GOI_HD_LINE l JOIN #doi_ma d ON d.ma_duoi = l.ma_hang;
+        PRINT N'    GOI_HD_LINE: đã trỏ ' + CAST(@@ROWCOUNT AS NVARCHAR(10)) + N' dòng về mã gốc';
+    END
+
+    -- B3. Xóa dòng đuôi khỏi danh mục — giờ mới an toàn vì không còn ai trỏ tới.
+    DELETE h FROM DM_HANG_NB h JOIN #doi_ma d ON d.ma_duoi = h.ma_hang;
+    PRINT N'[+] DM_HANG_NB: đã bỏ ' + CAST(@@ROWCOUNT AS NVARCHAR(10)) + N' mã đuôi -2/-3';
+
+    DROP TABLE #doi_ma;
+    COMMIT;
+END
+ELSE PRINT N'[=] DM_HANG_NB: không có mã đuôi -2/-3, bỏ qua bước gộp';
 GO
 
 IF NOT EXISTS (SELECT 1 FROM SCHEMA_VERSION WHERE Ver = 11)

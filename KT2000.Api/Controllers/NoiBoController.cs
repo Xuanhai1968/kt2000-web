@@ -63,9 +63,11 @@ namespace KT2000.Api.Controllers
         public async Task<IActionResult> TimHang([FromQuery] string? tu,
                                                  [FromQuery] int gioiHan = 50,
                                                  [FromQuery] int boQua = 0)
+            // Truyền CurrentUser() để xếp mặt hàng người này hay dùng lên đầu (USER_HANG)
             => ChanNeuKhongPhaiNoiBo()
                ?? Ok(await _nb.SearchHang(TenantCode(), FiscalYear(), Rong(tu),
-                                          Math.Clamp(gioiHan, 1, 500), Math.Max(0, boQua)));
+                                          Math.Clamp(gioiHan, 1, 500), Math.Max(0, boQua),
+                                          CurrentUser()));
 
         [HttpPost("hang")]
         public async Task<IActionResult> LuuHang([FromBody] DmHangNbDto d)
@@ -110,6 +112,51 @@ namespace KT2000.Api.Controllers
             => ChanNeuKhongPhaiNoiBo()
                ?? Ok(await _nb.SearchMau(TenantCode(), FiscalYear(), Rong(tu),
                                          Math.Clamp(gioiHan, 1, 500), Math.Max(0, boQua)));
+
+        // ============================ KHUYẾN MÃI ============================
+        // chiConHieuLuc: form đánh đơn truyền true (chỉ KM đang chạy hôm nay), màn danh
+        // mục để mặc định false để còn thấy và sửa được KM đã hết hạn.
+        [HttpGet("km")]
+        public async Task<IActionResult> TimKm([FromQuery] string? tu,
+                                               [FromQuery] int gioiHan = 200,
+                                               [FromQuery] int boQua = 0,
+                                               [FromQuery] bool chiConHieuLuc = false)
+            => ChanNeuKhongPhaiNoiBo()
+               ?? Ok(await _nb.SearchKm(TenantCode(), FiscalYear(), Rong(tu),
+                                        Math.Clamp(gioiHan, 1, 500), Math.Max(0, boQua),
+                                        chiConHieuLuc));
+
+        [HttpPost("km")]
+        public async Task<IActionResult> LuuKm([FromBody] DmKmNbDto d)
+        {
+            var chan = ChanNeuKhongPhaiNoiBo();
+            if (chan != null) return chan;
+            // Chặn ngay ở cửa: thiếu mặt hàng hoặc quy cách thì KM không bao giờ khớp
+            // được dòng nào trên đơn — lưu vào chỉ làm rác danh mục.
+            if (string.IsNullOrWhiteSpace(d.MaHang))
+                return BadRequest(new { message = "Chưa chọn mặt hàng" });
+            if (string.IsNullOrWhiteSpace(d.MaDvt))
+                return BadRequest(new { message = "Chưa chọn quy cách phải mua" });
+            if (d.SlMua <= 0)
+                return BadRequest(new { message = "Số lượng mua phải lớn hơn 0" });
+            if (d.SlTang <= 0)
+                return BadRequest(new { message = "Số lượng tặng phải lớn hơn 0" });
+            // Khoảng ngày ngược thì KM không bao giờ có hiệu lực, mà màn hình lại hiện
+            // như bình thường -> người dùng ngồi đợi một KM chết.
+            if (d.TuNgay != null && d.DenNgay != null && d.DenNgay < d.TuNgay)
+                return BadRequest(new { message = "Ngày kết thúc phải sau ngày bắt đầu" });
+            return Ok(await _nb.LuuKm(TenantCode(), FiscalYear(), d, CurrentUser()));
+        }
+
+        [HttpDelete("km/{maKm}")]
+        public async Task<IActionResult> XoaKm(string maKm)
+        {
+            var chan = ChanNeuKhongPhaiNoiBo();
+            if (chan != null) return chan;
+            var xong = await _nb.XoaKm(TenantCode(), FiscalYear(), maKm);
+            return xong ? Ok(new { message = "Đã xóa" })
+                        : NotFound(new { message = "Không tìm thấy khuyến mãi" });
+        }
 
         [HttpPost("kh")]
         public async Task<IActionResult> LuuKh([FromBody] DmKhNbDto d)
@@ -159,13 +206,6 @@ namespace KT2000.Api.Controllers
                ?? Ok(await _nb.DanhSachDon(TenantCode(), FiscalYear(), ChuanHoaHuong(huong),
                                            thang, Rong(tu), Math.Clamp(gioiHan, 1, 500)));
 
-        // Đơn gần nhất của một khách — "dùng lại đơn trước" trên màn đánh đơn.
-        // Khai TRƯỚC "don/{huong}" cùng lý do với "don/tat-ca": nếu không, "gan-nhat"
-        // sẽ bị hiểu là giá trị của {huong} rồi chết ở ChuanHoaHuong.
-        //
-        // Không có đơn cũ trả 204 (No Content) chứ KHÔNG phải 404: khách mới chưa mua bao
-        // giờ là chuyện bình thường, không phải lỗi — 404 sẽ hiện đỏ trong log/console
-        // mỗi lần chọn khách mới, lâu dần không ai buồn đọc log nữa.
         [HttpGet("don/gan-nhat/{huong}")]
         public async Task<IActionResult> DonGanNhat(string huong, [FromQuery] string maKh)
         {

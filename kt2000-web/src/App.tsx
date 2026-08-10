@@ -14,6 +14,7 @@ import MoNamLamViec from "./pages/MoNamLamViec";
 // lúc nghiệm thu; xóa hẳn sau khi Leader duyệt.
 import { PhieuXuatHangUsa, PhieuNhapHangUsa } from "./pages/usa_meva/PhieuDanhDonUsa";
 import DanhSachPhieuUsa from "./pages/usa_meva/DanhSachPhieuUsa";
+import KhuyenMaiUsa from "./pages/usa_meva/KhuyenMaiUsa";
 import GoiHang from "./pages/GoiHang";
 // Phần quản trị
 import QuanLyUser from "./pages/QuanLyUser";
@@ -39,6 +40,8 @@ export default function App() {
             <Route path="phieu-xuat" element={<PhieuXuatHangUsa />} />
             <Route path="phieu-nhap" element={<PhieuNhapHangUsa />} />
             <Route path="danh-sach-phieu" element={<DanhSachPhieuUsa />} />
+            {/* Danh mục khuyến mãi "mua N tặng M" (DM_KM_NB, script 018) */}
+            <Route path="khuyen-mai" element={<KhuyenMaiUsa />} />
             {/* Gói hàng vẫn sống: chỉ ẩn khỏi MENU của đơn vị không dùng gói
                 (xem KHONG_DUNG_GOI trong AppShell.tsx), route giữ nguyên cho các
                 đơn vị NB khác — TUAN_NGA_NB vẫn gom đơn theo chuyến xe. */}
