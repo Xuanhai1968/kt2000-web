@@ -852,6 +852,30 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
   const mstDoiTac = hd?.mst ?? "";
   const dk = (tenFileChon && dinhKhoanTheoFile[tenFileChon]) || dinhKhoanRong();
 
+  const luoiHangRef = useRef<HTMLDivElement | null>(null);
+  const phimLuoiHang = (e: React.KeyboardEvent) => {
+    const ds = hd?.lines ?? [];
+    if (ds.length === 0) return;
+    const iHienTai = ds.findIndex((m) => m.sttLine === sttChon);
+    let i: number;
+    switch (e.key) {
+      case "ArrowDown": i = Math.min(iHienTai + 1, ds.length - 1); break;
+      case "ArrowUp":   i = Math.max(iHienTai - 1, 0); break;
+      case "Home":      i = 0; break;
+      case "End":       i = ds.length - 1; break;
+      case "PageDown":  i = Math.min(iHienTai + 10, ds.length - 1); break;
+      case "PageUp":    i = Math.max(iHienTai - 10, 0); break;
+      default: return;
+    }
+    e.preventDefault();
+    const dong = ds[i < 0 ? 0 : i];
+    if (!dong) return;
+    setSttChon(dong.sttLine);
+    luoiHangRef.current
+      ?.querySelector<HTMLElement>(`[data-row-key="${dong.sttLine}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  };
+
   const suaDk = (thayDoi: Partial<DinhKhoan>) => {
     if (!tenFileChon) return;
     setDinhKhoanTheoFile((m) => ({
@@ -1035,9 +1059,19 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.tenant.id, namLamViec, huongMacDinh]);
 
-  // bucTaiLai: người dùng bấm Enter ở lưới danh sách để "gọi lại" hóa đơn đang
-  // đứng — phải hỏi lại server kể cả khi trong bộ nhớ đã có lines, vì đó chính là
-  // lối thoát khi bản đang giữ bị lệch hoặc lần tải trước hỏng.
+  const thueSuatCuaHd = (x: HoaDonThue): number | null => {
+    let ptLonNhat: number | null = null;
+    let tienLonNhat = -1;
+    for (const d of x.lines) {
+      const pt = d.ptVat ?? 0;
+      if (pt === 0) continue;
+      const tien = d.thanhTien ?? 0;
+      if (tien > tienLonNhat) { tienLonNhat = tien; ptLonNhat = pt; }
+    }
+    if (ptLonNhat == null) return null;
+    return ptLonNhat <= 1 ? ptLonNhat * 100 : ptLonNhat;
+  };
+
   const chonHoaDon = (maHd: string, bucTaiLai = false) => {
     setTenFileChon(maHd);
     const x = dsHd.find((h) => h.maHd === maHd);
@@ -1052,8 +1086,8 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
         tienVat: x.tienVat,
         chietKhau: x.tienCk,
         ngayNhapHang: (x.ngayNh ?? x.ngay ?? "").slice(0, 10),
-        ghiNo: x.ghiNo || "156",
-        ghiCo: x.ghiCo || "331",
+        ghiNo: x.ghiNo || "",
+        ghiCo: x.ghiCo || "",
         maCtNo: x.maCtNo ?? "",
         maCtCo: x.maCtCo ?? "",
         thuongVu: x.maTv ?? "",
@@ -1069,6 +1103,12 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
       },
     });
   };
+
+
+  const thueSuatHienThi =
+    dk.thueSuat !== dinhKhoanRong().thueSuat
+      ? dk.thueSuat                                   // người dùng đã tự gõ
+      : (hd ? thueSuatCuaHd(hd) : null) ?? dk.thueSuat;
 
   const congTienHang = useMemo(
     () => (hd?.lines ?? []).reduce((s, x) => s + x.thanhTien, 0), [hd]);
@@ -1337,7 +1377,11 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             </Checkbox>
           </div>
 
-          {/* ===== LƯỚI MẶT HÀNG ===== */}
+          {/* ===== LƯỚI MẶT HÀNG =====
+               tabIndex để div nhận được focus, nếu không onKeyDown không bao giờ
+               bắn. Bấm vào lưới là focus luôn, khỏi phải Tab tới. */}
+          <div ref={luoiHangRef} tabIndex={0} onKeyDown={phimLuoiHang}
+               className="khung-luoi-hang">
           <Table
             className="luoi-hang"
             rowKey="sttLine" size="small" pagination={false}
@@ -1394,6 +1438,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                   { minimumFractionDigits: 4, maximumFractionDigits: 4 }) },
             ]}
           />
+          </div>
 
           {/* ===== KHỐI CỘNG TIỀN + NÚT DƯỚI ===== */}
           <div style={{ display: "flex", gap: 12, marginTop: 6 }}>
@@ -1421,11 +1466,14 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                 </Checkbox>
               </div>
               <div className="hang">
-                {oNhan("Thuế suất", 84)}
-                <InputNumber size="small" style={{ width: 46 }} controls={false}
-                             value={dk.thueSuat}
-                             onChange={(v) => suaDk({ thueSuat: v ?? 0 })} />
-                <span className="nhan nhan-tien-vat">% Tiền VAT</span>
+                <span className="cum-thue-suat">
+                  <span className="nhan">Thuế suất</span>
+                  <InputNumber size="small" style={{ width: 40 }} controls={false}
+                               value={thueSuatHienThi}
+                               title="Thuế suất đọc từ dòng hàng của chính hóa đơn này"
+                               onChange={(v) => suaDk({ thueSuat: v ?? 0 })} />
+                  <span className="nhan">% Tiền VAT</span>
+                </span>
                 <InputNumber size="small" style={{ width: 165 }} controls={false}
                              value={dk.tienVat} disabled={!dk.suaTienVat}
                              formatter={tienVn} parser={docTienVn}

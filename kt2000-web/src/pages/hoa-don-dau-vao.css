@@ -97,11 +97,23 @@
 /* ----- Khối cộng tiền dưới lưới ----- */
 .phieu-nhap .khoi-cong .nhan { width: 140px; text-align: right; }
 
-.phieu-nhap.phieu-nhap .khoi-cong .nhan-tien-vat {
-  width: auto;
+/* Cụm "Thuế suất [8] % Tiền VAT" đứng đúng chỗ cột nhãn 140px của các hàng khác,
+   để ô Tiền VAT thẳng cột với ba ô tiền còn lại. Căn phải cho mép trong sát ô số.
+   Hai nhãn bên trong tự co theo chữ — KHÔNG ép hẹp hơn chữ, vì .nhan có
+   white-space: nowrap nên chữ sẽ tràn ra đè lên ô số bên cạnh. */
+.phieu-nhap .khoi-cong .cum-thue-suat {
+  width: 140px;
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+/* Nhãn trong cụm thoát khỏi luật width 140px của .khoi-cong .nhan ở trên */
+.phieu-nhap.phieu-nhap .khoi-cong .cum-thue-suat .nhan {
+  width: auto;
   text-align: left;
-  padding-left: 4px;
 }
 
 .phieu-nhap.phieu-nhap .o-tong-tt .ant-input-number .ant-input-number-input,
@@ -111,6 +123,13 @@
   background: #f0f0f0;
 }
 
+
+/* Khung bắt phím ↑/↓ của lưới mặt hàng. tabIndex làm trình duyệt vẽ viền focus
+   quanh cả lưới — thừa và xấu, dòng đang chọn đã tô xanh đủ rõ rồi. */
+.phieu-nhap .khung-luoi-hang:focus,
+.phieu-nhap .khung-luoi-hang:focus-visible {
+  outline: none;
+}
 
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-body {
   height: 210px;

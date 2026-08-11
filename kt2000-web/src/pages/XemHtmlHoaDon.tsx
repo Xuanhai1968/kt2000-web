@@ -51,7 +51,7 @@ export default function XemHtmlHoaDon({ mo, onDong, nhan, tai }: Props) {
       open={mo}
       onCancel={onDong}
       width="min(840px, 96vw)"
-      style={{ top: 20 }}
+      style={{ top: 20, marginRight: 8, marginLeft: "auto", paddingBottom: 0 }}
       footer={null}
       styles={{ body: { height: "calc(100vh - 120px)", padding: 0, overflow: "hidden" } }}
     >
