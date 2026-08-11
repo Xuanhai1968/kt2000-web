@@ -3,6 +3,8 @@ import { Card, Table, Button, InputNumber, Space, Tag, message, Alert } from "an
 import { getAdminTenants, openFiscalYears } from "../api";
 import type { AdminTenant, OpenYearResult } from "../api";
 import { useAuth } from "../AuthContext";
+import { mauDonVi, damDonVi } from "../theme/donViColors";
+import "./luoi-gon.css";
 
 export default function MoNamLamViec() {
     // Mở năm = CREATE DATABASE nên chỉ quản trị viên được bấm. Người khác vẫn vào xem
@@ -55,13 +57,26 @@ export default function MoNamLamViec() {
           Mở năm {year} cho {selected.length} đơn vị
         </Button>
       </Space>
+      {/* Cuộn ~10 dòng thay vì lật trang — quy ước UI toàn cục, xem CLAUDE.md */}
       <Table
+        className="luoi-gon"
         rowKey="id" size="small" dataSource={tenants.filter((t) => t.isActive)}
         rowSelection={{ selectedRowKeys: selected, onChange: setSelected }}
-        pagination={{ pageSize: 20 }}
+        pagination={false}
+        scroll={{ y: 290 }}
         columns={[
-          { title: "Mã", dataIndex: "code", width: 150 },
-          { title: "Tên đơn vị", dataIndex: "name" },
+          // BR-GD-01: màu áp lên chữ cột Mã + Tên, mã màu lấy từ theme/donViColors
+          { title: "Mã", dataIndex: "code", width: 150,
+            render: (v: string, r: AdminTenant) =>
+              <span style={{ color: mauDonVi(r), fontWeight: damDonVi(r) }}>{v}</span> },
+          { title: "Tên đơn vị", dataIndex: "name",
+            render: (v: string, r: AdminTenant) =>
+              <span style={{ color: mauDonVi(r) }}>{v}</span> },
+          { title: "Kỳ khai", dataIndex: "khaiQuy", width: 100,
+            render: (q: boolean, r: AdminTenant) =>
+              r.tenantType === "noibo" || r.tenantType === "internal"
+                ? <span style={{ color: "#8c8c8c" }}>—</span>
+                : q ? <Tag>Quý</Tag> : <Tag color="red">Tháng</Tag> },
           { title: "Các năm", dataIndex: "fiscalYears", width: 220,
             render: (ys: number[]) => ys.map((y) => <Tag key={y}>{y}</Tag>) },
         ]}

@@ -48,6 +48,11 @@ namespace KT2000.Api.Services
         public bool DangChay { get; set; }
         public string? NguoiChay { get; set; }
         public DateTime? BatDau { get; set; }
+        // Hướng người dùng YÊU CẦU lúc bấm Lấy: vao | ra | all. Khác với TienDoLay.Huong
+        // (đọc từ status.json, chỉ có sau khi script chạy được một lúc). Cần cái này để
+        // màn Đầu vào và màn Đầu ra không hiện tiến độ của nhau — cả hệ thống chỉ có
+        // MỘT phiên chạy, không lọc thì hai màn cùng nhìn thấy đúng một bảng.
+        public string Huong { get; set; } = "";
         public List<TienDoLay> Cac { get; set; } = new();
     }
 
@@ -89,7 +94,8 @@ namespace KT2000.Api.Services
         // tận pha nạp vì người dùng chọn nó ở cùng một thanh nút với nút Lấy.
         public PhienLay BatDauPhien(List<(Guid Id, string Code)> dsDonVi,
                                     int nam, int thangBd, int thangKt, string huong,
-                                    bool xoaTruocKhiGhi, string nguoiChay)
+                                    bool xoaTruocKhiGhi, string nguoiChay,
+                                    bool tangDan = false)
         {
             if (!_khoaPhien.Wait(0))
                 throw new ArgumentException("Đang có phiên lấy hóa đơn chạy dở — chờ xong hoặc bấm Dừng");
@@ -98,9 +104,15 @@ namespace KT2000.Api.Services
             {
                 KiemTraCauHinh();
 
+                // Chuẩn hóa MỘT LẦN ở cửa vào rồi dùng biến này xuyên suốt. Để mỗi chỗ
+                // tự ?? "vao" thì sớm muộn có chỗ quên, và hướng lệch nhau giữa phiên
+                // với tiến trình con là loại lỗi rất khó nhìn ra.
+                huong = string.IsNullOrWhiteSpace(huong) ? "vao" : huong.Trim().ToLowerInvariant();
+
                 var phien = new PhienLay
                 {
                     DangChay = true, NguoiChay = nguoiChay, BatDau = DateTime.Now,
+                    Huong = huong,
                 };
                 foreach (var dv in dsDonVi)
                     for (int t = thangBd; t <= thangKt; t++)
@@ -113,7 +125,8 @@ namespace KT2000.Api.Services
                 _cts = new CancellationTokenSource();
                 var token = _cts.Token;
                 // Chạy nền, KHÔNG await — API trả về ngay, giao diện hỏi tiến độ sau
-                _ = Task.Run(() => ChayTuanTu(phien, huong, xoaTruocKhiGhi, nguoiChay, token));
+                _ = Task.Run(() => ChayTuanTu(phien, huong, xoaTruocKhiGhi, nguoiChay,
+                                              tangDan, token));
                 return phien;
             }
             catch
@@ -144,7 +157,8 @@ namespace KT2000.Api.Services
             ?? Path.Combine(AppContext.BaseDirectory, "tools", "TRA_CUU_HDDT_2_0.py");
 
         private async Task ChayTuanTu(PhienLay phien, string huong, bool xoaTruoc,
-                                      string nguoiChay, CancellationToken token)
+                                      string nguoiChay, bool tangDan,
+                                      CancellationToken token)
         {
             try
             {
@@ -156,7 +170,7 @@ namespace KT2000.Api.Services
                         muc.ThongDiep = "Người dùng đã dừng phiên";
                         continue;
                     }
-                    await ChayMotLuot(muc, huong, xoaTruoc, nguoiChay, token);
+                    await ChayMotLuot(muc, huong, xoaTruoc, nguoiChay, tangDan, token);
                 }
             }
             catch (Exception ex)
@@ -171,7 +185,8 @@ namespace KT2000.Api.Services
         }
 
         private async Task ChayMotLuot(TienDoLay muc, string huong, bool xoaTruoc,
-                                       string nguoiChay, CancellationToken token)
+                                       string nguoiChay, bool tangDan,
+                                       CancellationToken token)
         {
             muc.TrangThai = "dang_chay";
             muc.BatDau = DateTime.Now;
@@ -235,6 +250,10 @@ namespace KT2000.Api.Services
                 "--events", Path.Combine(jobDir, "events.jsonl"),
                 "--stagedir", Path.Combine(jobDir, "stage"),
             }) psi.ArgumentList.Add(a);
+
+            // [ĐANG THỬ] chế độ tăng dần: script hợp nhất với Excel lần trước rồi bỏ tải
+            // những hóa đơn đã có XML. Không truyền cờ thì script chạy y hệt trước đây.
+            if (tangDan) psi.ArgumentList.Add("--tang_dan");
 
             string? xmlMap = _config["Paths:XmlMap"];
             if (!string.IsNullOrWhiteSpace(xmlMap))

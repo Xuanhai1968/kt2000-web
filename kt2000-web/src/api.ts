@@ -293,16 +293,21 @@ export interface PhienLay {
   dangChay: boolean;
   nguoiChay: string | null;
   batDau: string | null;
+  // Hướng người dùng yêu cầu lúc bấm Lấy — để màn Đầu vào và Đầu ra không hiện
+  // tiến độ của nhau. Cả hệ thống chỉ có MỘT phiên chạy tại một thời điểm.
+  huong: HuongLay | "";
   cac: TienDoLay[];
 }
 
 // NT-03: một nút duy nhất — lấy xong backend nạp luôn, nên xoaTruocKhiGhi (lựa chọn
 // của pha nạp) phải gửi kèm ngay từ lúc bắt đầu.
+// tangDan [ĐANG THỬ]: bật cờ --tang_dan của script — bỏ tải hóa đơn đã có XML.
+// Mặc định false để nút "Lấy hóa đơn điện tử" thường vẫn chạy đầy đủ như cũ.
 export const fetchStart = (
   tenantIds: string[], nam: number, thangBd: number, thangKt: number,
-  huong: HuongLay, xoaTruocKhiGhi: boolean
+  huong: HuongLay, xoaTruocKhiGhi: boolean, tangDan = false
 ) => api.post<PhienLay>("/admin/fetch-start",
-      { tenantIds, nam, thangBd, thangKt, huong, xoaTruocKhiGhi });
+      { tenantIds, nam, thangBd, thangKt, huong, xoaTruocKhiGhi, tangDan });
 
 export const fetchProgress = () => api.get<PhienLay>("/admin/fetch-progress");
 export const fetchStop = () => api.post("/admin/fetch-stop");
@@ -316,6 +321,9 @@ export interface MatHang {
   donGia: number;
   thanhTien: number;
   thueSuat: string;
+  // TChat của TCT: "1" hàng hóa/dịch vụ · "2" khuyến mại · "3" CHIẾT KHẤU thương mại
+  // · "4" ghi chú. Dòng "3" ghi thành tiền DƯƠNG nhưng bản chất là TRỪ.
+  tinhChat: string;
 }
 
 // Một hóa đơn còn nằm lại raw\ — dựng từ file XML, kèm lý do bị giữ lại
@@ -334,6 +342,7 @@ export interface HoaDonConLai {
   tienHang: number;
   tienVat: number;
   tongTien: number;
+  tienCk: number;        // TToan/TTCKTMai — chiết khấu thương mại toàn hóa đơn
   lyDo: string;
   coTrongExcel: boolean; // false = file lạc, không có dòng nào trong Excel tổng
   matHangs: MatHang[];

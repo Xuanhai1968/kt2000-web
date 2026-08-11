@@ -98,7 +98,11 @@ def build_ds_hd_tu_excel(excel_path, header_row=6):
         return re.sub(r"\s+", " ", str(x)).strip().lower() if x is not None else ""
 
     want = {
-        "khmshdon": ["ky hieu mau so", "ky hiệu mẫu số"],
+        # "ký" CÓ dấu sắc — header that la "Ky hieu mau so" viet co dau day du. Ban port
+        # dau tien lam roi dau o chu nay, the la khong khop cot nao, build_ds_hd_tu_excel
+        # luon nem loi va luon quay ve search: ca hai cai loi (bo search, va tang dan)
+        # deu am tham khong chay, ma nhin ben ngoai khong thay gi khac.
+        "khmshdon": ["ky hieu mau so", "ký hiệu mẫu số"],
         "khhdon":   ["ky hieu hoa don", "ký hiệu hóa đơn"],
         "shdon":    ["so hoa don", "số hóa đơn"],
         "nbmst":    ["mst nguoi ban/mst nguoi xuat hang",
@@ -429,10 +433,291 @@ def extract_thang_from_filename(file_path):
         return m.group(1)
     return ""
 ###############################################
-def them_cot_xml_path(excel_path, xml_paths, header_row=6, col_khhd="Ký hiệu hóa đơn", col_shd="Số hóa đơn", col_moi="Đường dẫn XML"):
+# =========================
+# LAY TANG DAN (--tang_dan)
+# =========================
+# Excel danh sach cua cong = "cong dang co gi". Hai cot ta tu them vao chinh file do
+# = "ta da lam gi". Moi luot chay hop nhat hai thu ay thanh MOT file, nen khong bao
+# gio phai giu hai ban roi lo chung lech nhau.
+COT_DUONG_DAN = "Đường dẫn XML"
+COT_KET_QUA = "Kết quả tải"
+
+KQ_KHONG_GOC = "KHÔNG CÓ GỐC"                  # HTTP 500 - cong khong giu ban goc
+KQ_MAT_TREN_CONG = "KHÔNG CÒN TRÊN CỔNG"  # luot truoc co, luot nay bien mat
+
+# Lech o nhung cot NAY = hoa don doi ban chat -> phai tai lai.
+# Co y KHONG so moi cot: cong chi can doi mot thu vat (viet hoa ten nguoi ban, doi
+# kieu luu so) la toan bo hoa don bi coi la moi va tai lai tu dau - dung cai ta dang
+# tranh, ma lai xay ra am tham. Da dinh dung bay nay mot lan khi chay thu.
+COT_DOI_BAN_CHAT = [
+    "Trạng thái hóa đơn",
+    "Tổng tiền chưa thuế",
+    "Tổng tiền thuế",
+    "Tổng tiền chiết khấu thương mại",
+    "Tổng tiền thanh toán",
+]
+
+_C_KHHD = "Ký hiệu hóa đơn"
+_C_SOHD = "Số hóa đơn"
+
+
+def _o(v):
+    """Gia tri o -> chuoi chuan. Cong ghi o trong bang dau '-', phai coi nhu rong."""
+    if v is None:
+        return ""
+    t = str(v).strip()
+    return "" if t == "-" else t
+
+
+def _bang_nhau(a, b):
+    """So hai o. SO phai so nhu SO: cung mot con so nhung file tho tu cong luu kieu
+    float ('214072722.0') con file da qua openpyxl luu kieu khac ('214072722')."""
+    if a == b:
+        return True
+    try:
+        return abs(float(a) - float(b)) < 0.01
+    except (TypeError, ValueError):
+        return a.strip().casefold() == b.strip().casefold()
+
+
+def _ban_do_cot(ws, header_row=6):
+    return {_o(ws.cell(header_row, c).value): c
+            for c in range(1, ws.max_column + 1) if _o(ws.cell(header_row, c).value)}
+
+
+def _bao_dam_cot(ws, ten, cot, header_row=6):
+    """Chi so cot 'ten'; chua co thi them vao cuoi. Phai tim theo TEN truoc, khong thi
+    moi luot hop nhat lai de them mot cot trung ten nua."""
+    if ten in cot:
+        return cot[ten]
+    c = ws.max_column + 1
+    ws.cell(header_row, c, ten)
+    cot[ten] = c
+    return c
+
+
+def _khoa_dong(ws, r, cot):
+    kh = _o(ws.cell(r, cot[_C_KHHD]).value)
+    so = _o(ws.cell(r, cot[_C_SOHD]).value)
+    return (kh, so) if kh and so else None
+
+
+def hop_nhat_excel(duong_dan_cu, noi_dung_moi, thang, job_dir, run_log, header_row=6):
+    """Hop nhat Excel VUA TAI (bytes) voi file dang co, ghi de len chinh ten cu.
+
+    Ban MOI lam goc (no la su that ve cong HIEN GIO), roi chep hai cot chu thich cua
+    ban cu sang. Tra ve dict thong ke, hoac None neu khong hop nhat duoc - khi do
+    nguoi goi ghi thang bytes va chay day du nhu cu.
     """
-    Mo file Excel tai ve tu server, them 1 cot 'Duong dan XML' vao cuoi header,
-    khop theo (khhd, shd) voi xml_paths dict de dien duong dan.
+    import shutil
+    # File tam PHAI co duoi .xlsx (openpyxl tu choi duoi la, khong doc duoc), nhung
+    # tien to '~tam_' de no khong lot vao glob("HD_*.xlsx") neu chuong trinh chet giua
+    # chung va bo lai rac.
+    def _tam(nhan):
+        return os.path.join(os.path.dirname(duong_dan_cu),
+                            "~tam_" + nhan + "_" + os.path.basename(duong_dan_cu))
+
+    tam_moi = _tam("moi")
+    with open(tam_moi, "wb") as f:
+        f.write(noi_dung_moi)
+
+    try:
+        # KHONG dung read_only: Excel THO tu cong khong khai the <dimension>, o che do
+        # read_only openpyxl bao bang chi co 1 dong 1 cot - doc ra rong ma khong bao loi.
+        wb_cu = openpyxl.load_workbook(duong_dan_cu, data_only=True)
+        ws_cu = wb_cu.active
+        cot_cu = _ban_do_cot(ws_cu, header_row)
+        if _C_KHHD not in cot_cu or _C_SOHD not in cot_cu:
+            raise ValueError("file cu thieu cot khoa")
+
+        cu, trung = {}, 0
+        for r in range(header_row + 1, ws_cu.max_row + 1):
+            k = _khoa_dong(ws_cu, r, cot_cu)
+            if not k:
+                continue
+            if k in cu:
+                trung += 1
+            cu[k] = {t: _o(ws_cu.cell(r, c).value) for t, c in cot_cu.items()}
+        wb_cu.close()
+
+        # Trung khoa = hai hoa don khac nhau doi chung mot ten. Hop nhat luc nay la ghi
+        # chu thich SAI VINH VIEN vao file. Tha chay cham nhu cu con hon.
+        if trung:
+            append_run_log(run_log, f"HOP_NHAT_BO_QUA trung_khoa={trung} -> chay day du")
+            return None
+
+        wb_moi = openpyxl.load_workbook(tam_moi)
+        ws_moi = wb_moi.active
+        cot_moi = _ban_do_cot(ws_moi, header_row)
+        if _C_KHHD not in cot_moi or _C_SOHD not in cot_moi:
+            raise ValueError("file moi thieu cot khoa - cong da doi cau truc?")
+
+        c_dd = _bao_dam_cot(ws_moi, COT_DUONG_DAN, cot_moi, header_row)
+        c_kq = _bao_dam_cot(ws_moi, COT_KET_QUA, cot_moi, header_row)
+
+        giu, doi_ban_chat, thay_doi, con_o_moi = 0, 0, [], set()
+
+        for r in range(header_row + 1, ws_moi.max_row + 1):
+            k = _khoa_dong(ws_moi, r, cot_moi)
+            if not k:
+                continue
+            con_o_moi.add(k)
+            c = cu.get(k)
+            if not c:
+                continue      # hoa don MOI - de trong chu thich, se tai
+
+            khac = [t for t in COT_DOI_BAN_CHAT
+                    if t in cot_moi and t in c
+                    and not _bang_nhau(_o(ws_moi.cell(r, cot_moi[t]).value), c[t])]
+            if khac:
+                # Doi ban chat -> KHONG chep chu thich sang, de no duoc tai lai
+                doi_ban_chat += 1
+                thay_doi.append((k, [(t, c[t], _o(ws_moi.cell(r, cot_moi[t]).value))
+                                     for t in khac]))
+                continue
+
+            ws_moi.cell(r, c_dd, c.get(COT_DUONG_DAN, ""))
+            ws_moi.cell(r, c_kq, c.get(COT_KET_QUA, ""))
+            if c.get(COT_DUONG_DAN) or c.get(COT_KET_QUA) == KQ_KHONG_GOC:
+                giu += 1
+
+        # Dong chi con o ban cu: GIU LAI, khong xoa. Nguyen nhan pho bien khong phai
+        # cong xoa hoa don, ma la KHOANG NGAY hai luot khac nhau - xoa di la mat sach
+        # chu thich cua ca thang, roi luot sau tai lai tu dau, am tham.
+        mat = 0
+        for k, c in cu.items():
+            if k in con_o_moi:
+                continue
+            mat += 1
+            r = ws_moi.max_row + 1
+            for t, v in c.items():
+                if t in cot_moi:
+                    ws_moi.cell(r, cot_moi[t], v)
+            ws_moi.cell(r, c_kq, c.get(COT_KET_QUA) or KQ_MAT_TREN_CONG)
+
+        tam_ghi = _tam("ghi")
+        wb_moi.save(tam_ghi)
+        wb_moi.close()
+        os.replace(tam_ghi, duong_dan_cu)
+
+        if thay_doi:
+            # Ghi lai NHUNG KHONG dong vao database. Cau hoi "hoa don da nap bi dieu
+            # chinh thi xu ly ban cu the nao" con dang cho ke toan tra loi; khong ghi
+            # bay gio thi toi luc co cau tra loi, lich su da troi mat.
+            try:
+                with open(os.path.join(job_dir, f"THAY_DOI_T{thang}.txt"), "a",
+                          encoding="utf-8") as f:
+                    f.write("--- " + datetime.datetime.now().isoformat(timespec="seconds")
+                            + " | " + os.path.basename(duong_dan_cu) + "\n")
+                    for k, cac in thay_doi:
+                        f.write("  " + k[0] + "/" + k[1] + "\n")
+                        for t, cu_v, moi_v in cac:
+                            f.write("      " + t + ": '" + cu_v + "' -> '" + moi_v + "'\n")
+            except Exception as e:
+                append_run_log(run_log, f"GHI_THAY_DOI_LOI {short_exc(e)}")
+
+            # Giu ban tai THO cua nhung ngay CO thay doi, de sau con doi chieu duoc
+            # "hom do cong noi gi". Ngay khong thay doi thi bo, khoi phinh o dia.
+            try:
+                ls = os.path.join(job_dir, "lichsu")
+                os.makedirs(ls, exist_ok=True)
+                dau = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                shutil.copy2(tam_moi, os.path.join(
+                    ls, os.path.basename(duong_dan_cu)[:-5] + "_" + dau + ".xlsx"))
+            except Exception as e:
+                append_run_log(run_log, f"LUU_LICH_SU_LOI {short_exc(e)}")
+
+        return {"giu": giu, "doi_ban_chat": doi_ban_chat, "mat": mat,
+                "tong": len(con_o_moi)}
+
+    except Exception as e:
+        append_run_log(run_log, f"HOP_NHAT_LOI {short_exc(e)} -> chay day du")
+        return None
+    finally:
+        try:
+            os.remove(tam_moi)
+        except OSError:
+            pass
+
+
+def loc_hoa_don_can_tai(ds_hd, excel_path, run_log, header_row=6):
+    """Chia ds_hd thanh (can_tai, dung_lai_file_cu, so_bo_qua, so_khong_goc).
+
+    'dung_lai_file_cu' = hoa don KHONG can tai nhung file XML VAN CON tren dia. Bat
+    buoc phai tra ve: Excel TONG duoc dung LAI TU DAU moi luot chay, chi tu nhung XML
+    di qua hang doi chuyen doi. Bo tai ma khong day file cu vao hang doi thi hoa don
+    bien mat khoi Excel tong -> buoc nap khong nhin thay -> file nam ly lai trong raw\\.
+    Do dung la thu da xay ra: bo qua 126 hoa don, Excel tong tut tu 126 xuong 27 dong.
+
+    Cai dat tien la KHONG GOI MANG (moi request con kem sleep 1 giay). Doc lai file
+    XML co san tren dia thi nhanh, khong dang de danh doi tinh day du cua Excel tong.
+
+    File khong con tren dia = hoa don DA NAP THANH CONG tu truoc: MoveArtifacts chi
+    chay sau khi nap xong, nen file bien mat khoi raw\\ chinh la bang chung da vao so.
+    Khong tai lai, khong dua vao Excel tong — no da nam trong database roi.
+
+    Doc hong thi tra ve NGUYEN ds_hd. Sai lam te nhat o day la BO SOT hoa don, khong
+    phai tai thua.
+    """
+    try:
+        wb = openpyxl.load_workbook(excel_path, data_only=True)
+        ws = wb.active
+        cot = _ban_do_cot(ws, header_row)
+        if COT_DUONG_DAN not in cot and COT_KET_QUA not in cot:
+            wb.close()
+            return ds_hd, [], 0, 0
+
+        duong_dan, khong_goc = {}, set()
+        for r in range(header_row + 1, ws.max_row + 1):
+            k = _khoa_dong(ws, r, cot)
+            if not k:
+                continue
+            if COT_DUONG_DAN in cot:
+                dd = _o(ws.cell(r, cot[COT_DUONG_DAN]).value)
+                if dd:
+                    duong_dan[k] = dd
+            if COT_KET_QUA in cot and _o(ws.cell(r, cot[COT_KET_QUA]).value) == KQ_KHONG_GOC:
+                khong_goc.add(k)
+        wb.close()
+
+        can_tai, dung_lai, da_nap_truoc = [], [], 0
+        for h in ds_hd:
+            k = (str(h["khhdon"]).strip(), str(h["shdon"]).strip())
+            if k in khong_goc:
+                continue                      # ket qua cuoi cung, dung thu lai
+            dd = duong_dan.get(k)
+            if not dd:
+                can_tai.append(h)
+            elif os.path.exists(dd):
+                dung_lai.append((h, dd))      # con file -> van phai dua vao Excel tong
+            else:
+                # CO duong dan nhung MAT file = DA NAP XONG tu luot truoc.
+                # Suy luan nay dung vi MoveArtifacts CHI chay sau khi nap THANH CONG —
+                # file bien mat khoi raw\ chinh la bang chung da vao so. (Chot voi
+                # Truong 11/08: cot 'Duong dan XML' du tin cay, chap nhan rui ro con
+                # lai la ai do xoa file bang tay.)
+                da_nap_truoc += 1
+
+        if da_nap_truoc:
+            append_run_log(run_log,
+                f"TANG_DAN_DA_NAP {da_nap_truoc} hoa don da nap tu truoc (file da bi doi di)")
+        return can_tai, dung_lai, len(ds_hd) - len(can_tai), len(khong_goc)
+    except Exception as e:
+        append_run_log(run_log, f"LOC_CAN_TAI_LOI {short_exc(e)} -> tai tat")
+        return ds_hd, [], 0, 0
+
+
+def them_cot_xml_path(excel_path, xml_paths, header_row=6, col_khhd="Ký hiệu hóa đơn", col_shd="Số hóa đơn", col_moi="Đường dẫn XML", ket_qua_tai=None):
+    """
+    Mo file Excel tai ve tu server, dien cot 'Duong dan XML' (va 'Ket qua tai'),
+    khop theo (khhd, shd).
+
+    Hai thay doi so voi ban dau, deu bat buoc cho che do tang dan:
+      - Tim cot theo TEN truoc khi them moi. Ban cu luon them vao cuoi, nen file da
+        hop nhat se moc them mot cot trung ten sau moi luot chay.
+      - Chi ghi de khi CO gia tri moi. Ban cu ghi xml_paths.get(key, "") cho moi dong,
+        tuc la xoa trang duong dan cua nhung hoa don da bi bo qua o luot nay - luot
+        sau lai tai lai tu dau, dung cai ta dang tranh.
     """
     try:
         wb = openpyxl.load_workbook(excel_path)
@@ -457,9 +742,9 @@ def them_cot_xml_path(excel_path, xml_paths, header_row=6, col_khhd="Ký hiệu 
             wb.close()
             return False
 
-        # Them cot moi vao cuoi
-        col_xml = max_col + 1
-        ws.cell(row=header_row, column=col_xml, value=col_moi)
+        cot_hien_co = _ban_do_cot(ws, header_row)
+        col_xml = _bao_dam_cot(ws, col_moi, cot_hien_co, header_row)
+        col_kq = _bao_dam_cot(ws, COT_KET_QUA, cot_hien_co, header_row)
 
         # Duyet tung dong data, khop va dien path
         count_match = 0
@@ -469,10 +754,14 @@ def them_cot_xml_path(excel_path, xml_paths, header_row=6, col_khhd="Ký hiệu 
             if khhd is None or shd is None:
                 continue
             key = (str(khhd).strip(), str(shd).strip())
-            xml_path = xml_paths.get(key, "")
-            ws.cell(row=r, column=col_xml, value=xml_path)
+            # CHI ghi de khi co gia tri moi — dong bi bo qua o luot nay phai giu nguyen
+            # chu thich cu, khong thi luot sau tai lai tu dau.
+            xml_path = xml_paths.get(key)
             if xml_path:
+                ws.cell(row=r, column=col_xml, value=xml_path)
                 count_match += 1
+            if ket_qua_tai and key in ket_qua_tai:
+                ws.cell(row=r, column=col_kq, value=ket_qua_tai[key])
 
         wb.save(excel_path)
         wb.close()
@@ -1234,7 +1523,7 @@ class tra_cuu_hdt:
 
     # def xuat_hoa_don(self, mst_value, password_value, thang_bd, thang_kt, nam, save_dir, MA_DONVI, job_id,status, events, stagedir, loai_xuat="all"):
 
-    def xuat_hoa_don(self, mst_value, password_value,tu_ngay,den_ngay,thang_bd, thang_kt, nam, save_dir, MA_DONVI, job_id, status, events, stagedir, loai_xuat="all", xml_map_path=None):    
+    def xuat_hoa_don(self, mst_value, password_value,tu_ngay,den_ngay,thang_bd, thang_kt, nam, save_dir, MA_DONVI, job_id, status, events, stagedir, loai_xuat="all", xml_map_path=None, tang_dan=False):
         paths = make_job_paths(save_dir, job_id, MA_DONVI)
 
         status_path = status
@@ -1860,8 +2149,23 @@ class tra_cuu_hdt:
                             time.sleep(3)
                         if resp is not None and resp.status_code == 200:
                             save_path = os.path.join(sub_dir, ten_file)
-                            with open(save_path, "wb") as f:
-                                f.write(resp.content)
+                            # Che do tang dan: hop nhat ban vua tai voi ban dang co, giu
+                            # lai hai cot chu thich. Hop nhat that bai (khong co file cu,
+                            # trung khoa, cong doi cau truc...) thi ghi thang nhu cu -
+                            # cham hon nhung khong bao gio bo sot hoa don.
+                            tk_hop_nhat = None
+                            if tang_dan and os.path.exists(save_path):
+                                tk_hop_nhat = hop_nhat_excel(
+                                    save_path, resp.content, thang, paths["job_dir"], run_log)
+                            if tk_hop_nhat is None:
+                                with open(save_path, "wb") as f:
+                                    f.write(resp.content)
+                            else:
+                                append_run_log(run_log,
+                                    f"HOP_NHAT {ten_file} tong={tk_hop_nhat['tong']} "
+                                    f"giu={tk_hop_nhat['giu']} "
+                                    f"doi_ban_chat={tk_hop_nhat['doi_ban_chat']} "
+                                    f"mat={tk_hop_nhat['mat']}")
                             #print(f"Da luu: {save_path}")
                             events.log("EXCEL",message=f"Da luu: {save_path}")
                             append_run_log(run_log, f"EXCEL_SAVED {save_path}")
@@ -1897,6 +2201,35 @@ class tra_cuu_hdt:
                                 ds_hd = []
                                 da_co_tu_excel = False
                         state["nguon_ds"] = nguon_ds
+
+                        # Bo nhung hoa don DA co XML hoac DA xac nhan khong co goc.
+                        # Chi loc khi danh sach den TU EXCEL: neu phai quay ve search thi
+                        # file Excel khong dang tin, loc theo no la bo sot.
+                        if tang_dan and da_co_tu_excel:
+                            ds_hd, dung_lai, so_bo, so_khong_goc = loc_hoa_don_can_tai(
+                                ds_hd, excel_ds_path, run_log)
+
+                            # Hoa don bo tai nhung file XML van con tren dia: van PHAI
+                            # day qua hang doi chuyen doi, khong thi no vang mat khoi
+                            # Excel tong va buoc nap khong nhin thay -> file nam ly lai
+                            # trong raw\. Cai ta tiet kiem la LUOT GOI MANG, khong phai
+                            # cong doan doc file.
+                            for hd_cu, dd_cu in dung_lai:
+                                mst_ph = str(hd_cu.get('nbmst') or mst_value).strip()
+                                xml_queue.put((
+                                    dd_cu,
+                                    f"{loai['huong']}_{mst_ph}_{hd_cu['khhdon']}_{hd_cu['shdon']}",
+                                    MA_DONVI, mst_value, loai["huong"], thang, nam,
+                                    hd_cu['khhdon'], hd_cu['shdon'],
+                                    os.path.splitext(os.path.basename(dd_cu))[0]
+                                ))
+
+                            append_run_log(run_log,
+                                f"TANG_DAN bo_qua={so_bo} (khong_co_goc={so_khong_goc}, "
+                                f"dung_lai_file_cu={len(dung_lai)}) con_tai={len(ds_hd)}")
+                            status.write({**state, "state": "EXCEL",
+                                          "message": f"Tăng dần: dùng lại {len(dung_lai)} file có sẵn, "
+                                                     f"tải mới {len(ds_hd)}"})
 
                         while not da_co_tu_excel:
                             search_url = f"{loai['search_url']}?sort=tdlap:desc&size=50&search={search_param}"
@@ -1958,6 +2291,10 @@ class tra_cuu_hdt:
                         thanh_cong = 0
                         ds_loi = []
                         xml_paths_cho_excel = {}  # { (khhd, shd): xml_path }
+                        # { (khhd, shd): "KHÔNG CÓ GỐC" } — ket qua CUOI CUNG, khong phai
+                        # that bai tam thoi. Khong ghi lai thi 15-22% hoa don (nhom khong
+                        # ma: dien, nuoc, vien thong) bi thu lai moi ngay, mai mai.
+                        ket_qua_tai = {}
                         for i, hd in enumerate(ds_hd, 1):
                             heartbeat(
                                 f"Tai XML {loai['huong']}{loai['hau_to']} T{thang}: {i}/{len(ds_hd)}",
@@ -1994,6 +2331,12 @@ class tra_cuu_hdt:
                                     ))
                             else:
                                 ds_loi.append(kq)
+                                # HTTP 500 "khong ton tai ho so goc" la ket qua CUOI CUNG,
+                                # khong phai loi tam thoi: cong khong giu ban goc cho hoa
+                                # don khong ma. Danh dau de khoi thu lai moi ngay.
+                                if la_khong_co_goc(kq.get("lydo", "")):
+                                    ket_qua_tai[(str(hd['khhdon']).strip(),
+                                                 str(hd['shdon']).strip())] = KQ_KHONG_GOC
                             if i % 10 == 0 or i == len(ds_hd):
                                 #print(f"   Da tai {i}/{len(ds_hd)} (OK: {thanh_cong}, Loi: {len(ds_loi)}, Queue convert: {xml_queue.qsize()})")
                                 # Tach 500-khong-co-goc khoi loi that ngay tu day, de nguoi
@@ -2080,7 +2423,7 @@ class tra_cuu_hdt:
                         # Them cot 'Duong dan XML' vao file Excel tai tu server
                         excel_server_path = os.path.join(sub_dir, ten_file)
                         if os.path.exists(excel_server_path):
-                            them_cot_xml_path(excel_server_path, xml_paths_cho_excel)
+                            them_cot_xml_path(excel_server_path, xml_paths_cho_excel, ket_qua_tai=ket_qua_tai)
 
                         result.append(sub_dir)
                     except Exception as e_loai:
@@ -2360,6 +2703,10 @@ def parse_args(argv):
     p.add_argument("--xml_map", required=False, help="Duong dan file XML_MAP.xlsx")
     p.add_argument("--tu_ngay", required=False, help="Tu ngay")
     p.add_argument("--den_ngay", required=False, help="Den ngay")
+    # MAC DINH TAT. Khong truyen thi script chay y het truoc day, tung dong mot.
+    # Day la dieu kien de thu che do moi ma khong danh cuoc luot chay that.
+    p.add_argument("--tang_dan", action="store_true",
+                   help="Bo tai lai nhung hoa don da co XML (hop nhat voi Excel lan truoc)")
     args = p.parse_args(argv)
     # Va #1: uu tien bien moi truong HDDT_PASSWORD (tham so dong lenh lo trong Task Manager)
     if not args.password:
@@ -2373,7 +2720,15 @@ def run_cli(args):
 
     ma_donvi_for_log = args.ma_donvi if args.ma_donvi else "UNKNOWN_DV"
     job_id_for_log = args.job_id if args.job_id else f"NOJOB_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-    run_log = os.path.join(base_for_log, ma_donvi_for_log, job_id_for_log, "run.log")
+    # Dung CHUNG make_job_paths voi xuat_hoa_don, khong tu ghep duong dan o day.
+    # Ban cu ghep tay <save_dir>\<MA>\<job_id>\run.log — THIEU tang NAM<nam>, nen moi
+    # luot chay de lai mot thu muc chi chua dung mot file run.log nam canh NAM2026,
+    # trong khi run.log that nam trong NAM2026\... Hai file cung ten, hai cho khac nhau.
+    try:
+        run_log = make_job_paths(base_for_log, job_id_for_log, ma_donvi_for_log)["run_log"]
+    except Exception:
+        # Ghi log som la de bat loi khoi dong — no khong duoc phep tu lam chet chuong trinh
+        run_log = os.path.join(base_for_log, ma_donvi_for_log, job_id_for_log, "run.log")
 
     append_run_log(run_log, f"CLI_START pid={os.getpid()}")
     append_run_log(run_log, f"ARGV={' '.join(sys.argv)}")
@@ -2411,7 +2766,8 @@ def run_cli(args):
             stagedir=args.stagedir,
             xml_map_path=args.xml_map,
             tu_ngay=args.tu_ngay,
-            den_ngay=args.den_ngay
+            den_ngay=args.den_ngay,
+            tang_dan=args.tang_dan
         )
 
         append_run_log(run_log, f"XUAT_HOA_DON_RETURN {repr(res)[:1000]}")

@@ -12,6 +12,7 @@ import type {
   AdminTenant, LeftoverInfo, HuongLay, HoaDonConLai, MatHang, PhienLay,
 } from "../api";
 import { useAuth } from "../AuthContext";
+import { mauDonVi, damDonVi } from "../theme/donViColors";
 import "./luoi-gon.css";
 import "./mau-huong.css";
 
@@ -21,6 +22,21 @@ const KHOA_CA_HAI = "kt2000_lay_hd_ca_vao_va_ra";
 
 // Hai màn Đầu vào / Đầu ra dùng CHUNG ruột này, chỉ khác hướng mặc định.
 interface Props { huongMacDinh: "vao" | "ra" }
+
+// TChat = 3 là dòng CHIẾT KHẤU thương mại. XML của TCT ghi thành tiền DƯƠNG, nhưng
+// bản chất nó TRỪ vào tiền hàng. Cộng thẳng cả 12 dòng là sai đúng 2 lần chiết khấu:
+// một lần do thiếu phép trừ, một lần do cộng nhầm.
+//   Ca thật C26TLC/10: Σ 12 dòng = 128.929.583, TgTCThue = 120.538.935,
+//   chênh 8.390.648 = 2 × 4.195.324 (đúng số TTCKTMai).
+const laDongChietKhau = (m: MatHang) => m.tinhChat === "3";
+
+const sumLine = (hd: HoaDonConLai) =>
+  hd.matHangs.reduce((s, m) => s + (laDongChietKhau(m) ? -m.thanhTien : m.thanhTien), 0);
+
+// Dòng hàng hóa THẬT — bỏ dòng chiết khấu. Chiết khấu đã có cột riêng ở bảng trên và
+// đã được trừ trong sumLine, để nó nằm chung với hàng hóa chỉ tổ đọc nhầm thành một
+// mặt hàng giá 4 triệu.
+const dongHangThat = (hd: HoaDonConLai) => hd.matHangs.filter((m) => !laDongChietKhau(m));
 
 // ============ RUỘT 1: console NỘI BỘ (MDN_NB) — FRM_LAY_HDDT ============
 function ConsoleLayHoaDon({ huongMacDinh }: Props) {
@@ -177,15 +193,19 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
     }
   };
 
-  const batDauLayHd = async () => {
+  // tangDan [ĐANG THỬ]: bỏ tải những hóa đơn đã có XML từ lượt trước.
+  // Hai nút gọi CHUNG hàm này, chỉ khác một cờ — để không có đường nào lệch nhau.
+  const batDauLayHd = async (tangDan = false) => {
     if (selected.length === 0) return;
     if (denThang < tuThang) { message.error("Đến tháng phải ≥ Từ tháng"); return; }
     setDangBatDau(true);
     try {
       const r = await fetchStart(
-        selected as string[], namLamViec, tuThang, denThang, huong, xoaTruoc);
+        selected as string[], namLamViec, tuThang, denThang, huong, xoaTruoc, tangDan);
       setPhien(r.data);
-      message.success(`Đã xếp hàng ${r.data.cac.length} lượt — lấy xong sẽ tự nạp vào database`);
+      message.success(`Đã xếp hàng ${r.data.cac.length} lượt`
+        + (tangDan ? " — CHỈ tải phần mới, xong sẽ tự nạp"
+                   : " — lấy xong sẽ tự nạp vào database"));
     } catch (e) {
       message.error(loiApi(e, "Không bắt đầu được phiên lấy HĐ"));
     } finally {
@@ -276,23 +296,35 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
     );
   };
 
-  // Màn nào chỉ hiện cột của hướng đó. Tích "Cả vào và ra" thì mới hiện đủ hai cột —
-  // lúc đó người dùng đang thật sự làm việc với cả hai chiều nên cần thấy cả hai.
-  const cotConLai = caHaiHuong
-    ? [
-        { title: "VÀO", width: 66, align: "center" as const,
-          render: (_: unknown, r: AdminTenant) => oDemFile(r, (i) => i.soVao) },
-        { title: "RA", width: 66, align: "center" as const,
-          render: (_: unknown, r: AdminTenant) => oDemFile(r, (i) => i.soRa) },
-      ]
-    : [
-        { title: laDauRa ? "RA" : "VÀO", width: 80, align: "center" as const,
-          render: (_: unknown, r: AdminTenant) =>
-            oDemFile(r, (i) => (laDauRa ? i.soRa : i.soVao)) },
-      ];
+  // LUÔN hiện cả hai cột, kể cả khi màn này chỉ lấy một hướng. Hai cột nói HIỆN
+  // TRẠNG trên đĩa: file đầu ra kẹt lại vẫn phải đập vào mắt dù đang đứng ở màn
+  // đầu vào — giấu đi thì tháng sau mới lòi ra, lúc đó không ai nhớ vì sao.
+  const cotConLai = [
+    { title: "VÀO", width: 66, align: "center" as const,
+      onHeaderCell: () => ({ title: "Hóa đơn ĐẦU VÀO còn kẹt ở raw\\VAO" }),
+      render: (_: unknown, r: AdminTenant) => oDemFile(r, (i) => i.soVao) },
+    { title: "RA", width: 66, align: "center" as const,
+      onHeaderCell: () => ({ title: "Hóa đơn ĐẦU RA còn kẹt ở raw\\RA" }),
+      render: (_: unknown, r: AdminTenant) => oDemFile(r, (i) => i.soRa) },
+  ];
 
   const tenMan = laDauRa ? "Hóa đơn GTGT đầu ra" : "Hóa đơn GTGT đầu vào";
+
+  // Phiên lấy là của TOÀN HỆ THỐNG (mỗi lần chỉ chạy một), nên hai màn Đầu vào và
+  // Đầu ra cùng hỏi một endpoint và cùng nhận về một bảng. Chỉ nhận phiên nào đúng
+  // hướng của màn này; "all" thì cả hai màn cùng nhận vì nó lấy cả hai chiều.
+  // Phiên cũ chưa có trường huong (backend đời trước) thì vẫn cho hiện, thà thừa
+  // còn hơn giấu mất tiến độ đang chạy thật.
+  const phienCuaManNay =
+    !phien ? null
+    : !phien.huong || phien.huong === "all" || phien.huong === huongMacDinh
+      ? phien
+      : null;
+
+  // Nút Lấy vẫn phải khóa khi CÓ BẤT KỲ phiên nào đang chạy, kể cả phiên của màn
+  // kia — backend chỉ cho một phiên, bấm nữa chỉ tổ ăn thông báo lỗi.
   const dangChay = !!phien?.dangChay;
+  const dangChayManNay = !!phienCuaManNay?.dangChay;
 
   return (
     <div className={laDauRa ? "huong-ra" : "huong-vao"}>
@@ -319,8 +351,16 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
 
           <Button size="small" type="primary" loading={dangBatDau}
                   disabled={selected.length === 0 || dangChay}
-                  onClick={batDauLayHd}>
+                  onClick={() => batDauLayHd(false)}>
             Lấy hóa đơn điện tử
+          </Button>
+          {/* [ĐANG THỬ] Nút riêng thay vì ô tích: bấm nút nào ra chế độ đó, không có
+              chuyện để quên trạng thái từ lần trước rồi tưởng đang chạy đầy đủ. */}
+          <Button size="small" loading={dangBatDau}
+                  disabled={selected.length === 0 || dangChay}
+                  onClick={() => batDauLayHd(true)}
+                  title="ĐANG THỬ — bỏ tải những hóa đơn đã có XML từ lượt trước, chỉ tải phần mới">
+            Lấy phần mới (thử)
           </Button>
           {dangChay && (
             <Popconfirm title="Dừng phiên đang chạy?"
@@ -383,16 +423,17 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
           pagination={false}
           scroll={{ y: 290 }}
           columns={[
+            // BR-GD-01: mã màu lấy từ theme/donViColors, không gõ hex tại chỗ
             { title: "Mã", dataIndex: "code", width: 150,
               render: (v: string, r: AdminTenant) =>
-                <span style={{ color: r.khaiQuy ? undefined : "#cf1322",
-                               fontWeight: r.khaiQuy ? undefined : 600 }}>{v}</span> },
+                <span style={{ color: mauDonVi(r), fontWeight: damDonVi(r) }}>{v}</span> },
             { title: "Tên đơn vị", dataIndex: "name",
               render: (v: string, r: AdminTenant) =>
-                <span style={{ color: r.khaiQuy ? undefined : "#cf1322" }}>{v}</span> },
+                <span style={{ color: mauDonVi(r) }}>{v}</span> },
             { title: "MST", dataIndex: "taxCode", width: 130 },
             { title: "Kỳ khai", dataIndex: "khaiQuy", width: 90,
-              render: (q: boolean) => q ? <Tag>Quý</Tag> : <Tag color="red">Tháng</Tag> },
+              render: (q: boolean) =>
+                q ? <Tag>Quý</Tag> : <Tag color="red">Tháng</Tag> },
             ...cotConLai,
           ]}
         />
@@ -410,17 +451,17 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
         )}
       </Card>
 
-      {phien && phien.cac.length > 0 && (
+      {phienCuaManNay && phienCuaManNay.cac.length > 0 && (
         <Card size="small" title="Tiến độ lấy và nạp hóa đơn">
           <Progress
             percent={Math.round(
-              (phien.cac.filter((x) => x.trangThai === "xong" || x.trangThai === "loi").length
-                / phien.cac.length) * 100)}
-            status={dangChay ? "active" : "normal"}
+              (phienCuaManNay.cac.filter((x) => x.trangThai === "xong" || x.trangThai === "loi").length
+                / phienCuaManNay.cac.length) * 100)}
+            status={dangChayManNay ? "active" : "normal"}
           />
           <Table
             className="luoi-gon" size="small" rowKey={(r) => `${r.tenantId}-${r.thang}`}
-            dataSource={phien.cac} pagination={false}
+            dataSource={phienCuaManNay.cac} pagination={false}
             scroll={{ x: 1420, y: 260 }}
             columns={[
               { title: "Đơn vị", dataIndex: "code", width: 140, fixed: "left" },
@@ -550,7 +591,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
           // KHÔNG dùng sticky: nó ghim tiêu đề theo cửa sổ, chồng chéo với khung cuộn
           // mà scroll.y tạo ra. Chỉ scroll.y là đủ — antd tự giữ tiêu đề đứng yên.
           locale={{ emptyText: <Empty description="Không đọc được hóa đơn nào trong raw\" /> }}
-          scroll={{ x: 1740, y: "calc(50vh - 94px)" }}
+          scroll={{ x: 1990, y: "calc(50vh - 94px)" }}
           onRow={(r: HoaDonConLai) => ({
             onClick: () => setChonFile(r.tenFile),
             style: {
@@ -559,20 +600,21 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
             },
           })}
           columns={[
-            { title: "Tháng", dataIndex: "thang", width: 70, fixed: "left" },
-            { title: "Hướng", dataIndex: "huong", width: 80,
-              render: (v: string) => <Tag color={v === "VAO" ? "red" : "blue"}>{v}</Tag> },
-            { title: "Ký hiệu", dataIndex: "khHd", width: 120,
+            { title: "Tháng", dataIndex: "thang", width: 60, fixed: "left" },
+            // Bỏ cột Hướng: tiêu đề modal đã ghi hướng rồi, lặp lại từng dòng chỉ tốn
+            // chỗ. Ký hiệu nới rộng vì độ dài không đoán trước được; Số HĐ và Ngày co
+            // lại vì đã có khuôn cố định (7 chữ số / yyyy-MM-dd).
+            { title: "Ký hiệu", dataIndex: "khHd", width: 170,
               render: (v: string, r: HoaDonConLai) => (
                 <Input size="small" value={v}
                        onChange={(e) => suaHoaDon(r.tenFile, { khHd: e.target.value })} />
               ) },
-            { title: "Số HĐ", dataIndex: "soHd", width: 120,
+            { title: "Số HĐ", dataIndex: "soHd", width: 92,
               render: (v: string, r: HoaDonConLai) => (
                 <Input size="small" value={v}
                        onChange={(e) => suaHoaDon(r.tenFile, { soHd: e.target.value })} />
               ) },
-            { title: "Ngày", dataIndex: "ngay", width: 130,
+            { title: "Ngày", dataIndex: "ngay", width: 112,
               render: (v: string, r: HoaDonConLai) => (
                 <Input size="small" value={v} placeholder="yyyy-MM-dd"
                        onChange={(e) => suaHoaDon(r.tenFile, { ngay: e.target.value })} />
@@ -582,14 +624,23 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                 r.huong === "VAO" ? `${r.tenBan} [${r.mstBan}]` : `${r.tenMua} [${r.mstMua}]` },
             { title: "Tiền hàng", dataIndex: "tienHang", width: 160,
               render: (v: number, r: HoaDonConLai) => (
-                <InputNumber size="small" controls={false} style={{ width: "100%" }} value={v}
+                <InputNumber size="small" controls={false} keyboard={false} style={{ width: "100%" }} value={v}
                              onChange={(x) => suaHoaDon(r.tenFile, { tienHang: x ?? 0 })} />
               ) },
             { title: "VAT", dataIndex: "tienVat", width: 150,
               render: (v: number, r: HoaDonConLai) => (
-                <InputNumber size="small" controls={false} style={{ width: "100%" }} value={v}
+                <InputNumber size="small" controls={false} keyboard={false} style={{ width: "100%" }} value={v}
                              onChange={(x) => suaHoaDon(r.tenFile, { tienVat: x ?? 0 })} />
               ) },
+            // Chiết khấu thương mại toàn hóa đơn (TToan/TTCKTMai). Hiện như mọi cột
+            // tiền khác — đã nhận ra nó là chiết khấu và đã trừ đúng thì không có gì
+            // để cảnh báo; tô đỏ chỉ khiến người đọc tưởng hóa đơn hỏng.
+            { title: "Chiết khấu", dataIndex: "tienCk", width: 140, align: "right",
+              render: (v: number) => v
+                ? <span title="Chiết khấu thương mại — đã trừ khi tính Σ line">
+                    {v.toLocaleString("vi-VN")}
+                  </span>
+                : <Typography.Text type="secondary">0</Typography.Text> },
             { title: "Tổng", dataIndex: "tongTien", width: 130, align: "right",
               render: (v: number) => <b>{v.toLocaleString("vi-VN")}</b> },
             // NT-05: cột "lệch bao nhiêu tiền" chuyển từ lưới chính về đây — lưới
@@ -598,7 +649,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
             // backend đã chấp nhận vẫn hiện đỏ ở đây.
             { title: "Lệch Σ line", width: 140, align: "right",
               render: (_: unknown, r: HoaDonConLai) => {
-                const sum = r.matHangs.reduce((s, x) => s + x.thanhTien, 0);
+                const sum = sumLine(r);
                 const lech = r.tienHang - sum;
                 return Math.abs(lech) < 10
                   ? <Typography.Text type="secondary">0</Typography.Text>
@@ -636,14 +687,22 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                   {hdDangChon.tenFile}
                 </Typography.Text>
                 {(() => {
-                  const sum = hdDangChon.matHangs.reduce((s, x) => s + x.thanhTien, 0);
+                  const sum = sumLine(hdDangChon);
                   const lech = hdDangChon.tienHang - sum;
-                  return lech === 0
+                  // Ngưỡng 10đ khớp SAI_SO_CHO_PHEP bên ImportService — không thì hóa
+                  // đơn backend đã nhận vẫn hiện đỏ ở đây, đọc như còn lỗi.
+                  return Math.abs(lech) < 10
                     ? <Tag color="green">Σ line khớp tiền hàng</Tag>
                     : <Tag color="red">
                         Σ line {sum.toLocaleString("vi-VN")} — lệch {lech.toLocaleString("vi-VN")}
                       </Tag>;
                 })()}
+                {hdDangChon.matHangs.length > dongHangThat(hdDangChon).length && (
+                  <Tag title="Dòng chiết khấu không hiện trong bảng, nhưng đã được trừ khi tính Σ">
+                    Đã ẩn {hdDangChon.matHangs.length - dongHangThat(hdDangChon).length} dòng
+                    chiết khấu (đã trừ {hdDangChon.tienCk.toLocaleString("vi-VN")})
+                  </Tag>
+                )}
                 <Button size="small" onClick={() => xemHtml(hdDangChon)}>Xem ảnh HĐ (HTML)</Button>
                 <Popconfirm
                   title="Nạp hóa đơn này vào database?"
@@ -663,51 +722,75 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                 // Khai cả x: khi chỉ có y, antd tách tiêu đề và thân thành hai bảng
                 // rời rồi tự đoán bề rộng — cột "Tên hàng" không có width nên hai bên
                 // đoán khác nhau, tiêu đề lệch hẳn khỏi ô dữ liệu.
-                // x = đúng tổng bề rộng 7 cột: 60+380+100+140+160+170+100
-                scroll={{ x: 1110, y: "calc(50vh - 104px)" }}
-                dataSource={hdDangChon.matHangs}
+                // x = đúng tổng bề rộng 10 cột: 56+64+320+90+130+150+160+160+140+90
+                scroll={{ x: 1360, y: "calc(50vh - 104px)" }}
+                dataSource={dongHangThat(hdDangChon)}
                 locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
                                             description="Hóa đơn không có dòng hàng" /> }}
                 columns={[
-                  { title: "STT", dataIndex: "stt", width: 60, fixed: "left" },
-                  { title: "Tên hàng", dataIndex: "tenHang", width: 380,
+                  { title: "STT", dataIndex: "stt", width: 56, fixed: "left" },
+                  // Không có cột này thì dòng chiết khấu nhìn y hệt dòng hàng hóa —
+                  // đúng cái đã làm C26TLC/10 lệch gấp đôi mà không ai nhận ra.
+                  { title: "TC", dataIndex: "tinhChat", width: 64, align: "center",
+                    onHeaderCell: () => ({ title: "Tính chất dòng (TChat của TCT)" }),
+                    render: (v: string) =>
+                      v === "3" ? <Tag color="red" title="Chiết khấu thương mại — TRỪ vào tiền hàng">CK</Tag>
+                    : v === "2" ? <Tag color="gold" title="Khuyến mại">KM</Tag>
+                    : v === "4" ? <Tag title="Ghi chú">GC</Tag>
+                    : <Typography.Text type="secondary">—</Typography.Text> },
+                  { title: "Tên hàng", dataIndex: "tenHang", width: 320,
                     render: (v: string, m: MatHang) => (
                       <Input size="small" value={v}
                              onChange={(e) => suaMatHang(hdDangChon.tenFile, m.stt,
                                                          { tenHang: e.target.value })} />
                     ) },
-                  { title: "ĐVT", dataIndex: "dvt", width: 100,
+                  { title: "ĐVT", dataIndex: "dvt", width: 90,
                     render: (v: string, m: MatHang) => (
                       <Input size="small" value={v}
                              onChange={(e) => suaMatHang(hdDangChon.tenFile, m.stt,
                                                          { dvt: e.target.value })} />
                     ) },
-                  { title: "Số lượng", dataIndex: "soLuong", width: 140,
+                  // keyboard={false}: chặn mũi tên lên/xuống. controls={false} chỉ giấu
+                  // nút bấm chứ phím mũi tên vẫn đổi số — bấm nhầm một cái là sai dữ
+                  // liệu mà không có đường lùi. Muốn sửa thì xóa và gõ lại.
+                  { title: "Số lượng", dataIndex: "soLuong", width: 130,
                     render: (v: number, m: MatHang) => (
-                      <InputNumber size="small" controls={false} style={{ width: "100%" }} value={v}
+                      <InputNumber size="small" controls={false} keyboard={false}
+                                   style={{ width: "100%" }} value={v}
                                    onChange={(x) => suaMatHang(hdDangChon.tenFile, m.stt,
                                                                { soLuong: x ?? 0 })} />
                     ) },
-                  { title: "Đơn giá", dataIndex: "donGia", width: 160,
+                  { title: "Đơn giá", dataIndex: "donGia", width: 150,
                     render: (v: number, m: MatHang) => (
-                      <InputNumber size="small" controls={false} style={{ width: "100%" }} value={v}
+                      <InputNumber size="small" controls={false} keyboard={false}
+                                   style={{ width: "100%" }} value={v}
                                    onChange={(x) => suaMatHang(hdDangChon.tenFile, m.stt,
                                                                { donGia: x ?? 0 })} />
                     ) },
-                  // Chỉ đọc — tự nhân lại từ số lượng × đơn giá. Đỏ khi số từ XML gốc
-                  // chưa khớp tích, sửa số lượng hoặc đơn giá một cái là hết đỏ.
-                  { title: "Thành tiền", dataIndex: "thanhTien", width: 170, align: "right",
-                    render: (v: number, m: MatHang) => {
-                      const lech = v - m.soLuong * m.donGia;
-                      return (
-                        <b style={{ color: Math.abs(lech) < 1 ? undefined : "#cf1322" }}
-                           title={Math.abs(lech) < 1 ? "Khớp số lượng × đơn giá"
-                                : `Lệch ${lech.toLocaleString("vi-VN")} so với SL × ĐG`}>
-                          {v.toLocaleString("vi-VN", { maximumFractionDigits: 2 })}
-                        </b>
-                      );
+                  { title: "SL × ĐG", width: 160, align: "right",
+                    render: (_: unknown, m: MatHang) => (
+                      <span>{(m.soLuong * m.donGia)
+                        .toLocaleString("vi-VN", { maximumFractionDigits: 2 })}</span>
+                    ) },
+                  { title: "Thành tiền", dataIndex: "thanhTien", width: 160, align: "right",
+                    render: (v: number) =>
+                      <b>{v.toLocaleString("vi-VN", { maximumFractionDigits: 2 })}</b> },
+                  // Tên cột nói rõ đang so với cái gì. Cột "Lệch Σ line" ở bảng TRÊN so
+                  // tiền hàng với Σ thành tiền — hai phép kiểm khác nhau, một cái bằng 0
+                  // mà cái kia khác 0 là chuyện bình thường: người bán làm tròn đơn giá
+                  // thì thành tiền lệch với SL×ĐG, nhưng tổng hóa đơn vẫn khớp.
+                  // (ca thật C26TQQ/3670: lệch SL×ĐG 409đ, còn Σ line khớp đúng 0)
+                  { title: "Lệch SL×ĐG", width: 140, align: "right",
+                    onHeaderCell: () => ({ title: "Thành tiền − (SL × ĐG)" }),
+                    render: (_: unknown, m: MatHang) => {
+                      const lech = m.thanhTien - m.soLuong * m.donGia;
+                      return Math.abs(lech) < 1
+                        ? <Typography.Text type="secondary">0</Typography.Text>
+                        : <b style={{ color: "#cf1322" }}>
+                            {lech.toLocaleString("vi-VN", { maximumFractionDigits: 2 })}
+                          </b>;
                     } },
-                  { title: "% VAT", dataIndex: "thueSuat", width: 100,
+                  { title: "% VAT", dataIndex: "thueSuat", width: 90,
                     render: (v: string, m: MatHang) => (
                       <Input size="small" value={v}
                              onChange={(e) => suaMatHang(hdDangChon.tenFile, m.stt,
@@ -715,22 +798,31 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                     ) },
                 ]}
                 summary={(rows) => {
-                  const sum = rows.reduce((s, x) => s + x.thanhTien, 0);
+                  // rows KHÔNG còn dòng chiết khấu (đã lọc ở dataSource), nên phải trừ
+                  // chiết khấu ở đây bằng sumLine — cộng suông rows là thiếu phép trừ.
+                  const sumTich = rows.reduce((s, x) => s + x.soLuong * x.donGia, 0);
+                  const sum = sumLine(hdDangChon);
+                  const khop = Math.abs(hdDangChon.tienHang - sum) < 10;
                   return (
                     <Table.Summary.Row>
-                      <Table.Summary.Cell index={0} colSpan={5} align="right">
-                        <b>Σ thành tiền</b>
+                      {/* Bảng có ĐÚNG 10 cột: STT, TC, Tên hàng, ĐVT, Số lượng, Đơn giá,
+                          SL×ĐG, Thành tiền, Lệch SL×ĐG, % VAT. Tổng colSpan phải bằng 10
+                          (6+1+1+2) — sai số này là dòng tổng rộng hơn bảng và kéo lệch
+                          toàn bộ thân so với tiêu đề. */}
+                      <Table.Summary.Cell index={0} colSpan={6} align="right">
+                        <b>{hdDangChon.tienCk ? "Σ (đã trừ chiết khấu)" : "Σ"}</b>
                       </Table.Summary.Cell>
-                      <Table.Summary.Cell index={1} align="right">
-                        <b style={{ color: hdDangChon.tienHang - sum === 0 ? "#389e0d" : "#cf1322" }}>
+                      <Table.Summary.Cell index={6} align="right">
+                        {sumTich.toLocaleString("vi-VN", { maximumFractionDigits: 2 })}
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={7} align="right">
+                        <b style={{ color: khop ? "#389e0d" : "#cf1322" }}
+                           title={khop ? "Khớp tiền hàng"
+                                : `Tiền hàng ${hdDangChon.tienHang.toLocaleString("vi-VN")}`}>
                           {sum.toLocaleString("vi-VN")}
                         </b>
                       </Table.Summary.Cell>
-                      {/* Bảng có ĐÚNG 7 cột: STT, Tên hàng, ĐVT, Số lượng, Đơn giá,
-                          Thành tiền, % VAT. Tổng colSpan phải bằng 7 (5+1+1). Trước đây
-                          để 5+1+2=8 (còn sót từ hồi có cột SL × ĐG) khiến dòng tổng rộng
-                          hơn bảng, kéo lệch toàn bộ thân so với tiêu đề. */}
-                      <Table.Summary.Cell index={2} />
+                      <Table.Summary.Cell index={8} colSpan={2} />
                     </Table.Summary.Row>
                   );
                 }}
