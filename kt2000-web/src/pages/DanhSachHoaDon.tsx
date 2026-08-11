@@ -1,9 +1,17 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Modal, Table, Button, Input, Select, Checkbox, Radio, Typography, Empty, Space,
+  Modal, Button, Input, Select, Checkbox, Radio, Typography, Space,
 } from "antd";
+import { AgGridReact } from "ag-grid-react";
+import type { ColDef } from "ag-grid-community";
 import type { HoaDonThue, HoaDonLine } from "../api";
-import { useDieuHuongLuoi } from "./dieuHuongLuoi";
+import { useAuth } from "../AuthContext";
+import {
+  themeVfp, luoiVfpProps, colVfp, dinhDangPhanTramVat,
+} from "../theme/luoiVfp";
+import { useNhoRongCot } from "../theme/nhoRongCot";
+import "./mau-huong.css";          // .ag-row.dong-dang-chon — tô dòng đang chọn
+import "./keo-cot.css";            // con trỏ ↔ ở mép cột, báo cho biết kéo được
 import "./danh-sach-hoa-don.css";
 
 // ============ DANH SÁCH HÓA ĐƠN GTGT — FRM_DS_HDDT ============
@@ -25,7 +33,9 @@ interface Props {
   namLamViec: number;
   tenDonVi: string;
   laDauRa: boolean;
-  onChon: (maHd: string) => void;
+  // bucTaiLai = true khi người dùng bấm Enter để gọi lại hóa đơn đang đứng: màn
+  // cha phải hỏi lại server kể cả khi đã có dòng hàng trong bộ nhớ.
+  onChon: (maHd: string, bucTaiLai?: boolean) => void;
   onXemHtml: (maHd: string) => void;
 }
 
@@ -34,7 +44,7 @@ interface Props {
 function NutCho({ nhan, lop = "" }: { nhan: string; lop?: string }) {
   return (
     <Button size="small" className={lop} disabled
-            title="Nghiệp vụ này chưa nối backend">
+            title="Nghiệp vụ này chưa xử lý">
       {nhan}
     </Button>
   );
@@ -45,7 +55,13 @@ export default function DanhSachHoaDon({
 }: Props) {
   const [thang, setThang] = useState<number | "all">("all");
   const [thangKT, setThangKT] = useState<number | "all">("all");
+  // Tìm nhanh tách làm HAI biến: oTuKhoa là chữ đang gõ trong ô, tuKhoa là từ
+  // khóa ĐÃ ÁP vào lưới. Gõ không lọc ngay — chỉ khi bấm Enter (hoặc nút Tìm)
+  // mới đẩy sang tuKhoa. Sổ thuế cả năm vài nghìn dòng, lọc theo từng phím gõ
+  // là mỗi ký tự quét lại toàn bộ danh sách, gõ tới đâu lưới giật tới đó.
+  const [oTuKhoa, setOTuKhoa] = useState("");
   const [tuKhoa, setTuKhoa] = useState("");
+  const timNgay = () => setTuKhoa(oTuKhoa);
   const [fileChon, setFileChon] = useState<string | null>(null);
   const [nhomDoi, setNhomDoi] = useState("ten_kh");
   const [nhomDoi2, setNhomDoi2] = useState("ten_hang");
@@ -92,172 +108,201 @@ export default function DanhSachHoaDon({
     return p.length === 3 && p[0] ? `${p[2]}/${p[1]}/${p[0].slice(2)}` : "";
   };
 
+
+  // ===== Đổi dòng ở lưới trên -> đổ dòng hàng ở lưới dưới =====
+  // Bấm chuột thì gọi luôn. Đi bằng MŨI TÊN thì hoãn một nhịp: giữ ↓ lướt qua
+  // 50 dòng mà mỗi dòng gọi API là 50 request cho một hóa đơn người dùng thực sự
+  // muốn xem. Chỉ dòng người dùng DỪNG LẠI mới được tải.
+  const hoanRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const huyHoan = () => {
+    if (hoanRef.current) { clearTimeout(hoanRef.current); hoanRef.current = null; }
+  };
+  useEffect(() => huyHoan, []);
+
   const chonDong = (maHd: string) => {
+    huyHoan();
     setFileChon(maHd);
     onChon(maHd);
   };
 
-  const [luoiDangCamPhim, setLuoiDangCamPhim] = useState<"tren" | "duoi">("tren");
-  const doiDongTren = useCallback((i: number) => {
-    const hd = dsLoc[i];
-    if (hd && hd.maHd !== fileChon) chonDong(hd.maHd);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dsLoc, fileChon]);
+  // Dùng cho điều hướng bàn phím: đổi dòng đang chọn ngay cho mắt thấy, còn việc
+  // tải chi tiết thì đợi người dùng dừng tay.
+  const chonDongHoan = (maHd: string) => {
+    huyHoan();
+    setFileChon(maHd);
+    hoanRef.current = setTimeout(() => {
+      hoanRef.current = null;
+      onChon(maHd);
+    }, 250);
+  };
 
-  const soCotTren = 27;   // đúng số cột của lưới hóa đơn bên dưới
-  const soCotDuoi = 11;   // đúng số cột của lưới dòng hàng
-
-  const {
-    oDangDung: oTren, setODangDung: datOTren,
-    oDangSua: suaTren, setODangSua: datSuaTren,
-    khungRef: refTren, xuLyPhim: phimTren,
-  } = useDieuHuongLuoi({
-    soDong: dsLoc.length, soCot: soCotTren,
-    bat: mo && luoiDangCamPhim === "tren",
-    onDoiDong: doiDongTren,
-  });
-  const {
-    oDangDung: oDuoi, setODangDung: datODuoi,
-    oDangSua: suaDuoi, setODangSua: datSuaDuoi,
-    khungRef: refDuoi, xuLyPhim: phimDuoi,
-  } = useDieuHuongLuoi({
-    soDong: hdDangChon?.lines.length ?? 0, soCot: soCotDuoi,
-    bat: mo && luoiDangCamPhim === "duoi",
-  });
-
-
-  type ViTri = { dong: number; cot: number };
-  const themDieuHuong = <T,>(
-    cot: Record<string, unknown>[],
-    lay: () => { oDung: ViTri; oSua: ViTri | null; dangCam: boolean },
-    datDung: (v: ViTri) => void, datSua: (v: ViTri | null) => void,
-  ) => cot.map((c, i) => ({
-    ...c,
-    render: (v: unknown, ban: T, dong: number) => {
-      const { oSua, dangCam } = lay();
-      if (dangCam && oSua?.dong === dong && oSua?.cot === i) {
-        return (
-          <Input size="small" autoFocus defaultValue={v == null ? "" : String(v)}
-                 onClick={(e) => e.stopPropagation()}
-                 onDoubleClick={(e) => e.stopPropagation()}
-                 onBlur={() => datSua(null)} />
-        );
-      }
-      const renderCu = c.render as
-        ((v: unknown, ban: T, dong: number) => React.ReactNode) | undefined;
-      return renderCu ? renderCu(v, ban, dong) : (v as React.ReactNode);
-    },
-    onCell: (_: T, dong?: number) => {
-      const d = dong ?? -1;
-      const { oDung, oSua, dangCam } = lay();
-      const dung = dangCam && oDung.dong === d && oDung.cot === i;
-      const sua = dangCam && oSua?.dong === d && oSua?.cot === i;
-      return {
-        "data-dong": d,
-        className: sua ? "o-dang-sua" : dung ? "o-dang-dung" : undefined,
-        onClick: () => { if (d >= 0) datDung({ dong: d, cot: i }); },
-        onDoubleClick: (e: React.MouseEvent) => {
-          e.stopPropagation();
-          if (d >= 0) datSua({ dong: d, cot: i });
-        },
-      } as React.HTMLAttributes<HTMLElement>;
-    },
-  }));
-
-  const viTren = useMemo(
-    () => ({ oDung: oTren, oSua: suaTren, dangCam: luoiDangCamPhim === "tren" }),
-    [oTren, suaTren, luoiDangCamPhim]);
-  const viDuoi = useMemo(
-    () => ({ oDung: oDuoi, oSua: suaDuoi, dangCam: luoiDangCamPhim === "duoi" }),
-    [oDuoi, suaDuoi, luoiDangCamPhim]);
+  const { session } = useAuth();
+  const nguoiDung = session?.user.loginName;
+  const nhoCotTren = useNhoRongCot({ tenLuoi: "ds-hoadon-tren", nguoiDung });
+  const nhoCotDuoi = useNhoRongCot({ tenLuoi: "ds-hoadon-duoi", nguoiDung });
 
   const chonVaDong = () => {
     if (fileChon) { onChon(fileChon); onDong(); }
+  };
+
+  // ===== Cột "In": đánh dấu hóa đơn để in =====
+  // Giữ tập mã HĐ đã tích. Dùng Set chứ không thêm cờ vào HoaDonThue: mảng dsHd
+  // là của màn cha truyền xuống, sửa vào đó là sửa dữ liệu người khác đang dùng.
+  const [dsInDanhDau, setDsInDanhDau] = useState<Set<string>>(new Set());
+
+  // Renderer của cột đọc qua ref, KHÔNG qua biến state trực tiếp: mảng columnDefs
+  // phải giữ nguyên tham chiếu (deps rỗng) — cho dsInDanhDau vào deps thì mỗi lần
+  // tích một ô là AG Grid nhận bộ cột mới và dựng lại toàn bộ cột, mất cả vị trí
+  // cuộn ngang. Ở đây chỉ làm mới đúng ô vừa đổi, xem refreshCells bên dưới.
+  const danhDauRef = useRef(dsInDanhDau);
+  useEffect(() => { danhDauRef.current = dsInDanhDau; }, [dsInDanhDau]);
+
+  const luoiTrenRef = useRef<AgGridReact<HoaDonThue> | null>(null);
+
+  const datIn = (maHd: string, tich: boolean) => {
+    setDsInDanhDau((cu) => {
+      const moi = new Set(cu);
+      if (tich) moi.add(maHd); else moi.delete(maHd);
+      danhDauRef.current = moi;   // renderer đọc ngay trong lần refresh dưới đây
+      return moi;
+    });
+    const node = luoiTrenRef.current?.api?.getRowNode(maHd);
+    if (node) {
+      luoiTrenRef.current?.api?.refreshCells({ rowNodes: [node], columns: ["in"],
+                                               force: true });
+    }
+  };
+
+  // BR: hóa đơn ĐIỀU CHỈNH / THAY THẾ nhận biết bằng tich_chat_hd_lienquan khác
+  // trống (docs/THUE/BienBan_RaSoat.md — cột hd_thay_the_dieu_chinh bị bỏ vì suy
+  // ra được từ đây). Không dò theo chữ trong tthaiHd: giá trị đó là văn bản tự do
+  // của TCT, đổi cách viết một cái là phép lọc câm lặng bỏ sót hóa đơn.
+  // Nghiệp vụ được giao: tích những HĐ VỪA có chiết khấu VỪA là điều chỉnh/thay
+  // thế. useCallback để soCanIn bên dưới có mảng phụ thuộc đúng — hàm dựng mới
+  // mỗi render thì useMemo tính lại mọi lần, coi như không có memo.
+  const laCanIn = useCallback(
+    (h: HoaDonThue) =>
+      (h.tienCk ?? 0) !== 0 && (h.tichChatHdLienquan ?? "").trim() !== "",
+    []);
+
+  // Chỉ quét danh sách ĐANG LỌC — người dùng lọc tháng 3 thì không tự tích thêm
+  // hóa đơn tháng khác mà họ không nhìn thấy.
+  const soCanIn = useMemo(() => dsLoc.filter(laCanIn).length, [dsLoc, laCanIn]);
+
+  // Sau khi đổi hàng loạt phải vẽ lại CẢ cột In — refreshCells một ô như datIn
+  // không đủ, và columnDefs cố tình không phụ thuộc state nên React không tự làm.
+  const veLaiCotIn = () =>
+    luoiTrenRef.current?.api?.refreshCells({ columns: ["in"], force: true });
+
+  const tichTuDong = () => {
+    const moi = new Set(dsInDanhDau);
+    for (const h of dsLoc) if (laCanIn(h)) moi.add(h.maHd);
+    danhDauRef.current = moi;
+    setDsInDanhDau(moi);
+    veLaiCotIn();
+  };
+
+  const boTichHet = () => {
+    danhDauRef.current = new Set();
+    setDsInDanhDau(new Set());
+    veLaiCotIn();
   };
 
   const cacThang = Array.from({ length: 12 }, (_, i) => i + 1);
   const optThang = [{ value: "all" as const, label: "Tất cả các tháng" },
                     ...cacThang.map((m) => ({ value: m, label: `Tháng ${m}` }))];
 
-  const cotTren = useMemo(() => themDieuHuong<HoaDonThue>([
-          { title: "STT", width: 48, fixed: "left",
-            render: (_: unknown, __: HoaDonThue, i: number) => i + 1 },
-          { title: "Mã HĐ", width: 150, fixed: "left", ellipsis: true,
-            render: (_: unknown, r: HoaDonThue) =>
-              <span title={r.maHd}>{r.maHd}</span> },
-          { title: "Ngày", width: 74, render: (_: unknown, r: HoaDonThue) => ngayNgan(r.ngay) },
-          { title: "Ngày NH", width: 74,
-            render: (_: unknown, r: HoaDonThue) => ngayNgan(r.ngayNh ?? r.ngay) },
-          { title: "Số HĐ", dataIndex: "soHd", width: 82 },
-          { title: "Nhân sự", width: 330, ellipsis: true,
-            render: (_: unknown, r: HoaDonThue) => {
-              const t = `${r.tenKh ?? ""}_${r.mst ?? ""}`;
-              return <span title={t}>{t}</span>;
-            } },
-          // Định khoản: dòng nào chưa hạch toán thì hiện giá trị quy ước như bản gốc
-          { title: "Nợ", dataIndex: "ghiNo", width: 44, align: "center",
-            render: (v: string | null) => v || "156" },
-          { title: "Có", dataIndex: "ghiCo", width: 44, align: "center",
-            render: (v: string | null) => v || "331" },
-          { title: "% V.", width: 44, align: "center",
-            render: (_: unknown, r: HoaDonThue) =>
-              r.lines[0]?.ptVat != null ? String(r.lines[0].ptVat) : "" },
-          { title: "V.Nợ", width: 50, align: "center", render: () => "1331" },
-          { title: "V.Có", width: 46, align: "center", render: () => "331" },
-          { title: "V.KT", width: 44, align: "center", render: () => "6" },
-          { title: "Tiền HĐ", dataIndex: "tienHang", width: 130, align: "right",
-            render: (v: number) => soVn(v) },
-          { title: "Tiền CK", dataIndex: "tienCk", width: 110, align: "right",
-            render: (v: number) => soVn(v) },
-          { title: "Tiền VAT", dataIndex: "tienVat", width: 120, align: "right",
-            render: (v: number) => soVn(v) },
-          { title: "Thương vụ", dataIndex: "maTv", width: 90 },
-          { title: "Ghi chú", dataIndex: "ghiChu", width: 130, ellipsis: true },
-          { title: "In", width: 40, align: "center",
-            render: () => <Checkbox disabled /> },
-          { title: "Tổng G.Vốn", dataIndex: "tongTien", width: 130, align: "right",
-            render: (v: number) => soVn(v) },
-          { title: "Lỗ - Lãi", width: 90, align: "right", render: () => soVn(0) },
-          { title: "CK Gốc", width: 80, align: "right", render: () => soVn(0) },
-          { title: "Số HĐLQ", dataIndex: "sohdLienquan", width: 90 },
-          { title: "Số HĐLCTC HĐ", dataIndex: "tichChatHdLienquan", width: 110 },
-          { title: "Loại HĐ", dataIndex: "loaiHdLienquan", width: 80 },
-          { title: "Mã Số HĐ", dataIndex: "mauSoHdLienquan", width: 90 },
-          { title: "Ký hiệu HĐ", dataIndex: "khhd", width: 100 },
-          { title: "Trạng thái", dataIndex: "tthaiHd", width: 100 },
-          { title: "Ghi chú", dataIndex: "ghiChu", width: 120, ellipsis: true },
-  ], () => viTren, datOTren, datSuaTren),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [viTren]);
+  const cotTren = useMemo<ColDef<HoaDonThue>[]>(() => [
+    { colId: "stt", headerName: "STT", width: 48, pinned: "left",
+      valueGetter: (p) => (p.node?.rowIndex ?? 0) + 1 },
+    { colId: "maHd", headerName: "Mã HĐ", field: "maHd", width: 150,
+      pinned: "left", tooltipField: "maHd" },
+    { colId: "ngay", headerName: "Ngày", width: 74,
+      valueGetter: (p) => ngayNgan(p.data?.ngay ?? null) },
+    { colId: "ngayNh", headerName: "Ngày NH", width: 74,
+      valueGetter: (p) => ngayNgan(p.data?.ngayNh ?? p.data?.ngay ?? null) },
+    { colId: "soHd", headerName: "Số HĐ", field: "soHd", width: 82 },
+    { colId: "nhanSu", headerName: "Nhân sự", width: 330,
+      valueGetter: (p) => `${p.data?.tenKh ?? ""}_${p.data?.mst ?? ""}`,
+      tooltipValueGetter: (p) => String(p.value ?? "") },
+    // Định khoản: dòng nào chưa hạch toán thì để trống như bản gốc
+    { colId: "ghiNo", headerName: "Nợ", field: "ghiNo", width: 44 },
+    { colId: "ghiCo", headerName: "Có", field: "ghiCo", width: 44 },
+    { colId: "ptVat", headerName: "%VAT", width: 50,
+      valueGetter: (p) => dinhDangPhanTramVat(p.data?.lines[0]?.ptVat) },
+    { colId: "noVat", headerName: "Nợ VAT", width: 50, valueGetter: () => "" },
+    { colId: "coVat", headerName: "Có VAT", width: 46, valueGetter: () => "" },
+    { colId: "kt", headerName: "KT", width: 44, valueGetter: () => "" },
+    { colId: "tienHang", headerName: "Tiền HĐ", field: "tienHang", width: 130,
+      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
+    { colId: "tienCk", headerName: "Tiền CK", field: "tienCk", width: 110,
+      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
+    { colId: "tienVat", headerName: "Tiền VAT", field: "tienVat", width: 120,
+      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
+    { colId: "maTv", headerName: "Thương vụ", field: "maTv", width: 90 },
+    { colId: "ghiChu", headerName: "Ghi chú", field: "ghiChu", width: 130,
+      tooltipField: "ghiChu" },
+    // Ô tích thật, bấm được. checkbox thuần thay vì antd Checkbox: ô lưới cao 22px
+    // và cell renderer dựng lại liên tục khi cuộn — component nặng ở đây không đáng.
+    { colId: "in", headerName: "In", width: 46,
+      headerTooltip: "Đánh dấu hóa đơn để in",
+      valueGetter: (p) => (p.data ? danhDauRef.current.has(p.data.maHd) : false),
+      cellStyle: { backgroundColor: "#f5f5f5", textAlign: "center" },
+      // onClick chặn nổi bọt: bấm ô tích không được kéo theo "chọn dòng" của
+      // lưới — hai hành động khác nhau, gộp lại thì tích một cái là đổi luôn
+      // hóa đơn đang xem ở bảng dưới.
+      cellRenderer: (p: { data?: HoaDonThue }) => p.data ? (
+        <input type="checkbox"
+               checked={danhDauRef.current.has(p.data.maHd)}
+               onClick={(e) => e.stopPropagation()}
+               onChange={(e) => p.data && datIn(p.data.maHd, e.target.checked)} />
+      ) : null },
+    { colId: "tongTien", headerName: "Tổng G.Vốn", field: "tongTien", width: 130,
+      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
+    { colId: "loLai", headerName: "Lỗ - Lãi", width: 90, type: "numericColumn",
+      valueGetter: () => 0, valueFormatter: (p) => soVn(p.value ?? 0) },
+    { colId: "ckGoc", headerName: "CK Gốc", width: 80, type: "numericColumn",
+      valueGetter: () => 0, valueFormatter: (p) => soVn(p.value ?? 0) },
+    { colId: "sohdLienquan", headerName: "Số HĐLQ", field: "sohdLienquan", width: 90 },
+    { colId: "tichChatHdLienquan", headerName: "Số HĐLCTC HĐ",
+      field: "tichChatHdLienquan", width: 110 },
+    { colId: "loaiHdLienquan", headerName: "Loại HĐ", field: "loaiHdLienquan", width: 80 },
+    { colId: "mauSoHdLienquan", headerName: "Mã Số HĐ", field: "mauSoHdLienquan", width: 90 },
+    { colId: "khhd", headerName: "Ký hiệu HĐ", field: "khhd", width: 100 },
+    { colId: "tthaiHd", headerName: "Trạng thái", field: "tthaiHd", width: 100 },
+    { colId: "ghiChu2", headerName: "Ghi chú", field: "ghiChu", width: 120,
+      tooltipField: "ghiChu" },
+  ], []);
 
-  const cotDuoi = useMemo(() => themDieuHuong<HoaDonLine>([
-          { title: "STT", dataIndex: "sttLine", width: 48, fixed: "left" },
-          { title: "Tên hàng hoá dịch vụ", dataIndex: "tenHang", width: 300,
-            ellipsis: true,
-            render: (v: string) => <span title={v}>{v}</span> },
-          { title: "ĐVT", dataIndex: "dvt", width: 70 },
-          { title: "Số lượng", dataIndex: "soLuong", width: 96, align: "right",
-            render: (v: number) => soVn(v) },
-          { title: "Đơn giá", dataIndex: "donGia", width: 120, align: "right",
-            render: (v: number) => soVn(v) },
-          { title: "Thành tiền", dataIndex: "thanhTien", width: 130, align: "right",
-            render: (v: number) => <b>{soVn(v)}</b> },
-          { title: "% VAT", dataIndex: "ptVat", width: 66, align: "center",
-            render: (v: number) => String(v) },
-          { title: "Nợ", dataIndex: "ghiNo", width: 50, align: "center",
-            render: (v: string | null) => v || "156" },
-          { title: "Có", dataIndex: "ghiCo", width: 50, align: "center",
-            render: (v: string | null) => v || "331" },
-          { title: "C.Khấu", dataIndex: "tienCk", width: 80, align: "right",
-            render: (v: number) => soVn(v) },
-          { title: "Ghi chú", dataIndex: "ghiChu", width: 200, ellipsis: true,
-            render: (v: string | null, m: HoaDonLine) => {
-              const t = v || m.tenHang;
-              return <span title={t}>{t}</span>;
-            } },
-  ], () => viDuoi, datODuoi, datSuaDuoi),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [viDuoi]);
+  const cotDuoi = useMemo<ColDef<HoaDonLine>[]>(() => [
+    { colId: "sttLine", headerName: "STT", field: "sttLine", width: 48, pinned: "left" },
+    { colId: "tenHang", headerName: "Tên hàng hoá dịch vụ", field: "tenHang",
+      width: 300, tooltipField: "tenHang" },
+    { colId: "dvt", headerName: "ĐVT", field: "dvt", width: 70 },
+    { colId: "soLuong", headerName: "Số lượng", field: "soLuong", width: 96,
+      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
+    { colId: "donGia", headerName: "Đơn giá", field: "donGia", width: 120,
+      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
+    { colId: "thanhTien", headerName: "Thành tiền", field: "thanhTien", width: 130,
+      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0),
+      cellStyle: { backgroundColor: "#f5f5f5", fontWeight: 600 } },
+    { colId: "ptVat", headerName: "% VAT", width: 66,
+      valueGetter: (p) => dinhDangPhanTramVat(p.data?.ptVat) },
+    // Chưa định khoản thì hiện giá trị quy ước 156/331 như bản gốc
+    { colId: "ghiNo", headerName: "Nợ", width: 50,
+      valueGetter: (p) => p.data?.ghiNo || "156" },
+    { colId: "ghiCo", headerName: "Có", width: 50,
+      valueGetter: (p) => p.data?.ghiCo || "331" },
+    { colId: "tienCk", headerName: "C.Khấu", field: "tienCk", width: 80,
+      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
+    { colId: "ghiChu", headerName: "Ghi chú", width: 200,
+      valueGetter: (p) => p.data?.ghiChu || p.data?.tenHang || "",
+      tooltipValueGetter: (p) => String(p.value ?? "") },
+  ], []);
+
+  const sumDuoi = useMemo(
+    () => (hdDangChon?.lines ?? []).reduce((s, x) => s + x.thanhTien, 0),
+    [hdDangChon]);
 
   return (
     <Modal
@@ -282,10 +327,8 @@ export default function DanhSachHoaDon({
           <Select size="small" style={{ width: 150 }} value={thang}
                   onChange={(v) => setThang(v)} options={optThang} />
           <span className="nhan">Năm {namLamViec}</span>
-
           <Button size="small" className="nut-xanhdg">Refresh</Button>
           <NutCho nhan="Theo ngày" lop="nut-xanhdg" />
-
           <span className="nhan">Tháng KT:</span>
           <Select size="small" style={{ width: 130 }} value={thangKT}
                   onChange={(v) => setThangKT(v)} options={optThang} />
@@ -306,11 +349,22 @@ export default function DanhSachHoaDon({
 
         <div className="thanh-loc">
           <span className="nhan nhan-xanh">Tìm nhanh</span>
-          <Input size="small" allowClear style={{ width: 420 }}
-                 placeholder="Số HĐ, ký hiệu, MST, tên đối tác, tên file…"
-                 value={tuKhoa} onChange={(e) => setTuKhoa(e.target.value)} />
+          {/* Gõ xong bấm Enter mới lọc — xem chú thích ở chỗ khai oTuKhoa.
+              onSearch của Input.Search bắt cả Enter lẫn nút kính lúp; allowClear
+              bấm dấu X thì onSearch KHÔNG bắn, nên phải tự xóa ở onChange. */}
+          <Input.Search size="small" allowClear style={{ width: 420 }}
+                 placeholder="Số HĐ, ký hiệu, MST, tên đối tác, tên file… — Enter để tìm"
+                 value={oTuKhoa}
+                 onChange={(e) => {
+                   setOTuKhoa(e.target.value);
+                   if (e.target.value === "") setTuKhoa("");
+                 }}
+                 onSearch={timNgay} />
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {dsLoc.length}/{dsHd.length} hóa đơn
+            {oTuKhoa !== tuKhoa && (
+              <span style={{ color: "#d46b08" }}> · bấm Enter để tìm</span>
+            )}
           </Typography.Text>
           <span style={{ flex: 1 }} />
           <Button size="small" className="nut-xanhla" disabled={!fileChon}
@@ -323,26 +377,69 @@ export default function DanhSachHoaDon({
                   onClick={chonVaDong}>
             Chọn hóa đơn này
           </Button>
+          <Button size="small" onClick={nhoCotTren.datLai}
+                  title="Trả bề rộng các cột của bảng hóa đơn về mặc định">
+            Đặt lại cột
+          </Button>
         </div>
-        <div ref={refTren} className="khung-ban-phim" tabIndex={0}
-             onKeyDown={phimTren}
-             onMouseDown={() => setLuoiDangCamPhim("tren")}>
-        <Table
-          className="luoi-ds"
-          rowKey="maHd"
-          size="small"
-          dataSource={dsLoc}
-          pagination={false}
-          scroll={{ x: 2100, y: 260 }}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
-                                      description="Không có hóa đơn nào khớp điều kiện lọc" /> }}
-          onRow={(r: HoaDonThue) => ({
-            onClick: () => chonDong(r.maHd),
-            onDoubleClick: () => { onChon(r.maHd); onDong(); },
-            className: r.maHd === fileChon ? "dong-dang-chon" : undefined,
-            style: { cursor: "pointer" },
-          })}
-          columns={cotTren}
+
+        {/* ===== Thanh đánh dấu cột In ===== */}
+        <div className="thanh-loc">
+          <span className="nhan nhan-xanh">Cột In</span>
+          <Button size="small" className="nut-xanhla" onClick={tichTuDong}
+                  disabled={soCanIn === 0}
+                  title="Tích cột In cho các hóa đơn vừa có chiết khấu vừa là HĐ điều chỉnh/thay thế">
+            Đánh dấu HĐ có CK &amp; điều chỉnh/thay thế ({soCanIn})
+          </Button>
+          <Button size="small" onClick={boTichHet}
+                  disabled={dsInDanhDau.size === 0}>
+            Bỏ đánh dấu
+          </Button>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Đã đánh dấu <b>{dsInDanhDau.size}</b> hóa đơn
+          </Typography.Text>
+        </div>
+
+        <div style={{ height: 260 }}>
+        <AgGridReact<HoaDonThue>
+          ref={luoiTrenRef}
+          theme={themeVfp}
+          {...luoiVfpProps}
+          {...nhoCotTren.props}
+          rowData={dsLoc}
+          getRowId={(p) => p.data.maHd}
+          defaultColDef={colVfp}
+          columnDefs={cotTren}
+          overlayNoRowsTemplate="Không có hóa đơn nào khớp điều kiện lọc"
+          rowClassRules={{ "dong-dang-chon": (p) => p.data?.maHd === fileChon }}
+          onCellClicked={(e) => e.data && chonDong(e.data.maHd)}
+          onRowDoubleClicked={(e) => {
+            if (e.data) { onChon(e.data.maHd); onDong(); }
+          }}
+          // ↑/↓ đổi dòng thì đổ luôn dòng hàng của hóa đơn đó. Bắt ở
+          // onCellFocused chứ không tự nghe keydown: AG Grid đã lo phần di
+          // chuyển con trỏ (kể cả PageUp/Down, Ctrl+Home/End), ở đây chỉ cần
+          // biết con trỏ dừng ở đâu. Tải chi tiết đi qua bản HOÃN — xem chú
+          // thích ở chonDongHoan.
+          onCellFocused={(e) => {
+            if (e.rowIndex == null) return;
+            const node = e.api.getDisplayedRowAtIndex(e.rowIndex);
+            const maHd = node?.data?.maHd;
+            if (maHd && maHd !== fileChon) chonDongHoan(maHd);
+          }}
+          // Enter = gọi lại đúng hóa đơn đang đứng. Lối thoát khi lưới dưới
+          // lệch với dòng đang chọn (mạng chậm, request lỗi, hoặc bản hoãn bị
+          // hủy giữa chừng): bấm Enter là nạp lại ngay, không phải bấm chuột
+          // sang dòng khác rồi quay lại.
+          onCellKeyDown={(e) => {
+            const phim = (e.event as KeyboardEvent | null)?.key;
+            if (phim !== "Enter") return;
+            const maHd = e.data?.maHd;
+            if (!maHd) return;
+            huyHoan();               // bỏ lượt hoãn đang chờ, gọi thẳng
+            setFileChon(maHd);
+            onChon(maHd, true);      // buộc hỏi lại server
+          }}
         />
         </div>
 
@@ -440,10 +537,6 @@ export default function DanhSachHoaDon({
                       onChange={(e) => datCb("themVaoDanhMuc", e.target.checked)}>
               Thêm vào danh mục KH khi không có MST
             </Checkbox>
-            <Checkbox checked={cb.chuyenUnicode}
-                      onChange={(e) => datCb("chuyenUnicode", e.target.checked)}>
-              Chuyển tên hàng sang UNICODE
-            </Checkbox>
             <div className="hang-cong-cu">
               <Checkbox checked={cb.nhomTheoTenHang}
                         onChange={(e) => datCb("nhomTheoTenHang", e.target.checked)}>
@@ -492,12 +585,8 @@ export default function DanhSachHoaDon({
                         onChange={(e) => datCb("xoaDuLieuTruocKhiLay", e.target.checked)}>
                 Xóa dữ liệu trước khi lấy
               </Checkbox>
-              <NutCho nhan="Sý HĐ TT-ĐC-XB" lop="nut-vang" />
+              <NutCho nhan="Xử lý HĐ TT-ĐC-XB" lop="nut-vang" />
             </div>
-          </div>
-
-          <div className="cot-cong-cu" style={{ marginLeft: "auto" }}>
-            <NutCho nhan="Chuyển UNICODE cho File Excel" lop="nut-xanhla" />
           </div>
         </div>
 
@@ -517,42 +606,32 @@ export default function DanhSachHoaDon({
                 — bấm một hóa đơn ở bảng trên để xem dòng hàng
               </Typography.Text>
             )}
+            <span style={{ flex: 1 }} />
+            <Typography.Text style={{ fontSize: 12 }}>
+              Tổng thành tiền{" "}
+              <b style={{ color: !hdDangChon
+                            || Math.abs(hdDangChon.tienHang - sumDuoi) < 10
+                              ? "#389e0d" : "#cf1322" }}>
+                {soVn(sumDuoi)}
+              </b>
+            </Typography.Text>
+            <Button size="small" onClick={nhoCotDuoi.datLai}
+                    title="Trả bề rộng các cột của bảng dòng hàng về mặc định">
+              Đặt lại cột
+            </Button>
           </div>
-          <div className="khung-phu" ref={refDuoi} tabIndex={0}
-               onKeyDown={phimDuoi}
-               onMouseDown={() => setLuoiDangCamPhim("duoi")}>
-            <Table
-              className="luoi-ds"
-              rowKey="sttLine" size="small" pagination={false}
-              dataSource={hdDangChon?.lines ?? []}
-              scroll={{ x: 1080, y: 150 }}
-              locale={{ emptyText: (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
-                       description={hdDangChon
-                         ? "Hóa đơn này không có dòng hàng"
-                         : "Chưa chọn hóa đơn"} />
-              ) }}
-              columns={cotDuoi}
-              summary={(rows: readonly HoaDonLine[]) => {
-                const sum = rows.reduce((s, x) => s + x.thanhTien, 0);
-                return (
-                  <Table.Summary.Row>
-                    <Table.Summary.Cell index={0} colSpan={5} align="right">
-                      <b>Σ thành tiền</b>
-                    </Table.Summary.Cell>
-                    <Table.Summary.Cell index={1} align="right">
-                      <b style={{
-                        color: !hdDangChon
-                          || Math.abs(hdDangChon.tienHang - sum) < 10
-                            ? "#389e0d" : "#cf1322",
-                      }}>
-                        {soVn(sum)}
-                      </b>
-                    </Table.Summary.Cell>
-                    <Table.Summary.Cell index={2} colSpan={5} />
-                  </Table.Summary.Row>
-                );
-              }}
+          <div className="khung-phu" style={{ height: 170 }}>
+            <AgGridReact<HoaDonLine>
+              theme={themeVfp}
+              {...luoiVfpProps}
+              {...nhoCotDuoi.props}
+              rowData={hdDangChon?.lines ?? []}
+              getRowId={(p) => String(p.data.sttLine)}
+              defaultColDef={colVfp}
+              columnDefs={cotDuoi}
+              overlayNoRowsTemplate={hdDangChon
+                ? "Hóa đơn này không có dòng hàng"
+                : "Chưa chọn hóa đơn"}
             />
           </div>
         </div>
@@ -600,22 +679,6 @@ export default function DanhSachHoaDon({
               <NutCho nhan="Đọc HĐ Hủy" />
               <NutCho nhan="In P.Xuất kèm File PDF" lop="nut-xanhla" />
               <NutCho nhan="In Phiếu xuất kho" lop="nut-xanhla" />
-              <NutCho nhan="In P.Nhập kèm File PDF" lop="nut-xanhla" />
-              <Checkbox checked={cb.chiInPDF}
-                        onChange={(e) => datCb("chiInPDF", e.target.checked)}>
-                Chỉ in PDF
-              </Checkbox>
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="In HĐ Bán lẻ từng số" lop="nut-vang" />
-              <NutCho nhan="Tổng hợp hàng hóa theo % VAT" lop="nut-hong" />
-              <Checkbox checked={cb.chiTrongBangKe}
-                        onChange={(e) => datCb("chiTrongBangKe", e.target.checked)}>
-                Chỉ in bảng kê khi in Phiếu nhập cùng PDF
-              </Checkbox>
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Lấy DM_HANG sang Excel (UNICODE)" lop="nut-xanhla" />
             </div>
           </div>
 
@@ -690,33 +753,12 @@ export default function DanhSachHoaDon({
               <NutCho nhan="Chuyển HĐ 154 sang H.Hóa" lop="nut-xanhdg" />
             </div>
           </div>
-
-          {/* Cột SL File XML bên phải cùng */}
-          <div className="cot-sl-xml" style={{ marginLeft: "auto" }}>
-            <div>
-              <div className="nhan-sl">SL File XML Vĩnh Hy</div>
-              <div className="o-sl" />
-            </div>
-            <div>
-              <div className="nhan-sl">SL File XML SeverNew</div>
-              <div className="o-sl" />
-            </div>
-            <div>
-              <div className="nhan-sl">SL File XML Only</div>
-              <div className="o-sl" />
-            </div>
-            <div>
-              <div className="nhan-sl">SL File PDF SeverNew</div>
-              <div className="o-sl" />
-            </div>
-            <NutCho nhan="Lấy NKCT" lop="nut-tim" />
-          </div>
         </div>
 
         <Space style={{ marginTop: 6 }} size={12}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Σ Tiền HĐ <b>{soVn(tongTienHang)}</b> · Σ VAT <b>{soVn(tongTienVat)}</b> ·
-            Σ Thanh toán <b>{soVn(tongThanhToan)}</b>
+            Tổng Tiền HĐ <b>{soVn(tongTienHang)}</b> · Σ VAT <b>{soVn(tongTienVat)}</b> ·
+            Tổng Thanh toán <b>{soVn(tongThanhToan)}</b>
           </Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             Bấm đúp một dòng để mở hóa đơn đó. Các nút mờ là nghiệp vụ chưa nối backend.

@@ -666,6 +666,9 @@ export const thueDanhSachHoaDon = (
 export const thueChiTietHoaDon = (maHd: string) =>
   api.get<HoaDonThue>(`/thue/hoa-don/${encodeURIComponent(maHd)}`);
 
+export const thueLinesNhieuHoaDon = (maHds: string[]) =>
+  api.post<Record<string, HoaDonLine[]>>("/thue/hoa-don/lines", { maHds });
+
 export const thueHtmlHoaDon = (maHd: string) =>
   api.get<string>(`/thue/hoa-don/${encodeURIComponent(maHd)}/html`,
                   { responseType: "text" });

@@ -15,6 +15,8 @@ export const themeVfp = themeBalham.withParams({
   rowVerticalPaddingScale: 0.5,   // dồn dòng sát lại
   cellHorizontalPadding: 6,
   headerVerticalPaddingScale: 0.6,
+  headerTextColor: "#000000",
+  headerFontWeight: 700,
 });
 
 export const CHIEU_CAO_DONG = 22;
@@ -62,3 +64,19 @@ export const colSo = {
 
 export const dinhDangTien = (v: number | null | undefined) =>
   v == null ? "" : Number(v).toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+
+// %VAT hiện dạng người đọc quen: 10 chứ không phải 0.1.
+//
+// Cột pt_vat trong DB KHÔNG thống nhất đơn vị, tùy hóa đơn vào bằng đường nào:
+//   • nạp tay  → ImportService.DocPhanTram("10%") ghi 10
+//   • từ Excel → N2(PT_VAT) lấy nguyên ô Excel, thường là 0.1
+// Nên KHÔNG được nhân 100 vô điều kiện — hóa đơn nạp tay sẽ hiện thành 1000%.
+// Quy ước: ≤ 1 là dạng tỷ lệ, nhân 100; lớn hơn thì đã là phần trăm sẵn. Thuế
+// suất VAT cao nhất hiện hành là 10%, nên mốc 1 không trùng mức thuế thật nào
+// (1% có tồn tại nhưng ghi dạng tỷ lệ sẽ là 0.01 — vẫn ≤ 1, vẫn ra đúng).
+export const dinhDangPhanTramVat = (v: number | null | undefined) => {
+  if (v == null || v === 0) return "";
+  const pt = v <= 1 ? v * 100 : v;
+  // Bỏ đuôi ,00 cho các mức nguyên (8 · 10) nhưng vẫn giữ số lẻ nếu có
+  return Number.isInteger(pt) ? String(pt) : pt.toLocaleString("vi-VN");
+};

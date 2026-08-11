@@ -79,8 +79,28 @@ namespace KT2000.Api.Controllers
         }
 
         /// <summary>
+        /// POST api/thue/hoa-don/lines — dòng hàng của NHIỀU hóa đơn trong một lượt.
+        /// </summary>
+        public record LinesNhieuRequest(List<string>? MaHds);
+
+        [HttpPost("hoa-don/lines")]
+        public async Task<IActionResult> LinesNhieu([FromBody] LinesNhieuRequest req)
+        {
+            var chan = ChanNeuLaNoiBo();
+            if (chan != null) return chan;
+
+            var ds = (req?.MaHds ?? new List<string>())
+                     .Where(s => !string.IsNullOrWhiteSpace(s))
+                     .Select(s => s.Trim())
+                     .Distinct()
+                     .Take(500)
+                     .ToList();
+
+            return Ok(await _thue.LayLinesNhieu(TenantCode(), FiscalYear(), ds));
+        }
+
+        /// <summary>
         /// GET api/thue/hoa-don/{maHd}/html — bản HTML gốc của hóa đơn (ảnh HĐ).
-        /// Trả text/html để frontend mở bằng blob; 404 khi hóa đơn không kèm bản gốc.
         /// </summary>
         [HttpGet("hoa-don/{maHd}/html")]
         public async Task<IActionResult> XemHtml(string maHd)

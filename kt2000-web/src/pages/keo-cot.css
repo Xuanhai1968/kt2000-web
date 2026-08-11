@@ -1,0 +1,13 @@
+.ag-header-cell-resize {
+  cursor: col-resize;
+}
+
+.ag-header-cell-resize:hover::after {
+  background-color: #0958d9;
+  width: 2px;
+}
+
+.ag-root-wrapper.ag-column-resizing,
+.ag-root-wrapper.ag-column-resizing * {
+  cursor: col-resize !important;
+}

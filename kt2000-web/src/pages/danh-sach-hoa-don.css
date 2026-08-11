@@ -54,59 +54,32 @@
   border-radius: 2px;
 }
 
-.ds-hoadon.ds-hoadon .luoi-ds .ant-table-thead > tr > th,
-.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr > td {
-  padding: 0 4px;
-  font-size: 12px;
-  line-height: 20px;
-  height: 22px;
-  max-height: 22px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ds-hoadon .luoi-ds .ant-table-tbody > tr {
-  height: 22px;
-}
-
-.ds-hoadon.ds-hoadon .luoi-ds .ant-table table {
-  table-layout: fixed;
-}
-
-.ds-hoadon .luoi-ds .ant-table-thead > tr > th {
+.ds-hoadon .ag-header {
   background: #e8e8e8;
-  font-weight: 600;
   border-bottom: 1px solid #a0a0a0;
 }
 
-.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr:hover > td {
-  background: #eaf7ff;
+/* Chữ tiêu đề cột: đen đậm. Balham để màu chữ header nhạt hơn thân bảng, trên
+   nền xám #e8e8e8 đọc ra chữ mờ — lưới VFP gốc tiêu đề luôn đen rõ. Phải khai
+   cả color chứ không chỉ font-weight, và nhắm .ag-header-cell-label để trùm cả
+   ô tiêu đề chứ không riêng phần chữ. */
+.ds-hoadon .ag-header-cell-text,
+.ds-hoadon .ag-header-cell-label,
+.ds-hoadon .ag-header-group-text {
+  font-weight: 700;
+  color: #000;
 }
 
-/* Dòng đang chọn: xanh lá nhạt như thanh chọn của lưới VFP */
-.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr.dong-dang-chon > td {
-  background: #b7f0c5;
+.ds-hoadon .ag-row.dong-dang-chon .ag-cell {
+  background-color: #b7f0c5 !important;
 }
 
-.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr > td.o-dang-dung,
-.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr:hover > td.o-dang-dung {
-  outline: 2px solid #0958d9;
-  outline-offset: -2px;
-  background: #cfe8ff;
+.ds-hoadon .ag-row:hover .ag-cell {
+  background-color: #eaf7ff;
 }
 
-.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr > td.o-dang-sua,
-.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr:hover > td.o-dang-sua {
-  outline: 2px solid #d48806;
-  outline-offset: -2px;
-  background: #fffbe6;
-  padding: 0;
-}
-
-.ds-hoadon .khung-ban-phim:focus,
-.ds-hoadon .khung-ban-phim:focus-visible {
-  outline: none;
+.ds-hoadon .ag-row {
+  cursor: pointer;
 }
 
 /* ----- Ba tầng thanh công cụ dưới lưới ----- */
@@ -157,18 +130,10 @@
   min-width: 150px;
 }
 
-/* ----- Khung ghi chú / danh sách phụ giữa form ----- */
+/* ----- Khung lưới dòng hàng giữa form ----- */
 .ds-hoadon .khung-phu {
   background: #fff;
   border: 1px solid #91caff;
-  min-height: 90px;
-}
-
-.ds-hoadon.ds-hoadon .khung-phu .ant-table-thead > tr > th,
-.ds-hoadon.ds-hoadon .khung-phu .ant-table-tbody > tr > td {
-  padding: 0 4px;
-  font-size: 12px;
-  line-height: 18px;
 }
 
 /* ----- Cột SL File XML bên phải ----- */

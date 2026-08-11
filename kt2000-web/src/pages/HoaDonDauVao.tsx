@@ -7,6 +7,7 @@ import {
   getAdminTenants, getLeftoverFiles, getRawFiles, getRawHtml, importOne,
   getTctCredential, saveTctCredential, fetchStart, fetchProgress, fetchStop,
   loiApi, thueDanhSachHoaDon, thueChiTietHoaDon, thueHtmlHoaDon,
+  thueLinesNhieuHoaDon,
 } from "../api";
 import type {
   AdminTenant, LeftoverInfo, HuongLay, HoaDonConLai, MatHang, PhienLay,
@@ -14,13 +15,17 @@ import type {
 } from "../api";
 import { useAuth } from "../AuthContext";
 import DanhSachHoaDon from "./DanhSachHoaDon";
+import XemHtmlHoaDon from "./XemHtmlHoaDon";
 import { AgGridReact } from "ag-grid-react";
 import { mauDonVi, damDonVi } from "../theme/donViColors";
 import {
   themeVfp, luoiVfpProps, colVfp, colSua, colSo, dinhDangTien,
+  dinhDangPhanTramVat,
 } from "../theme/luoiVfp";
+import { useNhoRongCot } from "../theme/nhoRongCot";
 import "./luoi-gon.css";
 import "./mau-huong.css";
+import "./keo-cot.css";            // con trỏ ↔ ở mép cột, báo cho biết kéo được
 import "./hoa-don-dau-vao.css";
 
 // NT-06 (Q2): ghi nhớ theo MÁY chứ không theo người — đúng hành vi VFP cũ, nơi
@@ -92,6 +97,11 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
   const [chonFile, setChonFile] = useState<string | null>(null);
   const hdDangChon = dsConLai.find((x) => x.tenFile === chonFile) ?? null;
 
+  // Bề rộng cột nhớ theo NGƯỜI DÙNG — kéo mép tiêu đề một lần, mở lại vẫn y nguyên
+  const nguoiDung = session?.user.loginName;
+  const nhoCotHd = useNhoRongCot({ tenLuoi: "raw-hoadon", nguoiDung });
+  const nhoCotMh = useNhoRongCot({ tenLuoi: "raw-mathang", nguoiDung });
+
   const donViDangChon = selected.length === 1
     ? tenants.find((t) => t.id === selected[0]) ?? null : null;
   const soFileCuaDonViChon = donViDangChon
@@ -139,19 +149,22 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
           }),
         }));
 
-  // Xem bản HTML gốc — tải qua axios (có token) rồi mở bằng blob, không mở link thẳng
-  const xemHtml = async (hd: HoaDonConLai) => {
-    if (!modalDonVi) return;
+  // Xem bản HTML gốc NGAY TRONG MÀN. Tải qua axios (có token) chứ không mở link
+  // thẳng; modal tự lo phần tải, ở đây chỉ chỉ định xem file nào.
+  const [htmlHd, setHtmlHd] = useState<HoaDonConLai | null>(null);
+  const xemHtml = (hd: HoaDonConLai) => setHtmlHd(hd);
+
+  const taiHtmlRaw = async (): Promise<string | null> => {
+    if (!htmlHd || !modalDonVi) return null;
     try {
-      const r = await getRawHtml(modalDonVi.id, namLamViec, hd.thang, hd.huong, hd.tenFile);
-      const url = URL.createObjectURL(new Blob([r.data], { type: "text/html;charset=utf-8" }));
-      window.open(url, "_blank", "noopener");
-      // Thu hồi muộn để tab kịp đọc xong
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (e: any) {
-      message.error(e?.response?.status === 404
-        ? "Hóa đơn này không có bản HTML kèm theo"
-        : loiApi(e, "Không mở được bản HTML"));
+      const r = await getRawHtml(modalDonVi.id, namLamViec,
+                                 htmlHd.thang, htmlHd.huong, htmlHd.tenFile);
+      return r.data;
+    } catch (e: unknown) {
+      const st = (e as { response?: { status?: number } })?.response?.status;
+      // 404 = không có bản gốc kèm theo: modal hiện khung rỗng có giải thích
+      if (st === 404) return null;
+      throw new Error(loiApi(e, "Không mở được bản HTML"), { cause: e });
     }
   };
 
@@ -582,16 +595,23 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
              đặt bằng scroll.y để antd giữ tiêu đề cột đứng yên khi kéo. */}
         <div style={{ flex: "1 1 50%", minHeight: 0,
                       display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <Typography.Text strong style={{ marginBottom: 2, fontSize: 13 }}>
-          Hóa đơn còn trong raw\ ({dsConLai.length})
-          <Typography.Text type="secondary" style={{ fontWeight: 400, marginLeft: 8, fontSize: 13 }}>
-            — bấm một dòng để xem mặt hàng bên dưới
+        <Space size={8} style={{ marginBottom: 2 }}>
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            Hóa đơn còn trong raw\ ({dsConLai.length})
           </Typography.Text>
-        </Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            — bấm một dòng để xem mặt hàng bên dưới; kéo mép tiêu đề để đổi bề rộng cột
+          </Typography.Text>
+          <Button size="small" onClick={nhoCotHd.datLai}
+                  title="Trả bề rộng các cột về mặc định">
+            Đặt lại cột
+          </Button>
+        </Space>
         <div style={{ flex: 1, minHeight: 0 }}>
         <AgGridReact<HoaDonConLai>
           theme={themeVfp}
           {...luoiVfpProps}
+          {...nhoCotHd.props}
           rowData={dsConLai}
           getRowId={(p) => p.data.tenFile}
           defaultColDef={colVfp}
@@ -608,30 +628,31 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
             if (f) suaHoaDon(e.data.tenFile, { [f]: e.newValue } as Partial<HoaDonConLai>);
           }}
           columnDefs={[
-            { headerName: "Tháng", field: "thang", width: 70 },
+            { colId: "thang", headerName: "Tháng", field: "thang", width: 70 },
             // Bỏ cột Hướng: tiêu đề modal đã ghi hướng rồi. Ký hiệu nới rộng vì độ dài
             // không đoán trước; Số HĐ và Ngày co lại vì đã có khuôn cố định.
-            { ...colSua, headerName: "Ký hiệu", field: "khHd", width: 130 },
-            { ...colSua, headerName: "Số HĐ", field: "soHd", width: 95 },
-            { ...colSua, headerName: "Ngày", field: "ngay", width: 110 },
-            { headerName: "Đối tác", width: 240,
+            { ...colSua, colId: "khHd", headerName: "Ký hiệu", field: "khHd", width: 130 },
+            { ...colSua, colId: "soHd", headerName: "Số HĐ", field: "soHd", width: 95 },
+            { ...colSua, colId: "ngay", headerName: "Ngày", field: "ngay", width: 110 },
+            { colId: "doiTac", headerName: "Đối tác", width: 240,
               valueGetter: (p) => !p.data ? ""
                 : p.data.huong === "VAO"
                   ? `${p.data.tenBan} [${p.data.mstBan}]`
                   : `${p.data.tenMua} [${p.data.mstMua}]` },
-            { ...colSo, headerName: "Tiền hàng", field: "tienHang", width: 130,
-              valueFormatter: (p) => dinhDangTien(p.value) },
-            { ...colSo, headerName: "VAT", field: "tienVat", width: 115,
-              valueFormatter: (p) => dinhDangTien(p.value) },
+            { ...colSo, colId: "tienHang", headerName: "Tiền hàng", field: "tienHang",
+              width: 130, valueFormatter: (p) => dinhDangTien(p.value) },
+            { ...colSo, colId: "tienVat", headerName: "VAT", field: "tienVat",
+              width: 115, valueFormatter: (p) => dinhDangTien(p.value) },
             // Chiết khấu chỉ đọc: đã nhận ra là chiết khấu và đã trừ đúng thì không có
             // gì để cảnh báo; tô đỏ chỉ khiến người đọc tưởng hóa đơn hỏng.
-            { headerName: "Chiết khấu", field: "tienCk", width: 120,
+            { colId: "tienCk", headerName: "Chiết khấu", field: "tienCk", width: 120,
               type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
-            { headerName: "Tổng", field: "tongTien", width: 125,
+            { colId: "tongTien", headerName: "Tổng", field: "tongTien", width: 125,
               type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
             // Ngưỡng 10đ khớp SAI_SO_CHO_PHEP bên ImportService — không thì hóa đơn
             // backend đã nhận vẫn hiện đỏ ở đây, đọc như còn lỗi.
-            { headerName: "Lệch Σ line", width: 125, type: "numericColumn",
+            { colId: "lechSumLine", headerName: "Lệch Σ line", width: 125,
+              type: "numericColumn",
               valueGetter: (p) => (p.data ? p.data.tienHang - sumLine(p.data) : 0),
               valueFormatter: (p) => (Math.abs(p.value) < 10 ? "0" : dinhDangTien(p.value)),
               // Tra ve MOT hinh dang duy nhat: hai nhanh khac khoa thi TS suy ra kieu
@@ -641,13 +662,14 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                 color: Math.abs(p.value) < 10 ? "inherit" : "#cf1322",
                 fontWeight: Math.abs(p.value) < 10 ? 400 : 600,
               }) },
-            { headerName: "Vì sao còn nằm lại", field: "lyDo", width: 300,
+            { colId: "lyDo", headerName: "Vì sao còn nằm lại", field: "lyDo", width: 300,
               tooltipField: "lyDo",
               cellStyle: (p) => ({
                 backgroundColor: "#f5f5f5",
                 color: p.data?.coTrongExcel ? "#cf1322" : "#d46b08",
               }) },
-            { headerName: "Tên file", field: "tenFile", width: 300, tooltipField: "tenFile" },
+            { colId: "tenFile", headerName: "Tên file", field: "tenFile", width: 300,
+              tooltipField: "tenFile" },
           ]}
         />
         </div>
@@ -687,6 +709,10 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                   </Tag>
                 )}
                 <Button size="small" onClick={() => xemHtml(hdDangChon)}>Xem ảnh HĐ (HTML)</Button>
+                <Button size="small" onClick={nhoCotMh.datLai}
+                        title="Trả bề rộng các cột mặt hàng về mặc định">
+                  Đặt lại cột
+                </Button>
                 <Popconfirm
                   title="Nạp hóa đơn này vào database?"
                   description={`Mã sẽ ghi: ${hdDangChon.huong}_${hdDangChon.mstBan}`
@@ -703,6 +729,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                 <AgGridReact<MatHang>
                   theme={themeVfp}
                   {...luoiVfpProps}
+                  {...nhoCotMh.props}
                   rowData={dongHangThat(hdDangChon)}
                   getRowId={(p) => String(p.data.stt)}
                   defaultColDef={colVfp}
@@ -713,31 +740,34 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                                       { [f]: e.newValue } as Partial<MatHang>);
                   }}
                   columnDefs={[
-                    { headerName: "STT", field: "stt", width: 65 },
+                    { colId: "stt", headerName: "STT", field: "stt", width: 65 },
                     // Dòng chiết khấu đã ẩn khỏi lưới, nhưng vẫn giữ cột này cho
                     // khuyến mại và ghi chú — không có nó thì mọi dòng nhìn như nhau.
-                    { headerName: "TC", field: "tinhChat", width: 60,
+                    { colId: "tinhChat", headerName: "TC", field: "tinhChat", width: 60,
                       headerTooltip: "Tính chất dòng (TChat của TCT)",
                       valueFormatter: (p) => ({ "2": "KM", "3": "CK", "4": "GC" }[p.value as string] ?? "—") },
-                    { ...colSua, headerName: "Tên hàng", field: "tenHang", width: 300,
-                      tooltipField: "tenHang" },
-                    { ...colSua, headerName: "ĐVT", field: "dvt", width: 85 },
-                    { ...colSo, headerName: "Số lượng", field: "soLuong", width: 110,
-                      valueFormatter: (p) => dinhDangTien(p.value) },
-                    { ...colSo, headerName: "Đơn giá", field: "donGia", width: 130,
-                      valueFormatter: (p) => dinhDangTien(p.value) },
-                    { headerName: "SL × ĐG", width: 140, type: "numericColumn",
+                    { ...colSua, colId: "tenHang", headerName: "Tên hàng", field: "tenHang",
+                      width: 300, tooltipField: "tenHang" },
+                    { ...colSua, colId: "dvt", headerName: "ĐVT", field: "dvt", width: 85 },
+                    { ...colSo, colId: "soLuong", headerName: "Số lượng", field: "soLuong",
+                      width: 110, valueFormatter: (p) => dinhDangTien(p.value) },
+                    { ...colSo, colId: "donGia", headerName: "Đơn giá", field: "donGia",
+                      width: 130, valueFormatter: (p) => dinhDangTien(p.value) },
+                    { colId: "slNhanDg", headerName: "SL × ĐG", width: 140,
+                      type: "numericColumn",
                       valueGetter: (p) => (p.data ? p.data.soLuong * p.data.donGia : 0),
                       valueFormatter: (p) => dinhDangTien(p.value) },
                     // Thành tiền chỉ đọc — tự nhân lại từ SL × ĐG khi sửa một trong hai.
-                    { headerName: "Thành tiền", field: "thanhTien", width: 140,
+                    { colId: "thanhTien", headerName: "Thành tiền", field: "thanhTien",
+                      width: 140,
                       type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
                     // Tên cột nói rõ đang so với cái gì. Cột "Lệch Σ line" ở lưới TRÊN so
                     // tiền hàng với Σ thành tiền — hai phép kiểm khác nhau, một cái bằng 0
                     // mà cái kia khác 0 là bình thường: người bán làm tròn đơn giá thì
                     // thành tiền lệch với SL×ĐG, nhưng tổng hóa đơn vẫn khớp.
                     // (ca thật C26TQQ/3670: lệch SL×ĐG 409đ, còn Σ line khớp đúng 0)
-                    { headerName: "Lệch SL×ĐG", width: 130, type: "numericColumn",
+                    { colId: "lechSlDg", headerName: "Lệch SL×ĐG", width: 130,
+                      type: "numericColumn",
                       headerTooltip: "Thành tiền − (SL × ĐG)",
                       valueGetter: (p) => (p.data ? p.data.thanhTien - p.data.soLuong * p.data.donGia : 0),
                       valueFormatter: (p) => (Math.abs(p.value) < 1 ? "0" : dinhDangTien(p.value)),
@@ -746,7 +776,8 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                         color: Math.abs(p.value) < 1 ? "inherit" : "#cf1322",
                         fontWeight: Math.abs(p.value) < 1 ? 400 : 600,
                       }) },
-                    { ...colSua, headerName: "% VAT", field: "thueSuat", width: 85 },
+                    { ...colSua, colId: "thueSuat", headerName: "% VAT", field: "thueSuat",
+                      width: 85 },
                   ]}
                 />
               </div>
@@ -754,6 +785,13 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
           )}
         </div>
       </Modal>
+
+      <XemHtmlHoaDon
+        mo={htmlHd != null}
+        onDong={() => setHtmlHd(null)}
+        nhan={htmlHd ? `${htmlHd.khHd}/${htmlHd.soHd}` : undefined}
+        tai={taiHtmlRaw}
+      />
     </Space>
     </div>
   );
@@ -857,6 +895,9 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
         });
       }
       if (baoKhiXong) message.success(`Đã đọc ${ds.length} hóa đơn`);
+      // Kéo sẵn dòng hàng của cả danh sách, CHẠY NGẦM sau khi màn hình đã có dữ
+      // liệu — không await, để hóa đơn đầu tiên hiện ra ngay như trước.
+      void napNenLines(ds);
     } catch (e) {
       setDsHd([]);
       setTenFileChon(null);
@@ -869,9 +910,11 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
   const dangTaiRef = useRef<Set<string>>(new Set());
   const yeuCauCuoiRef = useRef<string | null>(null);
   const laHdMoi = (maHd: string) => maHd.startsWith("__moi_");
-  const taiChiTiet = async (maHd: string) => {
+  const taiChiTiet = async (maHd: string, bucTaiLai = false) => {
     if (laHdMoi(maHd)) return;
-    if (dangTaiRef.current.has(maHd)) return;
+    // Đang có request cho chính mã này thì thôi — trừ khi người dùng chủ động bấm
+    // Enter để gọi lại, lúc đó phải cho đi tiếp chứ không im lặng bỏ qua.
+    if (!bucTaiLai && dangTaiRef.current.has(maHd)) return;
     dangTaiRef.current.add(maHd);
     yeuCauCuoiRef.current = maHd;
     try {
@@ -886,6 +929,51 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
       dangTaiRef.current.delete(maHd);
     }
   };
+
+  // ===== Nạp nền dòng hàng =====
+  // API danh sách không kèm lines cho nhẹ tải, nên lướt ↑/↓ ở modal danh sách là
+  // mỗi hóa đơn một request — bảng dưới trống một nhịp rồi mới có dữ liệu. Ở đây
+  // kéo sẵn lines của cả danh sách về, CHIA LÔ và chỉ chạy SAU khi màn hình đã
+  // tải xong, để người dùng không phải chờ thêm gì ở lần vẽ đầu.
+  //
+  // Chia lô thay vì một cú 1000 dòng: có dữ liệu dùng dần ngay từ lô đầu, và
+  // một lô hỏng thì các lô khác vẫn xong. 200 nằm dưới trần 500 của backend.
+  const CO_LO_NAP_NEN = 200;
+  const napNenRef = useRef<AbortController | null>(null);
+
+  const napNenLines = async (ds: HoaDonThue[]) => {
+    // Chỉ lấy hóa đơn CHƯA có lines; hóa đơn mới soạn chưa vào sổ thì không hỏi.
+    const can = ds.filter((x) => x.lines.length === 0 && !laHdMoi(x.maHd))
+                  .map((x) => x.maHd);
+    if (can.length === 0) return;
+
+    napNenRef.current?.abort();     // đổi đơn vị/năm giữa chừng thì bỏ lượt cũ
+    const bo = new AbortController();
+    napNenRef.current = bo;
+
+    for (let i = 0; i < can.length; i += CO_LO_NAP_NEN) {
+      if (bo.signal.aborted) return;
+      const lo = can.slice(i, i + CO_LO_NAP_NEN);
+      try {
+        const r = await thueLinesNhieuHoaDon(lo);
+        if (bo.signal.aborted) return;
+        const map = r.data;
+        setDsHd((cu) => cu.map((x) => {
+          // Đừng đè lên hóa đơn đã có lines: trong lúc lô này chạy, người dùng có
+          // thể đã bấm vào một hóa đơn và taiChiTiet đã ghi bản đầy đủ vào đó.
+          if (x.lines.length > 0) return x;
+          const lines = map[x.maHd];
+          return lines ? { ...x, lines } : x;
+        }));
+      } catch {
+        // Nạp nền hỏng thì im lặng — đây là tối ưu tốc độ, không phải nghiệp vụ.
+        // Người dùng bấm vào hóa đơn nào thì taiChiTiet vẫn tải bình thường.
+        return;
+      }
+    }
+  };
+
+  useEffect(() => () => napNenRef.current?.abort(), []);
 
   const soNhapRef = useRef(0);
 
@@ -920,20 +1008,23 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
     message.info("Đã tạo hóa đơn trống, chưa có API lưu, dữ liệu chỉ giữ trong phiên làm việc");
   };
 
-  const xemHtml = async (maHd: string) => {
-    if (!maHd) return;
+  // Xem bản gốc NGAY TRONG MÀN — trước đây mở tab mới nên mất chỗ đang đứng, mà
+  // trình duyệt hay chặn pop-up khiến bấm xong không thấy gì. Modal tự lo phần
+  // tải; ở đây chỉ nói cho nó biết xem hóa đơn nào.
+  const [htmlMaHd, setHtmlMaHd] = useState<string | null>(null);
+  const xemHtml = (maHd: string) => { if (maHd) setHtmlMaHd(maHd); };
+
+  const taiHtmlHoaDon = async (): Promise<string | null> => {
+    if (!htmlMaHd) return null;
     try {
-      const r = await thueHtmlHoaDon(maHd);
-      const url = URL.createObjectURL(
-        new Blob([r.data], { type: "text/html;charset=utf-8" }));
-      window.open(url, "_blank", "noopener");
-      // Thu hồi muộn để tab kịp đọc xong
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      const r = await thueHtmlHoaDon(htmlMaHd);
+      return r.data;
     } catch (e: unknown) {
       const st = (e as { response?: { status?: number } })?.response?.status;
-      message.error(st === 404
-        ? "Hóa đơn này không có bản HTML kèm theo"
-        : loiApi(e, "Không mở được bản HTML"));
+      // 404 = hóa đơn không kèm bản gốc: chuyện thường, để modal hiện khung rỗng
+      // với lời giải thích chứ không phải lỗi đỏ.
+      if (st === 404) return null;
+      throw new Error(loiApi(e, "Không mở được bản HTML"), { cause: e });
     }
   };
   useEffect(() => {
@@ -943,11 +1034,14 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.tenant.id, namLamViec, huongMacDinh]);
 
-  const chonHoaDon = (maHd: string) => {
+  // bucTaiLai: người dùng bấm Enter ở lưới danh sách để "gọi lại" hóa đơn đang
+  // đứng — phải hỏi lại server kể cả khi trong bộ nhớ đã có lines, vì đó chính là
+  // lối thoát khi bản đang giữ bị lệch hoặc lần tải trước hỏng.
+  const chonHoaDon = (maHd: string, bucTaiLai = false) => {
     setTenFileChon(maHd);
     const x = dsHd.find((h) => h.maHd === maHd);
     if (!x) return;
-    if (x.lines.length === 0) void taiChiTiet(maHd);
+    if (bucTaiLai || x.lines.length === 0) void taiChiTiet(maHd, bucTaiLai);
     else setSttChon(x.lines[0]?.sttLine ?? null);
     setDinhKhoanTheoFile((m) => m[maHd] ? m : {
       ...m,
@@ -983,6 +1077,23 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
     <span className={do_ ? "nhan nhan-do" : "nhan"} style={{ width: rong }}>{t}</span>
   );
 
+  // Tiền trong khối cộng: dấu . ngăn hàng nghìn, dấu , ngăn phần lẻ — kiểu vi-VN
+  // như bản gốc VFP. 4 chữ số lẻ vì đơn giá hóa đơn điện tử có thể lẻ tới đó.
+  // Tham số khai đúng number: để union string|number thì antd suy ngược valueType
+  // của InputNumber thành string|number, và onChange trả về union đó — gán vào
+  // DinhKhoan (toàn number) là lỗi kiểu.
+  const tienVn = (v: number | undefined) =>
+    Number(v ?? 0).toLocaleString("vi-VN",
+      { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+
+  // Cặp với tienVn cho các ô SỬA ĐƯỢC. Thiếu parser thì antd đọc lại chính chuỗi
+  // đã định dạng: gõ 6703509 hiện "6.703.509,0000", nhưng lần nhập sau nó cắt ở
+  // dấu chấm đầu và giá trị tụt về 6 — tiền VAT sai mà không có gì báo.
+  const docTienVn = (s: string | undefined): number => {
+    const so = Number((s ?? "").replace(/\./g, "").replace(",", "."));
+    return Number.isFinite(so) ? so : 0;
+  };
+
   const nutChuaNoi = (nhan: string, lop = "") => (
     <Button size="small" className={lop} disabled
             title="Nghiệp vụ này chưa nối backend">
@@ -999,7 +1110,10 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
           <Space size={6}>
             <Select
               size="small" style={{ width: 300 }} placeholder="Chọn hóa đơn"
-              value={tenFileChon ?? undefined} onChange={chonHoaDon}
+              // Gọi tường minh MỘT tham số: antd truyền option làm đối số thứ hai,
+              // đưa thẳng chonHoaDon vào đây thì option trở thành cờ bucTaiLai và
+              // mỗi lần chọn trong Select lại nã thêm một request thừa.
+              value={tenFileChon ?? undefined} onChange={(v) => chonHoaDon(v)}
               showSearch optionFilterProp="label"
               options={dsHd.map((x) => ({
                 value: x.maHd,
@@ -1030,11 +1144,14 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
         )}
 
         <div className="phieu-nhap">
-          {/* ===== HÀNG 1: Mã HĐ · Ký hiệu · Số HĐ · tiêu đề · các checkbox in ===== */}
+          <div className="hang hang-tieu-de">
+            <div className="tieu-de-phieu">
+              {laDauRa ? "HĐ GTGT ĐẦU RA" : "HĐ GTGT ĐẦU VÀO"}
+            </div>
+          </div>
+
           <div className="hang">
             {oNhan("Mã HĐ", 52)}
-            {/* Mã HĐ hệ thống tự sinh theo BR-HD-01 lúc ghi vào sổ — hóa đơn mới
-                soạn thì chưa có, hiện "(mới)" thay vì khóa tạm __moi_n */}
             <Input size="small" style={{ width: 96 }} disabled
                    value={hd ? (laHdMoi(hd.maHd) ? "(mới)" : hd.maHd) : ""}
                    title={hd && !laHdMoi(hd.maHd) ? hd.maHd
@@ -1043,10 +1160,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             <Input size="small" style={{ width: 96 }} value={hd?.khhd ?? ""} readOnly />
             {oNhan("Số HĐ", 50)}
             <Input size="small" style={{ width: 90 }} value={hd?.soHd ?? ""} readOnly />
-
-            <div className="tieu-de-phieu" style={{ marginLeft: 10, marginRight: 10 }}>
-              {laDauRa ? "PHIẾU XUẤT HÀNG" : "PHIẾU NHẬP HÀNG"}
-            </div>
 
             <Checkbox checked={dk.hoaDonHuy}
                       onChange={(e) => suaDk({ hoaDonHuy: e.target.checked })}>
@@ -1060,7 +1173,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                    value={(hd?.ngay ?? "").slice(0, 10)} />
           </div>
 
-          {/* ===== HÀNG 2: Ngày HĐ · ngày nhập hàng · khai tháng · Đã In ===== */}
           <div className="hang">
             {oNhan("Ngày HĐ", 52)}
             <Input size="small" style={{ width: 96 }} readOnly
@@ -1089,7 +1201,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             </Checkbox>
           </div>
 
-          {/* ===== HÀNG 3: MST KH · địa chỉ · người GD ===== */}
           <div className="hang">
             {oNhan("MST KH", 52)}
             <Input size="small" style={{ width: 150 }} readOnly value={mstDoiTac} />
@@ -1101,7 +1212,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                    onChange={(e) => suaDk({ nguoiGD: e.target.value })} />
           </div>
 
-          {/* ===== HÀNG 4: Tên NB · địa chỉ GH ===== */}
           <div className="hang">
             {oNhan("Tên NB", 52)}
             <Input size="small" style={{ width: 110 }} readOnly value={mstDoiTac} />
@@ -1111,9 +1221,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             <Input size="small" style={{ width: 240 }} disabled />
           </div>
 
-          {/* ===== KHỐI ĐỊNH KHOẢN + KHỐI HĐ LIÊN QUAN (hai cột) ===== */}
           <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
-            {/* ---- Cột trái: định khoản ---- */}
             <div style={{ flex: "1 1 62%", minWidth: 0 }}>
               <div className="hang">
                 {oNhan("GHI NỢ", 52, true)}
@@ -1144,7 +1252,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                         options={TK_VAT_GOI_Y.map((x) => ({ value: x, label: x }))} />
                 <Input size="small" style={{ width: 170 }} value="Thuế GTGT được khấu trừ"
                        readOnly />
-                {oNhan("TK ĐƯ VAT", 76, true)}
+                {oNhan("TK DƯ VAT", 76, true)}
                 <Select size="small" style={{ width: 74 }} value={dk.tkDuVat}
                         onChange={(v) => suaDk({ tkDuVat: v })}
                         options={TK_CO_GOI_Y.map((x) => ({ value: x, label: x }))} />
@@ -1232,7 +1340,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             </Checkbox>
             <Checkbox checked={dk.dungTkNganHang}
                       onChange={(e) => suaDk({ dungTkNganHang: e.target.checked })}>
-              Dùng TK Ngân h
+              Dùng TK Ngân hàng
             </Checkbox>
             <Checkbox checked={dk.banHangQuaDienThoai}
                       onChange={(e) => suaDk({ banHangQuaDienThoai: e.target.checked })}>
@@ -1246,6 +1354,8 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             rowKey="sttLine" size="small" pagination={false}
             dataSource={hd?.lines ?? []}
             loading={tai}
+            // y phải khớp height của .luoi-hang .ant-table-body trong CSS — bên đó
+            // ép chiều cao cứng để khung không co theo số dòng.
             scroll={{ x: 1180, y: 210 }}
             locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
                                         description="Hóa đơn không có dòng hàng" /> }}
@@ -1282,9 +1392,10 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                 render: (v: string | null) => v || dk.ghiNo },
               { title: "Có", dataIndex: "ghiCo", width: 56, align: "center",
                 render: (v: string | null) => v || dk.ghiCo },
+              // Hiện 10 chứ không phải 0,10 — xem chú thích đơn vị pt_vat ở
+              // dinhDangPhanTramVat (theme/luoiVfp.ts)
               { title: "% VAT", dataIndex: "ptVat", width: 74, align: "right",
-                render: (v: number) => v.toLocaleString("vi-VN",
-                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+                render: (v: number) => dinhDangPhanTramVat(v) },
               { title: "C.Khấu", dataIndex: "tienCk", width: 80, align: "right",
                 render: (v: number) => v.toLocaleString("vi-VN",
                   { minimumFractionDigits: 4, maximumFractionDigits: 4 }) },
@@ -1303,13 +1414,13 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                 {oNhan("Cộng tiền hàng", 140)}
                 <InputNumber size="small" style={{ width: 165 }} readOnly
                              value={congTienHang} controls={false}
-                             formatter={(v) => Number(v ?? 0).toLocaleString("vi-VN",
-                               { minimumFractionDigits: 4, maximumFractionDigits: 4 })} />
+                             formatter={tienVn} />
               </div>
               <div className="hang">
                 {oNhan("Chiết khấu", 140)}
                 <InputNumber size="small" style={{ width: 165 }} controls={false}
                              value={dk.chietKhau} disabled={!dk.suaTienCk}
+                             formatter={tienVn} parser={docTienVn}
                              onChange={(v) => suaDk({ chietKhau: v ?? 0 })} />
                 <Checkbox checked={dk.suaTienCk}
                           onChange={(e) => suaDk({ suaTienCk: e.target.checked })}>
@@ -1317,13 +1428,14 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                 </Checkbox>
               </div>
               <div className="hang">
-                {oNhan("Thuế suất", 90)}
+                {oNhan("Thuế suất", 84)}
                 <InputNumber size="small" style={{ width: 46 }} controls={false}
                              value={dk.thueSuat}
                              onChange={(v) => suaDk({ thueSuat: v ?? 0 })} />
-                <span className="nhan" style={{ width: 46 }}>% Tiền VAT</span>
+                <span className="nhan nhan-tien-vat">% Tiền VAT</span>
                 <InputNumber size="small" style={{ width: 165 }} controls={false}
                              value={dk.tienVat} disabled={!dk.suaTienVat}
+                             formatter={tienVn} parser={docTienVn}
                              onChange={(v) => suaDk({ tienVat: v ?? 0 })} />
                 <Checkbox checked={dk.suaTienVat}
                           onChange={(e) => suaDk({ suaTienVat: e.target.checked })}>
@@ -1333,9 +1445,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
               <div className="hang o-tong-tt">
                 {oNhan("Cộng tiền thanh toán", 140)}
                 <InputNumber size="small" style={{ width: 165 }} readOnly controls={false}
-                             value={congThanhToan}
-                             formatter={(v) => Number(v ?? 0).toLocaleString("vi-VN",
-                               { minimumFractionDigits: 4, maximumFractionDigits: 4 })} />
+                             value={congThanhToan} formatter={tienVn} />
               </div>
             </div>
 
@@ -1364,7 +1474,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             {nutChuaNoi("Lấy KM", "nut-cam")}
             {nutChuaNoi("T.Phẩm SX Thêm")}
             {nutChuaNoi("Thành tiền có VAT")}
-            {nutChuaNoi("In HĐ GTGT …")}
+            {nutChuaNoi("In HĐ GTGT")}
             {nutChuaNoi("Print", "nut-hong")}
             <span style={{ flex: 1 }} />
             {nutChuaNoi("Tạo HĐ Lắp ráp")}
@@ -1390,6 +1500,13 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
         laDauRa={laDauRa}
         onChon={chonHoaDon}
         onXemHtml={xemHtml}
+      />
+
+      <XemHtmlHoaDon
+        mo={htmlMaHd != null}
+        onDong={() => setHtmlMaHd(null)}
+        nhan={htmlMaHd ?? undefined}
+        tai={taiHtmlHoaDon}
       />
     </div>
   );

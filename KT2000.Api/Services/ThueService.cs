@@ -149,38 +149,70 @@ namespace KT2000.Api.Services
             }
             hd.TongTien = hd.TienHang - hd.TienCk + hd.TienVat;
 
-            using (var cmd = new SqlCommand(@"
-                SELECT stt_line, ma_hang, ten_hang_goc, dvt,
-                       ISNULL(so_luong, 0), ISNULL(don_gia, 0),
-                       ISNULL(so_luong, 0) * ISNULL(don_gia, 0) AS thanh_tien,
-                       ISNULL(pt_vat, 0), ISNULL(tien_ck, 0),
-                       ghi_no, ghi_co, ma_ngan, tinh_chat, ghi_chu
-                  FROM HOA_DON_LINE
-                 WHERE ma_hd = @id
-                 ORDER BY stt_line", conn))
+            using (var cmd = new SqlCommand(
+                SqlChonLine + " WHERE ma_hd = @id ORDER BY stt_line", conn))
             {
                 cmd.Parameters.AddWithValue("@id", maHd);
                 using var r = await cmd.ExecuteReaderAsync();
-                while (await r.ReadAsync())
-                    hd.Lines.Add(new HoaDonLineDto
-                    {
-                        SttLine   = r.IsDBNull(0) ? 0 : r.GetInt32(0),
-                        MaHang    = r.IsDBNull(1) ? null : r.GetString(1),
-                        TenHang   = r.IsDBNull(2) ? "" : r.GetString(2),
-                        Dvt       = r.IsDBNull(3) ? null : r.GetString(3),
-                        SoLuong   = r.GetDecimal(4),
-                        DonGia    = r.GetDecimal(5),
-                        ThanhTien = r.GetDecimal(6),
-                        PtVat     = r.GetDecimal(7),
-                        TienCk    = r.GetDecimal(8),
-                        GhiNo     = r.IsDBNull(9)  ? null : r.GetString(9),
-                        GhiCo     = r.IsDBNull(10) ? null : r.GetString(10),
-                        MaNgan    = r.IsDBNull(11) ? null : r.GetString(11),
-                        TinhChat  = r.IsDBNull(12) ? null : r.GetString(12),
-                        GhiChu    = r.IsDBNull(13) ? null : r.GetString(13),
-                    });
+                while (await r.ReadAsync()) hd.Lines.Add(DocLine(r));
             }
             return hd;
+        }
+
+        private const string SqlChonLine = @"
+            SELECT ma_hd, stt_line, ma_hang, ten_hang_goc, dvt,
+                   ISNULL(so_luong, 0), ISNULL(don_gia, 0),
+                   ISNULL(so_luong, 0) * ISNULL(don_gia, 0) AS thanh_tien,
+                   ISNULL(pt_vat, 0), ISNULL(tien_ck, 0),
+                   ghi_no, ghi_co, ma_ngan, tinh_chat, ghi_chu
+              FROM HOA_DON_LINE";
+
+        private static HoaDonLineDto DocLine(SqlDataReader r) => new()
+        {
+            SttLine   = r.IsDBNull(1) ? 0 : r.GetInt32(1),
+            MaHang    = r.IsDBNull(2) ? null : r.GetString(2),
+            TenHang   = r.IsDBNull(3) ? "" : r.GetString(3),
+            Dvt       = r.IsDBNull(4) ? null : r.GetString(4),
+            SoLuong   = r.GetDecimal(5),
+            DonGia    = r.GetDecimal(6),
+            ThanhTien = r.GetDecimal(7),
+            PtVat     = r.GetDecimal(8),
+            TienCk    = r.GetDecimal(9),
+            GhiNo     = r.IsDBNull(10) ? null : r.GetString(10),
+            GhiCo     = r.IsDBNull(11) ? null : r.GetString(11),
+            MaNgan    = r.IsDBNull(12) ? null : r.GetString(12),
+            TinhChat  = r.IsDBNull(13) ? null : r.GetString(13),
+            GhiChu    = r.IsDBNull(14) ? null : r.GetString(14),
+        };
+
+        public async Task<Dictionary<string, List<HoaDonLineDto>>> LayLinesNhieu(
+            string code, int year, IReadOnlyList<string> dsMaHd)
+        {
+            var ket = new Dictionary<string, List<HoaDonLineDto>>();
+            if (dsMaHd.Count == 0) return ket;
+
+            using var conn = await OpenAsync(code, year);
+
+            var thamSo = new string[dsMaHd.Count];
+            for (int i = 0; i < dsMaHd.Count; i++) thamSo[i] = "@p" + i;
+
+            var sql = SqlChonLine
+                    + $" WHERE ma_hd IN ({string.Join(",", thamSo)})"
+                    + " ORDER BY ma_hd, stt_line";
+
+            using var cmd = new SqlCommand(sql, conn);
+            for (int i = 0; i < dsMaHd.Count; i++)
+                cmd.Parameters.AddWithValue(thamSo[i], dsMaHd[i]);
+
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+            {
+                var maHd = r.GetString(0);
+                if (!ket.TryGetValue(maHd, out var ds))
+                    ket[maHd] = ds = new List<HoaDonLineDto>();
+                ds.Add(DocLine(r));
+            }
+            return ket;
         }
 
         public async Task<(string? Html, string? TenFile)> LayHtmlGoc(
