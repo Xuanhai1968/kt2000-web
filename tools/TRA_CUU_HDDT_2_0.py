@@ -502,6 +502,85 @@ def _khoa_dong(ws, r, cot):
     return (kh, so) if kh and so else None
 
 
+def _doc_sheet_tong(duong_dan, ten_sheet):
+    """Đọc 1 sheet của Excel tổng thành list dict, GIỮ NGUYÊN kiểu ô.
+
+    Cố tình KHÔNG dùng pd.read_excel: đọc dtype=str thì 51228 thành "51228.0",
+    còn để pandas tự suy kiểu thì "00000003" thành số 3 — mất số 0 đầu, mà đó
+    đúng là thứ BR-HD-01 vừa chuẩn hóa. openpyxl trả về đúng giá trị đã lưu.
+    Cũng không dùng read_only=True (bài học: Excel thiếu thẻ <dimension> trả về
+    lưới 1x1 mà không báo lỗi gì).
+    """
+    if not os.path.exists(duong_dan):
+        return []
+    wb = openpyxl.load_workbook(duong_dan, data_only=True)
+    try:
+        if ten_sheet not in wb.sheetnames:
+            return []
+        ws = wb[ten_sheet]
+        dong = ws.iter_rows(values_only=True)
+        try:
+            tieu_de = next(dong)
+        except StopIteration:
+            return []
+        cot = [str(c).strip() if c is not None else "" for c in tieu_de]
+        return [{k: ("" if v is None else v) for k, v in zip(cot, r) if k}
+                for r in dong]
+    finally:
+        wb.close()
+
+
+def ghi_excel_tong(duong_dan, masters, lines, sheet_master, sheet_line, run_log):
+    """Ghi Excel tổng theo kiểu HỢP NHẤT — KHÔNG ghi đè trắng.
+
+    Vì sao (ca thật HOA_SANG T3 ngày 11/08): chế độ tăng dần bỏ qua hóa đơn đã
+    tải, nên lượt chạy sau chỉ còn vài dòng đi qua hàng đợi. Ghi đè trắng bằng
+    ngần ấy dòng làm Excel tổng từ 100 tụt xuống 29, mà bước nạp lại coi file
+    này là TOÀN BỘ tháng. File vừa đóng vai "kết quả một lượt" vừa là "nguồn nạp
+    DB" — hai vai xung khắc; hợp nhất là cách gỡ.
+
+    Khóa gộp là MA_HD: hóa đơn có mặt trong lượt này thì bản MỚI thắng (kéo theo
+    cả dòng hàng của nó), hóa đơn không đụng tới thì giữ nguyên.
+
+    Hợp nhất hỏng thì TUYỆT ĐỐI không im lặng ghi đè: cất bản cũ ra tên khác đã.
+    """
+    thu_muc, ten = os.path.split(duong_dan)
+    goc, duoi = os.path.splitext(ten)
+    trang_thai = "moi"
+
+    if os.path.exists(duong_dan):
+        try:
+            khoa_moi = {str(r.get("MA_HD", "")) for r in masters}
+            cu_m = [r for r in _doc_sheet_tong(duong_dan, sheet_master)
+                    if str(r.get("MA_HD", "")) not in khoa_moi]
+            cu_l = [r for r in _doc_sheet_tong(duong_dan, sheet_line)
+                    if str(r.get("MA_HD", "")) not in khoa_moi]
+            trang_thai = f"hop_nhat giu_cu={len(cu_m)} luot_nay={len(masters)}"
+            masters = cu_m + list(masters)
+            lines = cu_l + list(lines)
+        except Exception as e:
+            sao_luu = os.path.join(thu_muc, f"~loi_hop_nhat_{goc}{duoi}")
+            try:
+                shutil.copy2(duong_dan, sao_luu)
+            except OSError:
+                pass
+            append_run_log(run_log,
+                f"EXCEL_TONG_HOP_NHAT_LOI {short_exc(e)} -> da sao luu {sao_luu}")
+            trang_thai = "LOI_HOP_NHAT_da_sao_luu"
+
+    # Ghi ra file tạm rồi đổi tên: .xlsx là file ZIP, chết giữa lúc ghi đè thẳng
+    # sẽ để lại ZIP cụt không mở được. os.replace trên cùng ổ đĩa là nguyên tử.
+    tam = os.path.join(thu_muc, f"~tam_{goc}{duoi}")
+    with pd.ExcelWriter(tam) as writer:
+        pd.DataFrame(masters).fillna("").to_excel(writer, sheet_name=sheet_master, index=False)
+        pd.DataFrame(lines).fillna("").to_excel(writer, sheet_name=sheet_line, index=False)
+    os.replace(tam, duong_dan)
+
+    append_run_log(run_log,
+        f"EXCEL_TONG_GHI {trang_thai} master={len(masters)} line={len(lines)} file={ten}")
+    return len(masters), len(lines)
+
+
 # ===== DỪNG ÊM =====
 # Backend đặt file STOP vào job_dir để XIN dừng. Trước đây nút Dừng gọi thẳng
 # proc.Kill(entireProcessTree) — giết cứng ngay giữa vòng tải, nên bước ghi cột
@@ -1276,7 +1355,17 @@ def append_non_xml_rows_from_excel_files(
             )
 
             if master_rows or line_rows:
+                # Bỏ hóa đơn ĐÃ có trong danh sách. Trước đây extend thẳng, không
+                # kiểm gì: hóa đơn nào vừa đi qua hàng đợi XML vừa xuất hiện ở đây
+                # sẽ nằm HAI dòng trong Excel tổng, và bước nạp ghi đè lẫn nhau.
+                # Bản đọc từ XML luôn đầy đủ hơn nên nó được giữ, bản NOXML bị loại.
                 with lock_rows:
+                    da_co = {str(r.get("MA_HD", "")) for r in all_master_rows}
+                    master_rows = [r for r in master_rows
+                                   if str(r.get("MA_HD", "")) not in da_co]
+                    khoa_them = {str(r.get("MA_HD", "")) for r in master_rows}
+                    line_rows = [r for r in line_rows
+                                 if str(r.get("MA_HD", "")) in khoa_them]
                     all_master_rows.extend(master_rows)
                     all_line_rows.extend(line_rows)
 
@@ -2609,12 +2698,12 @@ class tra_cuu_hdt:
                             excel_path = os.path.join(paths["output_dir"], f"HOA_DON_{h}_{MA_DONVI}.xlsx")
                             #print(f"Dang ghi {len(masters_h)} hoa don + {len(lines_h)} dong hang hoa vao: {excel_path}")
                             append_run_log(run_log, f"WRITE_EXCEL_START path={excel_path} master={len(masters_h)} lines={len(lines_h)}")
-                            with pd.ExcelWriter(excel_path) as writer:
-                                pd.DataFrame(masters_h).to_excel(writer, sheet_name=f'hoa_don_{h.lower()}', index=False)
-                                pd.DataFrame(lines_h).to_excel(writer, sheet_name=f'hoa_don_{h.lower()}_line', index=False)
+                            tong_m, tong_l = ghi_excel_tong(
+                                excel_path, masters_h, lines_h,
+                                f'hoa_don_{h.lower()}', f'hoa_don_{h.lower()}_line', run_log)
                             #print(f"Da ghi xong: {excel_path}")
 
-                            events.log("EXCEL_TONG_WRITTEN", path=excel_path, master=len(masters_h), lines=len(lines_h), huong=h)
+                            events.log("EXCEL_TONG_WRITTEN", path=excel_path, master=tong_m, lines=tong_l, huong=h)
                             append_run_log(run_log, f"WRITE_EXCEL_DONE path={excel_path}")
                             append_run_log(run_log, f"TO_DBF_STAGE_START excel={excel_path} stage_dir={stage_dir}")
                             # excel_to_exact_dbf(excel_path, stage_dir)
@@ -2634,10 +2723,11 @@ class tra_cuu_hdt:
                         # excel_tong = os.path.join(paths["output_dir"], f"HOA_DON_{huong_label}_{MA_DONVI}.xlsx")
                         # #print(f"Dang ghi {len(all_master_rows)} hoa don + {len(all_line_rows)} dong hang hoa vao: {excel_tong}")
 
-                        append_run_log(run_log, f"WRITE_EXCEL_DONE path={excel_tong}") 
-                        with pd.ExcelWriter(excel_tong) as writer:
-                            pd.DataFrame(all_master_rows).to_excel(writer, sheet_name=f'hoa_don_{huong_label.lower()}', index=False)
-                            pd.DataFrame(all_line_rows).to_excel(writer, sheet_name=f'hoa_don_{huong_label.lower()}_line', index=False)
+                        append_run_log(run_log, f"WRITE_EXCEL_DONE path={excel_tong}")
+                        ghi_excel_tong(
+                            excel_tong, all_master_rows, all_line_rows,
+                            f'hoa_don_{huong_label.lower()}',
+                            f'hoa_don_{huong_label.lower()}_line', run_log)
 
                         #print(f"Da ghi xong: {excel_tong}")
                         events.log("EXCEL_TONG_WRITTEN", path=excel_tong, master=len(all_master_rows), lines=len(all_line_rows))

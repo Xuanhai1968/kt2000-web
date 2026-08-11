@@ -118,8 +118,12 @@ namespace KT2000.Api.Services
 
                 foreach (var r in wsM.RowsUsed().Skip(1))
                 {
-                    string maHd = S(r, M, "MA_HD");
-                    if (maHd == "") continue;
+                    // MA_HD thô dùng để KHỚP sang sheet LINE (Python ghi y hệt chuỗi đó ở
+                    // cả hai sheet). Bản đã chuẩn hóa số hóa đơn mới là thứ ghi xuống DB —
+                    // đừng đổi chỗ hai cái, khớp bằng bản chuẩn là mất sạch dòng hàng.
+                    string maHdTho = S(r, M, "MA_HD");
+                    if (maHdTho == "") continue;
+                    string maHd = ChuanHoaMaHd(maHdTho, S2(r, M, "SO_HD", "SO_HD_G"));
 
                     // Ngày: chuẩn hóa → fallback _G (đều có thể là CHUỖI)
                     DateTime? ngay = D2(r, M, "NGAY_HD", "NGAY_HD_G");
@@ -128,7 +132,7 @@ namespace KT2000.Api.Services
                             "Không đọc được NGAY_HD/NGAY_HD_G")); continue; }
                     if (ngay.Value.Year != req.Nam) { skippedYear++; continue; }  // BR-IMP-01 lớp DÒNG
 
-                    var lines = linesByHd.GetValueOrDefault(maHd) ?? new List<IXLRow>();
+                    var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
 
                     // ---- Kiểm Σ line = master: ưu tiên cặp chuẩn hóa, trống thì cặp _G ----
                     // Sai số cho phép DƯỚI 10 đồng (chốt với Trường 03/08). Lý do: XML gốc
@@ -442,7 +446,9 @@ namespace KT2000.Api.Services
             string huongMa = req.Huong.Equals("RA", StringComparison.OrdinalIgnoreCase) ? "RA" : "VAO";
             string mstPhatHanh = string.IsNullOrWhiteSpace(req.MstPhatHanh)
                 ? (tenant.TaxCode ?? "") : req.MstPhatHanh.Trim();
-            string soHd = req.SoHd.Trim();
+            // BR-HD-01: đệm về 8 chữ số TRƯỚC khi ghép ma_hd, y như đường nạp hàng loạt —
+            // hai đường ra hai dạng số là cùng một hóa đơn nằm hai dòng trong DB.
+            string soHd = ChuanSoHd(req.SoHd);
             string maHd = $"{huongMa}_{mstPhatHanh}_{req.KhHd}_{soHd}";
             string khhd = req.MauSo + req.KhHd;   // giống UpsertMaster: KIEU_HD + ký hiệu
 
@@ -629,6 +635,34 @@ namespace KT2000.Api.Services
             catch { return null; }
         }
 
+        // BR-HD-01: SỐ HÓA ĐƠN chuẩn 8 chữ số (chốt Trường 11/08). Cổng TCT trả lúc
+        // "00000003" lúc "1" cho cùng một dạng số — mà ma_hd = HƯỚNG_MST_KHHD_SỐHĐ, nên
+        // cùng một hóa đơn lấy hai đường có thể ra HAI ma_hd khác nhau, nằm hai dòng
+        // trong DB. Đệm về 8 để danh tính chỉ có một dạng duy nhất.
+        //
+        // CHỈ đệm khi toàn chữ số và NGẮN hơn 8. Đo trên 1.500 hóa đơn thật của 3 đơn vị:
+        // 0 số có ký tự lạ, 0 số dài quá 8 — nhưng vẫn chừa đường cho ca ngoại lệ mai sau
+        // thay vì cắt cụt dữ liệu.
+        internal static string ChuanSoHd(string tho)
+        {
+            string s = (tho ?? "").Trim();
+            return s.Length is > 0 and < 8 && s.All(char.IsAsciiDigit) ? s.PadLeft(8, '0') : s;
+        }
+
+        // Đệm phần ĐUÔI số hóa đơn của ma_hd. Cố tình KHÔNG dựng lại ma_hd từ các mảnh:
+        // BR-HD-01 dùng MST NGƯỜI PHÁT HÀNH (luôn là người bán), còn biến mst ở UpsertMaster
+        // là của ĐỐI TÁC — dựng lại là sai MST với hóa đơn RA. Sửa đúng cái đuôi thì phần
+        // đầu không bị đụng, không có cách nào sai.
+        internal static string ChuanHoaMaHd(string maHd, string soHdTho)
+        {
+            string tho = (soHdTho ?? "").Trim();
+            string chuan = ChuanSoHd(tho);
+            if (tho.Length == 0 || chuan == tho) return maHd;
+            return maHd.EndsWith("_" + tho, StringComparison.Ordinal)
+                 ? maHd[..^tho.Length] + chuan
+                 : maHd;   // đuôi không khớp -> để nguyên, thà giữ cũ còn hơn đoán
+        }
+
         // Tháng KÊ KHAI, không phải tháng phát sinh (chốt Trường 11/08).
         // Đơn vị khai QUÝ gộp 3 tháng vào tờ khai của tháng CUỐI quý:
         //   1,2,3 → 3 · 4,5,6 → 6 · 7,8,9 → 9 · 10,11,12 → 12
@@ -666,7 +700,7 @@ namespace KT2000.Api.Services
 
             // khhd GHÉP kiểu + ký hiệu; ký hiệu ưu tiên chuẩn hóa, trống lùi về _G
             string khhd = S(r, M, "KIEU_HD") + S2(r, M, "KHHD", "KHHD_G");
-            string soHd = S2(r, M, "SO_HD", "SO_HD_G");
+            string soHd = ChuanSoHd(S2(r, M, "SO_HD", "SO_HD_G"));   // BR-HD-01: 8 chữ số
             string mst   = huong == "VAO" ? S(r, M, "MST_BAN")  : S(r, M, "MST_MUA");
             string tenKh = huong == "VAO" ? S(r, M, "TEN_BAN")  : S(r, M, "TEN_MUA");
             string diaChi= huong == "VAO" ? S(r, M, "DCHI_BAN") : S(r, M, "DCHI_MUA");
@@ -722,7 +756,11 @@ namespace KT2000.Api.Services
             p.AddWithValue("@l_lq",  (object?)Nz(S(r, M, "LHD_LQUAN")) ?? DBNull.Value);
             p.AddWithValue("@ms_lq", (object?)Nz(S(r, M, "MSHD_LQUAN")) ?? DBNull.Value);
             p.AddWithValue("@kh_lq", (object?)Nz(S(r, M, "KHHD_LQUAN")) ?? DBNull.Value);
-            p.AddWithValue("@so_lq", (object?)Nz(S(r, M, "SOHD_LQUAN")) ?? DBNull.Value);
+            // Đệm luôn số hóa đơn LIÊN QUAN: cột này tồn tại để dò ngược về hóa đơn gốc
+            // trong chính bảng HOA_DON. Một bên "00000177", một bên "177" thì phép dò
+            // không bao giờ khớp — mà đó lại đúng là việc phát hiện HĐ bị điều chỉnh.
+            p.AddWithValue("@so_lq",
+                (object?)Nz(ChuanSoHd(S(r, M, "SOHD_LQUAN"))) ?? DBNull.Value);
             p.AddWithValue("@ngay_lq", (object?)D(r, M, "NGAY_LQUAN") ?? DBNull.Value);
             p.AddWithValue("@user", user);
             cmd.ExecuteNonQuery();
