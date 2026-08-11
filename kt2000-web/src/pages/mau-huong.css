@@ -23,6 +23,13 @@
   background: #e6f4ff !important;
 }
 
+/* Lưới AG Grid trong modal: dòng hóa đơn đang chọn (khung mặt hàng bên dưới đang
+   hiện mặt hàng của nó). Cần !important vì AG Grid đặt nền dòng bằng biến của theme,
+   và ô chỉ đọc còn có cellStyle nền xám riêng — không có nó thì dòng chọn không nổi. */
+.ag-row.dong-dang-chon .ag-cell {
+  background-color: #e6f4ff !important;
+}
+
 /* Thanh điều khiển ngay dưới tiêu đề — cùng tông nhưng nhạt hơn nữa, để mắt vẫn
    phân biệt được nó với vùng tiêu đề. */
 .thanh-dieu-khien {
