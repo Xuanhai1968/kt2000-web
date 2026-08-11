@@ -19,9 +19,11 @@ namespace KT2000.Api.Services
     // 4 ghi chú. Phải mang ra tận giao diện: dòng chiết khấu ghi ThTien DƯƠNG trong XML
     // nhưng bản chất là TRỪ. Cộng thẳng vào là lệch đúng 2 lần số chiết khấu
     // (ca thật: C26TLC/10 — CK 4.195.324, Σ line vượt master đúng 8.390.648).
+    // ChietKhau = STCKhau, chiết khấu của RIÊNG dòng đó — khác TTCKTMai (chiết khấu
+    // của cả hóa đơn, nằm ở HoaDonConLai.TienCk). Hai con số khác nhau, đừng gộp.
     public record MatHang(int Stt, string TenHang, string Dvt, decimal SoLuong,
                           decimal DonGia, decimal ThanhTien, string ThueSuat,
-                          string TinhChat = "1");
+                          string TinhChat = "1", decimal ChietKhau = 0m);
 
     // Một hóa đơn còn nằm lại raw\ — dựng từ chính file XML chứ không từ Excel tổng,
     // vì file lạc (không có dòng master) thì trong Excel không có gì để đọc.
@@ -156,6 +158,11 @@ namespace KT2000.Api.Services
                         masterVal = suyRa > 0 ? suyRa : sumLine;
                     }
 
+                    // Chốt tiền hàng CHƯA THUẾ ở đây, TRƯỚC nhánh EXCEL_NO_XML bên dưới —
+                    // nhánh đó ghi đè masterVal bằng TỔNG ĐÃ GỒM VAT để so Σ line cho đúng
+                    // cặp, lấy số đó chia ra thuế suất là sai mẫu số.
+                    decimal tienHangChuaThue = masterVal;
+
                     // HĐ đặc biệt không có gốc trên TCT (điện, viễn thông, ngân hàng —
                     // NGUON_DL = EXCEL_NO_XML): THANH_TIEN của line là tiền ĐÃ GỒM VAT,
                     // trong khi TIEN_HANG của master là tiền CHƯA VAT. So thẳng hai cái đó
@@ -191,7 +198,8 @@ namespace KT2000.Api.Services
                             using (var d2 = new SqlCommand("DELETE FROM HOA_DON WHERE ma_hd=@id", conn, tx))
                             { d2.Parameters.AddWithValue("@id", maHd); d2.ExecuteNonQuery(); }
                         }
-                        bool existed = UpsertMaster(conn, tx, r, M, huong, maHd, userName);
+                        bool existed = UpsertMaster(conn, tx, r, M, huong, maHd, userName,
+                                                    tenant.KhaiQuy, tienHangChuaThue);
                         ReplaceLines(conn, tx, maHd, lines, L, userName);
                         tx.Commit();
                         if (existed) updated++; else inserted++;
@@ -434,21 +442,31 @@ namespace KT2000.Api.Services
                 try
                 {
                     string sql = existed
-                      ? @"UPDATE HOA_DON SET ngay=@ngay, thang=@thang, khhd=@khhd, so_hd=@so_hd,
+                      // ngay_nh dùng ISNULL — luật #5, xem giải thích ở UpsertMaster
+                      ? @"UPDATE HOA_DON SET ngay=@ngay, thang=@thang,
+                            ngay_nh=ISNULL(ngay_nh,@ngay_nh), vat=@vat,
+                            khhd=@khhd, so_hd=@so_hd,
                             mst=@mst, ten_kh=@ten_kh, dia_chi=@dia_chi, tien_vat=@tien_vat,
                             tien_ck=@tien_ck, edit_vat=@edit_vat, edit_ck=@edit_ck,
                             updated_by=@user, updated_at=SYSDATETIME()
                           WHERE ma_hd=@id"
-                      : @"INSERT INTO HOA_DON (ma_hd, ngay, thang, khhd, so_hd, mst, ten_kh, dia_chi,
+                      : @"INSERT INTO HOA_DON (ma_hd, ngay, thang, ngay_nh, vat,
+                            khhd, so_hd, mst, ten_kh, dia_chi,
                             tien_vat, tien_ck, edit_vat, edit_ck, created_by)
-                          VALUES (@id, @ngay, @thang, @khhd, @so_hd, @mst, @ten_kh, @dia_chi,
+                          VALUES (@id, @ngay, @thang, @ngay_nh, @vat,
+                            @khhd, @so_hd, @mst, @ten_kh, @dia_chi,
                             @tien_vat, @tien_ck, @edit_vat, @edit_ck, @user)";
                     using (var cmd = new SqlCommand(sql, conn, tx))
                     {
                         var p = cmd.Parameters;
                         p.AddWithValue("@id", maHd);
                         p.AddWithValue("@ngay", ngay.Date);
-                        p.AddWithValue("@thang", ngay.Month);
+                        p.AddWithValue("@thang", ThangKeKhai(ngay.Month, tenant.KhaiQuy));
+                        p.AddWithValue("@ngay_nh", ngay.Date);
+                        // Tiền hàng chưa thuế = Σ dòng hàng, dòng chiết khấu (TChat=3)
+                        // TRỪ ra — cùng quy ước với phép kiểm Σ ở ImportJob.
+                        p.AddWithValue("@vat", SuyThueSuat(req.TienVat,
+                            req.MatHangs.Sum(m => (m.TinhChat == "3" ? -1m : 1m) * m.ThanhTien)));
                         p.AddWithValue("@khhd", khhd);
                         p.AddWithValue("@so_hd", soHd);
                         p.AddWithValue("@mst", (object?)Nz(req.Mst) ?? DBNull.Value);
@@ -456,7 +474,11 @@ namespace KT2000.Api.Services
                         p.AddWithValue("@dia_chi", (object?)Nz(req.DiaChi) ?? DBNull.Value);
                         p.AddWithValue("@tien_vat", req.TienVat);
                         p.AddWithValue("@tien_ck", req.TienCk);
-                        p.AddWithValue("@edit_vat", req.TienVat > 0);
+                        // != 0 chứ KHÔNG phải > 0 (chốt Trường 11/08): hóa đơn điều
+                        // chỉnh GIẢM có thuế ÂM, mà số âm đó cũng là số đã chốt từ hóa
+                        // đơn gốc — dùng > 0 là tắt cờ khóa đúng nhóm cần khóa nhất.
+                        // Ca thật: RA_0108169869_C26TXQ_5, tien_vat = -784.800.
+                        p.AddWithValue("@edit_vat", req.TienVat != 0);
                         p.AddWithValue("@edit_ck", req.TienCk > 0);
                         p.AddWithValue("@user", userName);
                         await cmd.ExecuteNonQueryAsync();
@@ -555,7 +577,8 @@ namespace KT2000.Api.Services
                         int.TryParse(V(h, "STT"), out var stt) ? stt : hangs.Count + 1,
                         V(h, "THHDVu"), V(h, "DVTinh"),
                         D(h, "SLuong"), D(h, "DGia"), D(h, "ThTien"), V(h, "TSuat"),
-                        string.IsNullOrWhiteSpace(tchat) ? "1" : tchat));
+                        string.IsNullOrWhiteSpace(tchat) ? "1" : tchat,
+                        D(h, "STCKhau")));
                 }
 
                 decimal tienVat  = D(tt, "TgTThue");
@@ -584,8 +607,36 @@ namespace KT2000.Api.Services
             catch { return null; }
         }
 
+        // Tháng KÊ KHAI, không phải tháng phát sinh (chốt Trường 11/08).
+        // Đơn vị khai QUÝ gộp 3 tháng vào tờ khai của tháng CUỐI quý:
+        //   1,2,3 → 3 · 4,5,6 → 6 · 7,8,9 → 9 · 10,11,12 → 12
+        // Khai THÁNG giữ nguyên.
+        //
+        // CẢNH BÁO cho người sửa sau: cột `HOA_DON.thang` từ đây mang HAI nghĩa
+        // tùy loại DB — DB thuế (<MÃ>_<NĂM>) là tháng KÊ KHAI, còn DB nội bộ
+        // (<MÃ>_NB_<NĂM>, do NoiBoService ghi) vẫn là tháng phát sinh. Hai sản
+        // phẩm dùng hai bộ DB tách rời nên không đụng nhau, nhưng ĐỪNG bê truy
+        // vấn từ bên này sang bên kia. Tháng phát sinh của HĐ thuế luôn lấy lại
+        // được bằng MONTH(ngay).
+        internal static int ThangKeKhai(int thangHd, bool khaiQuy)
+            => khaiQuy && thangHd >= 1 && thangHd <= 12
+             ? ((thangHd - 1) / 3 + 1) * 3
+             : thangHd;
+
+        // Thuế suất TƯỢNG TRƯNG suy ngược từ số tiền (chốt Trường 11/08). Cổng TCT
+        // chỉ trả TỔNG tiền thuế ở mức hóa đơn, không có ô "thuế suất" nào ở đó —
+        // thuế suất THẬT của từng mặt hàng nằm ở HOA_DON_LINE.pt_vat. Cột này chỉ
+        // để nhìn nhanh trên lưới, KHÔNG được dùng để tính lại thuế.
+        // Hóa đơn nhiều mức thuế sẽ ra một số lai (vd 7) — đúng bản chất bình quân.
+        // Tiền hàng ≤ 0 (hóa đơn không chịu thuế không suy ra được) thì để trống.
+        internal static object SuyThueSuat(decimal tienVat, decimal tienHang)
+            => tienHang <= 0
+             ? DBNull.Value
+             : (int)Math.Round(tienVat * 100m / tienHang, MidpointRounding.AwayFromZero);
+
         private bool UpsertMaster(SqlConnection c, SqlTransaction tx, IXLRow r,
-                                  Dictionary<string,int> M, string huong, string maHd, string user)
+                                  Dictionary<string,int> M, string huong, string maHd,
+                                  string user, bool khaiQuy, decimal tienHang)
         {
             bool existed;
             using (var chk = new SqlCommand("SELECT COUNT(*) FROM HOA_DON WHERE ma_hd=@id", c, tx))
@@ -601,26 +652,37 @@ namespace KT2000.Api.Services
             decimal tienCk  = N2(r, M, "TIEN_CK",  "TIEN_CK_G");
 
             string sql = existed
-              ? @"UPDATE HOA_DON SET ngay=@ngay, thang=@thang, khhd=@khhd, so_hd=@so_hd,
+            // ngay_nh dùng ISNULL: luật #5 — hàm nguồn KHÔNG được đè ngày hạch toán
+            // kế toán đã tự nhập. Chỉ điền khi cột còn trống ("cập nhật có chừa").
+              ? @"UPDATE HOA_DON SET ngay=@ngay, thang=@thang, ngay_nh=ISNULL(ngay_nh,@ngay_nh),
+                    vat=@vat, khhd=@khhd, so_hd=@so_hd,
                     mst=@mst, ten_kh=@ten_kh, dia_chi=@dia_chi, nguoi_giao_dich=@ng_gd,
                     tien_vat=@tien_vat, tien_ck=@tien_ck, edit_vat=@edit_vat, edit_ck=@edit_ck,
                     tthai_hd=@tthai, tich_chat_hd_lienquan=@tc_lq, loai_hd_lienquan=@l_lq,
                     mau_so_hd_lienquan=@ms_lq, khhd_lienquan=@kh_lq, sohd_lienquan=@so_lq,
                     ngay_lienquan=@ngay_lq, updated_by=@user, updated_at=SYSDATETIME()
                   WHERE ma_hd=@id"
-              : @"INSERT INTO HOA_DON (ma_hd, ngay, thang, khhd, so_hd, mst, ten_kh, dia_chi,
+              : @"INSERT INTO HOA_DON (ma_hd, ngay, thang, ngay_nh, vat, khhd, so_hd,
+                    mst, ten_kh, dia_chi,
                     nguoi_giao_dich, tien_vat, tien_ck, edit_vat, edit_ck, tthai_hd,
                     tich_chat_hd_lienquan, loai_hd_lienquan, mau_so_hd_lienquan,
                     khhd_lienquan, sohd_lienquan, ngay_lienquan, created_by)
-                  VALUES (@id, @ngay, @thang, @khhd, @so_hd, @mst, @ten_kh, @dia_chi,
+                  VALUES (@id, @ngay, @thang, @ngay_nh, @vat, @khhd, @so_hd,
+                    @mst, @ten_kh, @dia_chi,
                     @ng_gd, @tien_vat, @tien_ck, @edit_vat, @edit_ck, @tthai,
                     @tc_lq, @l_lq, @ms_lq, @kh_lq, @so_lq, @ngay_lq, @user)";
 
             using var cmd = new SqlCommand(sql, c, tx);
             var p = cmd.Parameters;
+            DateTime? ngayHd = D2(r, M, "NGAY_HD", "NGAY_HD_G");
             p.AddWithValue("@id", maHd);
-            p.AddWithValue("@ngay", (object?)D2(r, M, "NGAY_HD", "NGAY_HD_G") ?? DBNull.Value);
-            p.AddWithValue("@thang", I(r, M, "THANG"));
+            p.AddWithValue("@ngay", (object?)ngayHd ?? DBNull.Value);
+            // Cột THANG của Excel tổng là tháng PHÁT SINH; đổi sang tháng KÊ KHAI.
+            p.AddWithValue("@thang", ThangKeKhai(I(r, M, "THANG"), khaiQuy));
+            // Ngày hạch toán mặc định = ngày hóa đơn (chốt Trường 11/08). Kế toán
+            // sửa lại được, và lần nạp sau sẽ không đè (ISNULL ở câu UPDATE).
+            p.AddWithValue("@ngay_nh", (object?)ngayHd ?? DBNull.Value);
+            p.AddWithValue("@vat", SuyThueSuat(tienVat, tienHang));
             p.AddWithValue("@khhd", khhd);
             p.AddWithValue("@so_hd", soHd);
             p.AddWithValue("@mst", (object?)Nz(mst) ?? DBNull.Value);
@@ -629,7 +691,9 @@ namespace KT2000.Api.Services
             p.AddWithValue("@ng_gd", (object?)Nz(S(r, M, "NG_GD")) ?? DBNull.Value);
             p.AddWithValue("@tien_vat", tienVat);
             p.AddWithValue("@tien_ck", tienCk);
-            p.AddWithValue("@edit_vat", tienVat > 0);   // BR: chốt số thuế HĐ gốc — không auto-tính đè
+            // BR: chốt số thuế HĐ gốc — không auto-tính đè.
+            // != 0 chứ KHÔNG phải > 0 (chốt Trường 11/08) — xem giải thích ở NapMotHoaDon.
+            p.AddWithValue("@edit_vat", tienVat != 0);
             p.AddWithValue("@edit_ck",  tienCk  > 0);
             p.AddWithValue("@tthai", (object?)Nz(S(r, M, "TTHAI_HD")) ?? DBNull.Value);
             p.AddWithValue("@tc_lq", (object?)Nz(S(r, M, "TCHD_LQUAN")) ?? DBNull.Value);

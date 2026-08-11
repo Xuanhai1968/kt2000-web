@@ -13,9 +13,10 @@ import type {
 } from "../api";
 import { useAuth } from "../AuthContext";
 import { AgGridReact } from "ag-grid-react";
+import type { ColDef } from "ag-grid-community";
 import { mauDonVi, damDonVi } from "../theme/donViColors";
 import {
-  themeVfp, luoiVfpProps, colVfp, colSua, colSo, dinhDangTien,
+  themeVfp, luoiVfpProps, colVfp, colSua, colSo, dinhDangTien, nhoDoRongCot,
 } from "../theme/luoiVfp";
 import "./luoi-gon.css";
 import "./mau-huong.css";
@@ -37,10 +38,105 @@ const laDongChietKhau = (m: MatHang) => m.tinhChat === "3";
 const sumLine = (hd: HoaDonConLai) =>
   hd.matHangs.reduce((s, m) => s + (laDongChietKhau(m) ? -m.thanhTien : m.thanhTien), 0);
 
-// Dòng hàng hóa THẬT — bỏ dòng chiết khấu. Chiết khấu đã có cột riêng ở bảng trên và
-// đã được trừ trong sumLine, để nó nằm chung với hàng hóa chỉ tổ đọc nhầm thành một
-// mặt hàng giá 4 triệu.
-const dongHangThat = (hd: HoaDonConLai) => hd.matHangs.filter((m) => !laDongChietKhau(m));
+
+// Mảng cột phải ĐỨNG YÊN giữa các lần render. Dựng mới mỗi lần thì AG Grid coi
+// là bộ cột khác và đặt lại bề rộng — triệu chứng là bấm vào ô để sửa cũng làm
+// cột nhảy về như cũ. Không phụ thuộc state nào nên đặt hẳn ngoài component.
+const COT_HOA_DON: ColDef<HoaDonConLai>[] = [
+          { headerName: "Tháng", field: "thang", width: 70 },
+          // Bỏ cột Hướng: tiêu đề modal đã ghi hướng rồi. Ký hiệu nới rộng vì độ dài
+          // không đoán trước; Số HĐ và Ngày co lại vì đã có khuôn cố định.
+          { ...colSua, headerName: "Ký hiệu", field: "khHd", width: 130 },
+          { ...colSua, headerName: "Số HĐ", field: "soHd", width: 95 },
+          { ...colSua, headerName: "Ngày", field: "ngay", width: 110 },
+          // colId tường minh cho cột KHÔNG có field: AG Grid tự sinh id theo vị trí,
+          // mà id đó chính là khóa lưu bề rộng — đổi thứ tự cột là mất hết.
+          { colId: "doiTac", headerName: "Đối tác", width: 240,
+            valueGetter: (p) => !p.data ? ""
+              : p.data.huong === "VAO"
+                ? `${p.data.tenBan} [${p.data.mstBan}]`
+                : `${p.data.tenMua} [${p.data.mstMua}]` },
+          // Tiền hàng và VAT là con số CỦA HÓA ĐƠN GỐC — chỉ đọc (chốt 11/08).
+          // Muốn Σ line khớp thì sửa số lượng/đơn giá ở lưới dưới cho đúng hóa đơn,
+          // chứ không phải bẻ con số của hóa đơn cho khớp thứ mình vừa gõ.
+          { headerName: "Tiền hàng", field: "tienHang", width: 130,
+            type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
+          { headerName: "VAT", field: "tienVat", width: 115,
+            type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
+          // Ô DUY NHẤT được sửa ở lưới này. Cổng không phải lúc nào cũng khai
+          // TTCKTMai, nên đây là chỗ kế toán điền tay khi cần.
+          { ...colSo, headerName: "Chiết khấu", field: "tienCk", width: 120,
+            valueFormatter: (p) => dinhDangTien(p.value) },
+          { headerName: "Tổng", field: "tongTien", width: 125,
+            type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
+          // Ngưỡng 10đ khớp SAI_SO_CHO_PHEP bên ImportService — không thì hóa đơn
+          // backend đã nhận vẫn hiện đỏ ở đây, đọc như còn lỗi.
+          { colId: "lechSigma", headerName: "Lệch Σ line", width: 125, type: "numericColumn",
+            valueGetter: (p) => (p.data ? p.data.tienHang - sumLine(p.data) : 0),
+            valueFormatter: (p) => (Math.abs(p.value) < 10 ? "0" : dinhDangTien(p.value)),
+            // Tra ve MOT hinh dang duy nhat: hai nhanh khac khoa thi TS suy ra kieu
+            // hop, va CellStyle co index signature khong nhan undefined.
+            cellStyle: (p) => ({
+              backgroundColor: "#f5f5f5",
+              color: Math.abs(p.value) < 10 ? "inherit" : "#cf1322",
+              fontWeight: Math.abs(p.value) < 10 ? 400 : 600,
+            }) },
+          { headerName: "Vì sao còn nằm lại", field: "lyDo", width: 300,
+            tooltipField: "lyDo",
+            cellStyle: (p) => ({
+              backgroundColor: "#f5f5f5",
+              color: p.data?.coTrongExcel ? "#cf1322" : "#d46b08",
+            }) },
+          { headerName: "Tên file", field: "tenFile", width: 300, tooltipField: "tenFile" },
+];
+
+const COT_MAT_HANG: ColDef<MatHang>[] = [
+          { headerName: "STT", field: "stt", width: 65 },
+          // Hiện nguyên mã TChat của TCT. Dịch sang chữ tắt chỉ thêm một tầng phải
+          // nhớ, mà mã gốc mới là thứ tra được trong tài liệu của cổng.
+          { headerName: "TC", field: "tinhChat", width: 56,
+            headerTooltip: "TChat: 1 hàng hóa · 2 khuyến mại · 3 chiết khấu · 4 ghi chú",
+            cellStyle: (p) => ({
+              backgroundColor: "#f5f5f5",
+              color: p.value === "3" ? "#cf1322" : "inherit",
+              fontWeight: p.value === "3" ? 600 : 400,
+            }) },
+          { ...colSua, headerName: "Tên hàng", field: "tenHang", width: 300,
+            tooltipField: "tenHang" },
+          { ...colSua, headerName: "ĐVT", field: "dvt", width: 85 },
+          { ...colSo, headerName: "Số lượng", field: "soLuong", width: 110,
+            valueFormatter: (p) => dinhDangTien(p.value) },
+          { ...colSo, headerName: "Đơn giá", field: "donGia", width: 130,
+            valueFormatter: (p) => dinhDangTien(p.value) },
+          // Chiết khấu của RIÊNG dòng (STCKhau) — khác cột "Chiết khấu" ở lưới trên,
+          // vốn là chiết khấu của cả hóa đơn (TTCKTMai). Hai con số khác nhau.
+          { headerName: "Chiết khấu", field: "chietKhau", width: 115,
+            headerTooltip: "STCKhau — chiết khấu của riêng dòng này",
+            type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
+          // colId tường minh cho cột KHÔNG có field: AG Grid tự sinh id theo vị trí,
+          // mà id đó chính là khóa lưu bề rộng — đổi thứ tự cột là mất hết.
+          { colId: "slNhanDg", headerName: "SL × ĐG", width: 140, type: "numericColumn",
+            valueGetter: (p) => (p.data ? p.data.soLuong * p.data.donGia : 0),
+            valueFormatter: (p) => dinhDangTien(p.value) },
+          // Thành tiền chỉ đọc — tự nhân lại từ SL × ĐG khi sửa một trong hai.
+          { headerName: "Thành tiền", field: "thanhTien", width: 140,
+            type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
+          // Tên cột nói rõ đang so với cái gì. Cột "Lệch Σ line" ở lưới TRÊN so
+          // tiền hàng với Σ thành tiền — hai phép kiểm khác nhau, một cái bằng 0
+          // mà cái kia khác 0 là bình thường: người bán làm tròn đơn giá thì
+          // thành tiền lệch với SL×ĐG, nhưng tổng hóa đơn vẫn khớp.
+          // (ca thật C26TQQ/3670: lệch SL×ĐG 409đ, còn Σ line khớp đúng 0)
+          { colId: "lechTich", headerName: "Lệch SL×ĐG", width: 130, type: "numericColumn",
+            headerTooltip: "Thành tiền − (SL × ĐG)",
+            valueGetter: (p) => (p.data ? p.data.thanhTien - p.data.soLuong * p.data.donGia : 0),
+            valueFormatter: (p) => (Math.abs(p.value) < 1 ? "0" : dinhDangTien(p.value)),
+            cellStyle: (p) => ({
+              backgroundColor: "#f5f5f5",
+              color: Math.abs(p.value) < 1 ? "inherit" : "#cf1322",
+              fontWeight: Math.abs(p.value) < 1 ? 400 : 600,
+            }) },
+          { ...colSua, headerName: "% VAT", field: "thueSuat", width: 85 },
+];
 
 // ============ RUỘT 1: console NỘI BỘ (MDN_NB) — FRM_LAY_HDDT ============
 function ConsoleLayHoaDon({ huongMacDinh }: Props) {
@@ -197,19 +293,23 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
     }
   };
 
-  // tangDan [ĐANG THỬ]: bỏ tải những hóa đơn đã có XML từ lượt trước.
-  // Hai nút gọi CHUNG hàm này, chỉ khác một cờ — để không có đường nào lệch nhau.
-  const batDauLayHd = async (tangDan = false) => {
+  // Gộp hai nút cũ ("Lấy hóa đơn điện tử" + "Lấy phần mới") làm MỘT (chốt Trường 11/08).
+  // Chế độ giữ lại là TĂNG DẦN: đối chiếu Excel danh sách mới tải với Excel tổng đang
+  // có, hóa đơn nào đã có đường dẫn XML thì bỏ qua, chỉ tải phần thật sự mới. Đo trên
+  // 26.951 hóa đơn thật: bỏ được 97% lượt tải — cần thiết khi lên 150 đơn vị chạy hàng ngày.
+  //
+  // Muốn ép tải lại TOÀN BỘ thì xóa file outputs\HOA_DON_<HƯỚNG>_<MÃ>.xlsx của đơn vị
+  // đó: mất căn cứ đối chiếu thì mọi hóa đơn đều tính là mới.
+  const batDauLayHd = async () => {
     if (selected.length === 0) return;
     if (denThang < tuThang) { message.error("Đến tháng phải ≥ Từ tháng"); return; }
     setDangBatDau(true);
     try {
       const r = await fetchStart(
-        selected as string[], namLamViec, tuThang, denThang, huong, xoaTruoc, tangDan);
+        selected as string[], namLamViec, tuThang, denThang, huong, xoaTruoc, true);
       setPhien(r.data);
-      message.success(`Đã xếp hàng ${r.data.cac.length} lượt`
-        + (tangDan ? " — CHỈ tải phần mới, xong sẽ tự nạp"
-                   : " — lấy xong sẽ tự nạp vào database"));
+      message.success(
+        `Đã xếp hàng ${r.data.cac.length} lượt — chỉ tải phần mới, xong tự nạp vào database`);
     } catch (e) {
       message.error(loiApi(e, "Không bắt đầu được phiên lấy HĐ"));
     } finally {
@@ -230,7 +330,9 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
         // Người phát hành luôn là NGƯỜI BÁN, kể cả hóa đơn ra (khi đó là chính mình)
         mstPhatHanh: hd.mstBan,
         tenKh: hd.huong === "VAO" ? hd.tenBan : hd.tenMua,
-        diaChi: "", tienHang: hd.tienHang, tienVat: hd.tienVat, tienCk: 0,
+        // tienCk phải gửi giá trị THẬT: cột Chiết khấu nay sửa được, gửi cứng 0 thì
+        // người dùng gõ vào rồi bấm Ghi mà số không vào sổ — một ô giả.
+        diaChi: "", tienHang: hd.tienHang, tienVat: hd.tienVat, tienCk: hd.tienCk,
         matHangs: hd.matHangs,
       });
       const d = r.data;
@@ -353,18 +455,14 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
             Bỏ đánh dấu
           </Button>
 
+          {/* Một nút duy nhất: lấy + nạp, và luôn chạy tăng dần. Không có ô tích chọn
+              chế độ — ô tích để lại trạng thái từ lần trước, người dùng dễ tưởng đang
+              chạy đầy đủ trong khi nó đang bỏ qua, hoặc ngược lại. */}
           <Button size="small" type="primary" loading={dangBatDau}
                   disabled={selected.length === 0 || dangChay}
-                  onClick={() => batDauLayHd(false)}>
+                  onClick={() => batDauLayHd()}
+                  title="Chỉ tải hóa đơn chưa có, tải xong tự nạp vào database">
             Lấy hóa đơn điện tử
-          </Button>
-          {/* [ĐANG THỬ] Nút riêng thay vì ô tích: bấm nút nào ra chế độ đó, không có
-              chuyện để quên trạng thái từ lần trước rồi tưởng đang chạy đầy đủ. */}
-          <Button size="small" loading={dangBatDau}
-                  disabled={selected.length === 0 || dangChay}
-                  onClick={() => batDauLayHd(true)}
-                  title="ĐANG THỬ — bỏ tải những hóa đơn đã có XML từ lượt trước, chỉ tải phần mới">
-            Lấy phần mới (thử)
           </Button>
           {dangChay && (
             <Popconfirm title="Dừng phiên đang chạy?"
@@ -592,6 +690,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
           rowData={dsConLai}
           getRowId={(p) => p.data.tenFile}
           defaultColDef={colVfp}
+          {...nhoDoRongCot("hoa_don")}
           loading={modalTai}
           overlayNoRowsTemplate="Không đọc được hóa đơn nào trong raw\"
           // Bấm ô nào thì khung mặt hàng bên dưới đổi theo dòng đó
@@ -604,48 +703,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
             const f = e.colDef.field as keyof HoaDonConLai | undefined;
             if (f) suaHoaDon(e.data.tenFile, { [f]: e.newValue } as Partial<HoaDonConLai>);
           }}
-          columnDefs={[
-            { headerName: "Tháng", field: "thang", width: 70 },
-            // Bỏ cột Hướng: tiêu đề modal đã ghi hướng rồi. Ký hiệu nới rộng vì độ dài
-            // không đoán trước; Số HĐ và Ngày co lại vì đã có khuôn cố định.
-            { ...colSua, headerName: "Ký hiệu", field: "khHd", width: 130 },
-            { ...colSua, headerName: "Số HĐ", field: "soHd", width: 95 },
-            { ...colSua, headerName: "Ngày", field: "ngay", width: 110 },
-            { headerName: "Đối tác", width: 240,
-              valueGetter: (p) => !p.data ? ""
-                : p.data.huong === "VAO"
-                  ? `${p.data.tenBan} [${p.data.mstBan}]`
-                  : `${p.data.tenMua} [${p.data.mstMua}]` },
-            { ...colSo, headerName: "Tiền hàng", field: "tienHang", width: 130,
-              valueFormatter: (p) => dinhDangTien(p.value) },
-            { ...colSo, headerName: "VAT", field: "tienVat", width: 115,
-              valueFormatter: (p) => dinhDangTien(p.value) },
-            // Chiết khấu chỉ đọc: đã nhận ra là chiết khấu và đã trừ đúng thì không có
-            // gì để cảnh báo; tô đỏ chỉ khiến người đọc tưởng hóa đơn hỏng.
-            { headerName: "Chiết khấu", field: "tienCk", width: 120,
-              type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
-            { headerName: "Tổng", field: "tongTien", width: 125,
-              type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
-            // Ngưỡng 10đ khớp SAI_SO_CHO_PHEP bên ImportService — không thì hóa đơn
-            // backend đã nhận vẫn hiện đỏ ở đây, đọc như còn lỗi.
-            { headerName: "Lệch Σ line", width: 125, type: "numericColumn",
-              valueGetter: (p) => (p.data ? p.data.tienHang - sumLine(p.data) : 0),
-              valueFormatter: (p) => (Math.abs(p.value) < 10 ? "0" : dinhDangTien(p.value)),
-              // Tra ve MOT hinh dang duy nhat: hai nhanh khac khoa thi TS suy ra kieu
-              // hop, va CellStyle co index signature khong nhan undefined.
-              cellStyle: (p) => ({
-                backgroundColor: "#f5f5f5",
-                color: Math.abs(p.value) < 10 ? "inherit" : "#cf1322",
-                fontWeight: Math.abs(p.value) < 10 ? 400 : 600,
-              }) },
-            { headerName: "Vì sao còn nằm lại", field: "lyDo", width: 300,
-              tooltipField: "lyDo",
-              cellStyle: (p) => ({
-                backgroundColor: "#f5f5f5",
-                color: p.data?.coTrongExcel ? "#cf1322" : "#d46b08",
-              }) },
-            { headerName: "Tên file", field: "tenFile", width: 300, tooltipField: "tenFile" },
-          ]}
+          columnDefs={COT_HOA_DON}
         />
         </div>
         </div>
@@ -677,10 +735,9 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                         Σ line {sum.toLocaleString("vi-VN")} — lệch {lech.toLocaleString("vi-VN")}
                       </Tag>;
                 })()}
-                {hdDangChon.matHangs.length > dongHangThat(hdDangChon).length && (
-                  <Tag title="Dòng chiết khấu không hiện trong bảng, nhưng đã được trừ khi tính Σ">
-                    Đã ẩn {hdDangChon.matHangs.length - dongHangThat(hdDangChon).length} dòng
-                    chiết khấu (đã trừ {hdDangChon.tienCk.toLocaleString("vi-VN")})
+                {hdDangChon.tienCk > 0 && (
+                  <Tag title="Dòng TChat=3 vẫn hiện trong lưới, nhưng khi tính Σ thì TRỪ chứ không cộng">
+                    Chiết khấu {hdDangChon.tienCk.toLocaleString("vi-VN")} — đã trừ khi tính Σ
                   </Tag>
                 )}
                 <Button size="small" onClick={() => xemHtml(hdDangChon)}>Xem ảnh HĐ (HTML)</Button>
@@ -700,51 +757,17 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                 <AgGridReact<MatHang>
                   theme={themeVfp}
                   {...luoiVfpProps}
-                  rowData={dongHangThat(hdDangChon)}
+                  rowData={hdDangChon.matHangs}
                   getRowId={(p) => String(p.data.stt)}
                   defaultColDef={colVfp}
+                  {...nhoDoRongCot("mat_hang")}
                   overlayNoRowsTemplate="Hóa đơn không có dòng hàng"
                   onCellValueChanged={(e) => {
                     const f = e.colDef.field as keyof MatHang | undefined;
                     if (f) suaMatHang(hdDangChon.tenFile, e.data.stt,
                                       { [f]: e.newValue } as Partial<MatHang>);
                   }}
-                  columnDefs={[
-                    { headerName: "STT", field: "stt", width: 65 },
-                    // Dòng chiết khấu đã ẩn khỏi lưới, nhưng vẫn giữ cột này cho
-                    // khuyến mại và ghi chú — không có nó thì mọi dòng nhìn như nhau.
-                    { headerName: "TC", field: "tinhChat", width: 60,
-                      headerTooltip: "Tính chất dòng (TChat của TCT)",
-                      valueFormatter: (p) => ({ "2": "KM", "3": "CK", "4": "GC" }[p.value as string] ?? "—") },
-                    { ...colSua, headerName: "Tên hàng", field: "tenHang", width: 300,
-                      tooltipField: "tenHang" },
-                    { ...colSua, headerName: "ĐVT", field: "dvt", width: 85 },
-                    { ...colSo, headerName: "Số lượng", field: "soLuong", width: 110,
-                      valueFormatter: (p) => dinhDangTien(p.value) },
-                    { ...colSo, headerName: "Đơn giá", field: "donGia", width: 130,
-                      valueFormatter: (p) => dinhDangTien(p.value) },
-                    { headerName: "SL × ĐG", width: 140, type: "numericColumn",
-                      valueGetter: (p) => (p.data ? p.data.soLuong * p.data.donGia : 0),
-                      valueFormatter: (p) => dinhDangTien(p.value) },
-                    // Thành tiền chỉ đọc — tự nhân lại từ SL × ĐG khi sửa một trong hai.
-                    { headerName: "Thành tiền", field: "thanhTien", width: 140,
-                      type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
-                    // Tên cột nói rõ đang so với cái gì. Cột "Lệch Σ line" ở lưới TRÊN so
-                    // tiền hàng với Σ thành tiền — hai phép kiểm khác nhau, một cái bằng 0
-                    // mà cái kia khác 0 là bình thường: người bán làm tròn đơn giá thì
-                    // thành tiền lệch với SL×ĐG, nhưng tổng hóa đơn vẫn khớp.
-                    // (ca thật C26TQQ/3670: lệch SL×ĐG 409đ, còn Σ line khớp đúng 0)
-                    { headerName: "Lệch SL×ĐG", width: 130, type: "numericColumn",
-                      headerTooltip: "Thành tiền − (SL × ĐG)",
-                      valueGetter: (p) => (p.data ? p.data.thanhTien - p.data.soLuong * p.data.donGia : 0),
-                      valueFormatter: (p) => (Math.abs(p.value) < 1 ? "0" : dinhDangTien(p.value)),
-                      cellStyle: (p) => ({
-                        backgroundColor: "#f5f5f5",
-                        color: Math.abs(p.value) < 1 ? "inherit" : "#cf1322",
-                        fontWeight: Math.abs(p.value) < 1 ? 400 : 600,
-                      }) },
-                    { ...colSua, headerName: "% VAT", field: "thueSuat", width: 85 },
-                  ]}
+                  columnDefs={COT_MAT_HANG}
                 />
               </div>
             </>
