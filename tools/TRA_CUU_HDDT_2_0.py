@@ -502,6 +502,28 @@ def _khoa_dong(ws, r, cot):
     return (kh, so) if kh and so else None
 
 
+# ===== DỪNG ÊM =====
+# Backend đặt file STOP vào job_dir để XIN dừng. Trước đây nút Dừng gọi thẳng
+# proc.Kill(entireProcessTree) — giết cứng ngay giữa vòng tải, nên bước ghi cột
+# "Đường dẫn XML" (chạy sau vòng tải) không kịp thực hiện: toàn bộ XML vừa tải
+# về coi như mất dấu, lượt sau tải lại từ đầu. Kiểm cờ ở các mốc an toàn rồi
+# thoát theo đường bình thường thì bước đó vẫn chạy.
+TEN_FILE_DUNG = "STOP"
+_LUC_BAT_DAU = time.time()
+
+def nen_dung(job_dir):
+    """True nếu backend đã xin dừng.
+
+    So theo thời điểm sửa file: STOP sót lại từ lần chạy TRƯỚC phải bị bỏ qua,
+    không thì mọi lần chạy sau đều tự dừng ngay khi vừa khởi động. Trừ hao 5
+    giây cho sai lệch đồng hồ / độ phân giải mtime của hệ thống tệp.
+    """
+    try:
+        return os.path.getmtime(os.path.join(job_dir, TEN_FILE_DUNG)) >= _LUC_BAT_DAU - 5
+    except OSError:
+        return False   # không có file, hoặc không đọc được -> cứ chạy tiếp
+
+
 def hop_nhat_excel(duong_dan_cu, noi_dung_moi, thang, job_dir, run_log, header_row=6):
     """Hop nhat Excel VUA TAI (bytes) voi file dang co, ghi de len chinh ten cu.
 
@@ -1575,6 +1597,11 @@ class tra_cuu_hdt:
             "tai_ok": 0,           # tai ve duoc
             "khong_co_goc": 0,     # HTTP 500 "khong ton tai ho so goc" — HOP LE
             "loi_that": 0,         # 429 / 504 / mang hong — dang di tim
+            # Bon so tren la TONG ca hai huong. Chay "ca vao ca ra" thi nhin so tong
+            # khong biet file nao cua ben nao, HD khong co goc thuoc dau vao hay dau ra
+            # (chot Truong 11/08). Tach rieng, van GIU khoa tong de ban C# cu doc duoc.
+            "tong_hd_vao": 0, "tai_ok_vao": 0, "khong_co_goc_vao": 0, "loi_that_vao": 0,
+            "tong_hd_ra": 0,  "tai_ok_ra": 0,  "khong_co_goc_ra": 0,  "loi_that_ra": 0,
             "nguon_ds": "",        # excel | search
             "stage_dbf_dir": stagedir,
             "run_log": run_log,
@@ -2088,13 +2115,34 @@ class tra_cuu_hdt:
                 # for thang, tu_ngay, den_ngay in khoang_cach:
                 #   for loai in ds_loai_hd:
                 result = []
+                # Cờ dừng êm. Bật rồi thì thoát khỏi mọi vòng lặp, NHƯNG vẫn đi qua
+                # khối finally của lượt đang dở để chốt cột "Đường dẫn XML".
+                dung_theo_yeu_cau = False
+
                 for thang, tu_ngay, den_ngay in khoang_cach:
                   job_id = f"T{thang}_{nam}_{MA_DONVI}"
                   paths = make_job_paths(save_dir, job_id,MA_DONVI)
+                  if nen_dung(paths["job_dir"]):
+                      dung_theo_yeu_cau = True
+                      append_run_log(run_log, f"DUNG_EM truoc thang={thang}")
+                      break
                   heartbeat(f"Đang sử lý thang {thang}", force=True, current_month=thang)
                   append_run_log(run_log, f"MONTH_START thang={thang} tu_ngay={tu_ngay} den_ngay={den_ngay}")
 
                   for loai in ds_loai_hd:
+                    if dung_theo_yeu_cau or nen_dung(paths["job_dir"]):
+                        dung_theo_yeu_cau = True
+                        append_run_log(run_log,
+                            f"DUNG_EM truoc {loai['huong']}{loai['hau_to']} T{thang}")
+                        break
+
+                    # Khởi tạo TRƯỚC try: khối finally ở cuối phải chạy được kể cả khi
+                    # lỗi nổ ngay dòng đầu, không thì nó ném NameError và che mất lỗi thật.
+                    sub_dir = None
+                    ten_file = None
+                    xml_paths_cho_excel = {}
+                    ket_qua_tai = {}
+
                     heartbeat(
                         f"Đang xử lý {loai['huong']}{loai['hau_to']} T{thang}",
                         force=True,
@@ -2281,7 +2329,12 @@ class tra_cuu_hdt:
                             continue
 
                         #print(f"   Tong: {len(ds_hd)} hoa don. Tai XML + HTML (convert song song)...")
+                        # _h = "vao" | "ra": hau to cua bo dem tach theo huong. Lay tu
+                        # loai["huong"] chu khong tu loai_xuat — chay "all" thi loai_xuat
+                        # la "all" cho ca hai luot, khong phan biet duoc.
+                        _h = loai["huong"].lower()
                         state["tong_hd"] = state.get("tong_hd", 0) + len(ds_hd)
+                        state[f"tong_hd_{_h}"] = state.get(f"tong_hd_{_h}", 0) + len(ds_hd)
                         status.write({**state, "state": "XML",
                                       "message": f"Tải XML: HD_{loai['huong']}{loai['hau_to']} T{thang}",
                                       "total": len(ds_hd), "downloaded": 0})
@@ -2296,6 +2349,18 @@ class tra_cuu_hdt:
                         # ma: dien, nuoc, vien thong) bi thu lai moi ngay, mai mai.
                         ket_qua_tai = {}
                         for i, hd in enumerate(ds_hd, 1):
+                            # Dừng êm: chỉ thoát VÒNG TẢI, không nhảy thẳng ra ngoài —
+                            # phải đi qua finally để ghi cột "Đường dẫn XML" cho những
+                            # hóa đơn vừa tải xong, không thì lượt sau tải lại từ đầu.
+                            if nen_dung(paths["job_dir"]):
+                                dung_theo_yeu_cau = True
+                                append_run_log(run_log,
+                                    f"DUNG_EM giua vong tai {loai['huong']}{loai['hau_to']} "
+                                    f"T{thang} tai {i}/{len(ds_hd)}")
+                                status.write({**state, "state": "DA_DUNG",
+                                              "message": f"Đang dừng — đã tải {i-1}/{len(ds_hd)}, "
+                                                         f"chốt đường dẫn XML"})
+                                break
                             heartbeat(
                                 f"Tai XML {loai['huong']}{loai['hau_to']} T{thang}: {i}/{len(ds_hd)}",
                                 total=len(ds_hd),
@@ -2402,9 +2467,14 @@ class tra_cuu_hdt:
                         # Chot so lieu cua luot nay vao bo dem ca job. Lam sau retry nen
                         # con so la ket qua CUOI CUNG, khong phai anh chup giua chung.
                         so_khong_goc = sum(1 for l in ds_loi if la_khong_co_goc(l.get("lydo", "")))
+                        so_loi_that = len(ds_loi) - so_khong_goc
                         state["tai_ok"] = state.get("tai_ok", 0) + thanh_cong
                         state["khong_co_goc"] = state.get("khong_co_goc", 0) + so_khong_goc
-                        state["loi_that"] = state.get("loi_that", 0) + (len(ds_loi) - so_khong_goc)
+                        state["loi_that"] = state.get("loi_that", 0) + so_loi_that
+                        # Cùng số liệu, tách theo hướng — xem giải thích ở khối khởi tạo state
+                        state[f"tai_ok_{_h}"] = state.get(f"tai_ok_{_h}", 0) + thanh_cong
+                        state[f"khong_co_goc_{_h}"] = state.get(f"khong_co_goc_{_h}", 0) + so_khong_goc
+                        state[f"loi_that_{_h}"] = state.get(f"loi_that_{_h}", 0) + so_loi_that
                         append_run_log(run_log,
                             f"LUOT_DONE {loai['huong']}{loai['hau_to']} T{thang} "
                             f"tong={len(ds_hd)} ok={thanh_cong} khong_goc={so_khong_goc} "
@@ -2420,11 +2490,6 @@ class tra_cuu_hdt:
 
                         #print(f"   Hoan tat tai: {thanh_cong}/{len(ds_hd)} thanh cong")
 
-                        # Them cot 'Duong dan XML' vao file Excel tai tu server
-                        excel_server_path = os.path.join(sub_dir, ten_file)
-                        if os.path.exists(excel_server_path):
-                            them_cot_xml_path(excel_server_path, xml_paths_cho_excel, ket_qua_tai=ket_qua_tai)
-
                         result.append(sub_dir)
                     except Exception as e_loai:
                         #print(f"   [BO QUA] Loi xu ly HD_{loai['huong']}{loai['hau_to']} T{thang}: {e_loai}")
@@ -2432,6 +2497,32 @@ class tra_cuu_hdt:
                         events.log("LOAI_ERROR", huong=loai['huong'], hau_to=loai['hau_to'], thang=thang, error=str(e_loai))
                         status.write({**state, "state": "LOAI_ERROR", "message": f"Bỏ qua HD_{loai['huong']}{loai['hau_to']} T{thang}: {e_loai}"})
                         continue
+                    finally:
+                        # Chốt cột "Đường dẫn XML" DÙ CÓ LỖI hay bị dừng giữa chừng.
+                        # Trước đây khối này nằm trong try, nên nhánh `except ... continue`
+                        # nhảy qua nó: một lỗi mạng ở hóa đơn cuối là mất dấu toàn bộ XML
+                        # của cả lượt, lượt sau tải lại từ đầu.
+                        # Trống cả hai bản đồ thì đừng gọi — mở/lưu workbook mất ~2 giây
+                        # mà không ghi được gì.
+                        if sub_dir and ten_file and (xml_paths_cho_excel or ket_qua_tai):
+                            excel_server_path = os.path.join(sub_dir, ten_file)
+                            if os.path.exists(excel_server_path):
+                                ok_ghi = them_cot_xml_path(
+                                    excel_server_path, xml_paths_cho_excel,
+                                    ket_qua_tai=ket_qua_tai)
+                                append_run_log(run_log,
+                                    f"GHI_DUONG_DAN {'ok' if ok_ghi else 'LOI'} "
+                                    f"duong_dan={len(xml_paths_cho_excel)} "
+                                    f"ket_qua={len(ket_qua_tai)} "
+                                    f"file={os.path.basename(excel_server_path)}")
+
+                    # Dừng êm: đường dẫn đã chốt ở finally trên, giờ mới thoát vòng loại
+                    if dung_theo_yeu_cau:
+                        break
+
+                  if dung_theo_yeu_cau:
+                      append_run_log(run_log, f"DUNG_EM thoat sau thang={thang}")
+                      break
 
                 # === Cho worker parse het queue ===
                 # #print(f"\nCho worker parse het XML trong queue ({xml_queue.qsize()} con lai)...")
@@ -2496,7 +2587,18 @@ class tra_cuu_hdt:
                 stage_dir = paths["stage_dir"]
                 os.makedirs(paths["output_dir"], exist_ok=True)
 
-                if all_master_rows or all_line_rows:
+                # Dừng giữa chừng thì KHÔNG ghi Excel tổng. File này luôn được ghi ĐÈ
+                # toàn bộ từ dữ liệu của lần chạy hiện tại, nên ghi lúc dở dang sẽ cho
+                # ra một Excel tổng chỉ có vài tháng/vài loại — bước nạp đọc phải nó sẽ
+                # tưởng đó là tất cả. Bỏ qua thì bản cũ còn nguyên vẹn, và lần chạy sau
+                # dựng lại ĐỦ: XML đã tải vẫn được đẩy qua hàng đợi nhờ nhánh dung_lai.
+                if dung_theo_yeu_cau:
+                    append_run_log(run_log,
+                        "BO_QUA_EXCEL_TONG da dung giua chung - giu nguyen ban cu")
+                    status.write({**state, "state": "DA_DUNG",
+                                  "message": "Đã dừng theo yêu cầu — đã chốt đường dẫn XML, "
+                                             "chưa ghi Excel tổng"})
+                elif all_master_rows or all_line_rows:
                     if loai_xuat == "all":
                         # Tach theo huong, ghi 2 file rieng
                         for h in ["RA", "VAO"]:

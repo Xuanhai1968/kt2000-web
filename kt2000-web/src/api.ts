@@ -266,6 +266,22 @@ export interface TienDoLay {
   loiThat: number;
   nguonDs: string;        // excel | search
 
+  // Chạy "cả vào cả ra" thì bốn số trên là TỔNG. Tách sẵn theo hướng để nhìn biết
+  // ngay file nào của bên nào, HĐ không có gốc thuộc đầu vào hay đầu ra.
+  // Script đời cũ không gửi mấy số này -> backend trả 0, màn hình tự ẩn phần tách.
+  tongVao: number;
+  taiOkVao: number;
+  khongCoGocVao: number;
+  loiThatVao: number;
+  tongRa: number;
+  taiOkRa: number;
+  khongCoGocRa: number;
+  loiThatRa: number;
+  napMoiVao: number;
+  napSuaVao: number;
+  napMoiRa: number;
+  napSuaRa: number;
+
   // NT-03: pha nạp chạy ngay sau pha lấy, trong cùng một lượt
   phaNap: string;         // "" | dang_nap | xong | loi
   napMoi: number;

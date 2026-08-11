@@ -64,6 +64,16 @@ namespace KT2000.Api.Services
             // để khỏi bị hiểu nhầm là "thiếu file" (spec 1.3.4).
             int khongCoGoc = 0;
 
+            // Số liệu tách theo hướng ("VAO" / "RA"). TheoH() tự tạo ô khi gặp hướng mới,
+            // nên chỉ nạp một hướng thì từ điển chỉ có đúng một khóa — màn hình dựa vào
+            // đó để biết có cần hiện phần tách hay không.
+            var theoHuong = new Dictionary<string, NapTheoHuong>();
+            NapTheoHuong TheoH(string h)
+            {
+                if (!theoHuong.TryGetValue(h, out var o)) theoHuong[h] = o = new NapTheoHuong();
+                return o;
+            }
+
             using var conn = new SqlConnection(
                 _resolver.GetTenantConnection(tenant.Code, req.Nam));
             await conn.OpenAsync();
@@ -203,6 +213,10 @@ namespace KT2000.Api.Services
                         ReplaceLines(conn, tx, maHd, lines, L, userName);
                         tx.Commit();
                         if (existed) updated++; else inserted++;
+                        // Đếm song song theo hướng: chạy "cả vào cả ra" thì số tổng không
+                        // nói được bên nào ra bên nào. Cộng ngay tại chỗ tăng biến tổng để
+                        // hai con số không bao giờ lệch nhau.
+                        if (existed) TheoH(huong).Updated++; else TheoH(huong).Inserted++;
                         ghiXong = true;
                     }
                     catch (Exception ex)
@@ -216,7 +230,8 @@ namespace KT2000.Api.Services
                     // giết cả vòng nạp. Hỏng khâu này thì HĐ vẫn vào DB, chỉ báo để dời tay.
                     if (!ghiXong) continue;
                     string xmlPath = S(r, M, "XML_PATH");
-                    if (string.IsNullOrWhiteSpace(xmlPath)) { khongCoGoc++; continue; }
+                    if (string.IsNullOrWhiteSpace(xmlPath))
+                    { khongCoGoc++; TheoH(huong).KhongCoGoc++; continue; }
                     try
                     {
                         moved += MoveArtifacts(jobDir, huong, req.Thang, req.Nam, scanDir, xmlPath);
@@ -239,11 +254,18 @@ namespace KT2000.Api.Services
             await LuuLoiNap(tenant.Id, req.Nam, req.Thang, errors, userName);
 
             int lechTong = errors.Count(e => e.LoaiLoi == "LECH_TONG");
+            // Lệch Σ lấy từ chính danh sách lỗi (LoiNap đã mang sẵn Hướng) chứ không đếm
+            // song song như ba số kia — không có biến tổng nào để bám vào.
+            foreach (var h in errors.Where(e => e.LoaiLoi == "LECH_TONG")
+                                    .GroupBy(e => e.Huong))
+                TheoH(h.Key).LechTong = h.Count();
+
             return new KetQuaNapJob
             {
                 Inserted = inserted, Updated = updated,
                 SkippedYear = skippedYear, SkippedNoDate = skippedNoDate,
                 KhongCoGoc = khongCoGoc, Moved = moved, LechTong = lechTong,
+                TheoHuong = theoHuong,
                 Errors = errors
                     .Select(e => new LoiNapDto { MaHd = e.MaHd, LoaiLoi = e.LoaiLoi, Reason = e.LyDo })
                     .ToList(),

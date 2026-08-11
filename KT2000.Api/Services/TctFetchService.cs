@@ -35,11 +35,28 @@ namespace KT2000.Api.Services
         public int LoiThat { get; set; }      // 429 / 504 / mạng hỏng — phải xem lại
         public string NguonDs { get; set; } = "";        // excel | search
 
+        // Chạy "cả vào cả ra" thì bốn số trên là TỔNG, nhìn vào không biết file nào của
+        // bên nào, HĐ không có gốc thuộc đầu vào hay đầu ra (chốt Trường 11/08).
+        // Script tách sẵn trong status.json; giữ luôn cả số tổng để không phải cộng lại.
+        public int TongVao { get; set; }
+        public int TaiOkVao { get; set; }
+        public int KhongCoGocVao { get; set; }
+        public int LoiThatVao { get; set; }
+        public int TongRa { get; set; }
+        public int TaiOkRa { get; set; }
+        public int KhongCoGocRa { get; set; }
+        public int LoiThatRa { get; set; }
+
         // NT-03: kết quả pha NẠP chạy ngay sau pha lấy, trong cùng một lượt
         public string PhaNap { get; set; } = "";         // "" / dang_nap / xong / loi
         public int NapMoi { get; set; }
         public int NapCapNhat { get; set; }
         public int NapLoi { get; set; }
+        // Cùng lý do như bộ đếm tải: nạp cả hai hướng thì hai số trên là tổng
+        public int NapMoiVao { get; set; }
+        public int NapSuaVao { get; set; }
+        public int NapMoiRa { get; set; }
+        public int NapSuaRa { get; set; }
         public string? NapThongDiep { get; set; }
     }
 
@@ -73,6 +90,12 @@ namespace KT2000.Api.Services
         private readonly ILogger<TctFetchService> _log;
 
         private readonly SemaphoreSlim _khoaPhien = new(1, 1);
+        // Dừng ÊM: đặt file này vào thư mục job, script thấy thì tự thoát qua đường bình
+        // thường (kịp ghi cột "Đường dẫn XML"). Tên phải khớp TEN_FILE_DUNG bên
+        // TRA_CUU_HDDT_2_0.py.
+        private const string TEP_DUNG = "STOP";
+        private const int GIAY_CHO_DUNG_EM = 45;
+
         private CancellationTokenSource? _cts;
         private volatile PhienLay _phien = new();
 
@@ -224,6 +247,16 @@ namespace KT2000.Api.Services
             // Xóa status cũ để không đọc nhầm kết quả lần chạy trước làm tiến độ lần này
             try { if (File.Exists(statusFile)) File.Delete(statusFile); } catch { }
 
+            // Cờ dừng sót lại từ lượt trước phải dọn, không thì lượt này vừa chạy đã tự
+            // dừng. Script còn một lớp chắn nữa (bỏ qua STOP cũ hơn giờ khởi động), đây
+            // là lớp thứ hai — rẻ, và giữ thư mục job sạch.
+            try
+            {
+                string tepDung = Path.Combine(jobDir, TEP_DUNG);
+                if (File.Exists(tepDung)) File.Delete(tepDung);
+            }
+            catch { /* xóa không được thì lớp chắn theo thời gian bên script vẫn đỡ */ }
+
             var psi = new ProcessStartInfo
             {
                 FileName = _config["Paths:PythonExe"]!,
@@ -278,15 +311,45 @@ namespace KT2000.Api.Services
             catch (Exception ex)
             { KetThucLoi(muc, "Không khởi chạy được python.exe: " + ex.Message); return; }
 
-            // Vừa chờ tiến trình, vừa đọc status.json để cập nhật tiến độ
+            // Vừa chờ tiến trình, vừa đọc status.json để cập nhật tiến độ.
+            //
+            // Nút Dừng: XIN dừng êm trước (đặt file STOP để script tự thoát theo đường
+            // bình thường, kịp chốt cột "Đường dẫn XML" của lượt đang dở), hết hạn chờ
+            // mới giết cứng. Giết thẳng như trước là mất dấu toàn bộ XML vừa tải về của
+            // lượt đó — lần sau tải lại từ đầu.
+            //
+            // 45 giây: script kiểm cờ ở đầu mỗi hóa đơn, mà một hóa đơn thường xong
+            // trong vài giây. Ca xấu (đang retry với timeout 90s) thì vẫn phải giết
+            // cứng — khi đó ta không mất gì hơn so với cách cũ.
+            DateTime? hanGietCung = null;
+
             while (!proc.HasExited)
             {
-                if (token.IsCancellationRequested)
+                if (token.IsCancellationRequested && hanGietCung == null)
+                {
+                    hanGietCung = DateTime.UtcNow.AddSeconds(GIAY_CHO_DUNG_EM);
+                    try
+                    {
+                        await File.WriteAllTextAsync(Path.Combine(jobDir, TEP_DUNG),
+                            DateTime.Now.ToString("O"), CancellationToken.None);
+                        muc.ThongDiep = "Đang dừng — chờ script chốt đường dẫn XML…";
+                    }
+                    catch (Exception ex)
+                    {
+                        // Không đặt được cờ thì đừng chờ vô ích, giết luôn cho dứt điểm
+                        nhatKy.AppendLine($"Không ghi được cờ dừng: {ex.Message}");
+                        hanGietCung = DateTime.UtcNow;
+                    }
+                }
+
+                if (hanGietCung != null && DateTime.UtcNow >= hanGietCung)
                 {
                     try { proc.Kill(entireProcessTree: true); } catch { }
-                    KetThucLoi(muc, "Đã dừng theo yêu cầu");
+                    KetThucLoi(muc, $"Đã dừng theo yêu cầu (buộc dừng sau {GIAY_CHO_DUNG_EM}s "
+                                  + "— đường dẫn XML của lượt đang chạy có thể chưa kịp ghi)");
                     return;
                 }
+
                 DocStatus(statusFile, muc);
                 await Task.Delay(1500, CancellationToken.None);
             }
@@ -298,6 +361,19 @@ namespace KT2000.Api.Services
                     nhatKy.ToString(), CancellationToken.None);
             }
             catch { /* log phụ, hỏng cũng không sao */ }
+
+            // Thoát êm: script đã tự kết thúc sau khi chốt đường dẫn. Không phải "lỗi",
+            // nhưng cũng KHÔNG được coi là xong — chưa có Excel tổng nên chưa nạp gì,
+            // và pha nạp bên dưới chỉ chạy khi TrangThai == "xong".
+            // Đặt SAU khi ghi backend_run.log: dừng giữa chừng là đúng lúc cần log nhất.
+            if (hanGietCung != null)
+            {
+                muc.TrangThai = "huy";
+                muc.ThongDiep = "Đã dừng theo yêu cầu — đã chốt đường dẫn XML, "
+                              + "lần chạy sau sẽ không tải lại phần đã tải";
+                muc.KetThuc = DateTime.Now;
+                return;
+            }
 
             // KHÔNG dùng exit code: script luôn thoát 1 vì có sys.exit(1) trong finally.
             // Sự thật nằm ở state trong status.json.
@@ -348,10 +424,21 @@ namespace KT2000.Api.Services
                 muc.NapMoi = kq.Inserted;
                 muc.NapCapNhat = kq.Updated;
                 muc.NapLoi = kq.Errors.Count;
+                if (kq.TheoHuong.TryGetValue("VAO", out var nV))
+                { muc.NapMoiVao = nV.Inserted; muc.NapSuaVao = nV.Updated; }
+                if (kq.TheoHuong.TryGetValue("RA", out var nR))
+                { muc.NapMoiRa = nR.Inserted; muc.NapSuaRa = nR.Updated; }
                 muc.PhaNap = "xong";
                 muc.NapThongDiep = $"Nạp: mới {kq.Inserted}, cập nhật {kq.Updated}"
                     + (kq.LechTong > 0 ? $", lệch Σ {kq.LechTong} HĐ nằm lại raw\\" : "")
-                    + (kq.KhongCoGoc > 0 ? $", {kq.KhongCoGoc} HĐ không có gốc TCT" : "");
+                    + (kq.KhongCoGoc > 0 ? $", {kq.KhongCoGoc} HĐ không có gốc TCT" : "")
+                    // Nạp cả hai hướng thì kèm phần tách — không thì nhìn "27 HĐ không có
+                    // gốc" mà chịu, không biết của đầu vào hay đầu ra.
+                    + (kq.TheoHuong.Count > 1 ? " · " + string.Join(" · ",
+                        kq.TheoHuong.OrderBy(x => x.Key).Select(x =>
+                            $"{x.Key}: mới {x.Value.Inserted}, sửa {x.Value.Updated}"
+                          + (x.Value.KhongCoGoc > 0 ? $", {x.Value.KhongCoGoc} không gốc" : "")
+                          + (x.Value.LechTong  > 0 ? $", lệch Σ {x.Value.LechTong}" : ""))) : "");
             }
             catch (Exception ex)
             {
@@ -424,6 +511,19 @@ namespace KT2000.Api.Services
                 if (r.TryGetProperty("khong_co_goc", out var kg) && kg.TryGetInt32(out var g2)) muc.KhongCoGoc = g2;
                 if (r.TryGetProperty("loi_that", out var lt) && lt.TryGetInt32(out var l2)) muc.LoiThat = l2;
                 if (r.TryGetProperty("nguon_ds", out var nd)) muc.NguonDs = nd.GetString() ?? "";
+
+                // Tách theo hướng. Script cũ không có mấy khóa này — TryGetProperty trả
+                // false thì giữ 0, màn hình tự ẩn phần chi tiết, không hiện số sai.
+                int So(string ten) =>
+                    r.TryGetProperty(ten, out var v) && v.TryGetInt32(out var i) ? i : 0;
+                muc.TongVao       = So("tong_hd_vao");
+                muc.TaiOkVao      = So("tai_ok_vao");
+                muc.KhongCoGocVao = So("khong_co_goc_vao");
+                muc.LoiThatVao    = So("loi_that_vao");
+                muc.TongRa        = So("tong_hd_ra");
+                muc.TaiOkRa       = So("tai_ok_ra");
+                muc.KhongCoGocRa  = So("khong_co_goc_ra");
+                muc.LoiThatRa     = So("loi_that_ra");
                 if (r.TryGetProperty("loai_xuat", out var lx))
                 {
                     string lv = lx.GetString() ?? "";
