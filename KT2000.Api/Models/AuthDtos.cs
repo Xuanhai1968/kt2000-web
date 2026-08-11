@@ -219,6 +219,16 @@ namespace KT2000.Api.Models
         public string? Reason { get; set; }
     }
 
+    // Nạp "cả vào cả ra" trong một lượt thì các số dưới là TỔNG — nhìn vào không biết
+    // 27 HĐ không có gốc là của đầu vào hay đầu ra (chốt Trường 11/08).
+    public class NapTheoHuong
+    {
+        public int Inserted { get; set; }
+        public int Updated { get; set; }
+        public int KhongCoGoc { get; set; }
+        public int LechTong { get; set; }
+    }
+
     public class KetQuaNapJob
     {
         public int Inserted { get; set; }
@@ -229,5 +239,9 @@ namespace KT2000.Api.Models
         public int Moved { get; set; }
         public int LechTong { get; set; }
         public List<LoiNapDto> Errors { get; set; } = new();
+
+        // Khóa là "VAO" / "RA". Chỉ nạp một hướng thì đúng một khóa — màn hình dựa vào
+        // số khóa để quyết định có hiện phần tách hay không.
+        public Dictionary<string, NapTheoHuong> TheoHuong { get; set; } = new();
     }
 }

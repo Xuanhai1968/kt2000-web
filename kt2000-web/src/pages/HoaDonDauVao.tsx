@@ -430,6 +430,39 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
       ? phien
       : null;
 
+  // Lượt chạy "cả vào cả ra" tách thành HAI DÒNG, mỗi dòng một hướng (chốt Trường
+  // 11/08). Trước đó thử nhồi "V 45 · R 52" xuống dưới con số tổng, nhưng đọc hai
+  // tầng trong một ô vẫn rối, mà cột Diễn biến thì vẫn là một cục chữ gộp.
+  //
+  // Thuần TRÌNH BÀY: backend vẫn một lượt, một tiến trình, một status.json — chỉ là
+  // nó đã trả sẵn số tách theo hướng nên màn hình bày lại được. Các cột dùng chung
+  // (đơn vị, kỳ, giờ bắt đầu, trạng thái, diễn biến) gộp ô qua rowSpan để nhìn ra
+  // ngay hai dòng này là MỘT lượt chứ không phải hai lần chạy.
+  const dongTienDo = useMemo(() => {
+    return (phienCuaManNay?.cac ?? []).flatMap((r) => {
+      const goc = `${r.tenantId}-${r.thang}`;
+      // Script chưa ghi số tách (mới khởi động, hoặc bản script đời cũ) thì giữ
+      // nguyên một dòng gộp — thà hiện số tổng đúng còn hơn hai dòng 0/0 sai.
+      const coSoTach = r.tongVao + r.taiOkVao + r.tongRa + r.taiOkRa > 0;
+      if (r.huong !== "VAO+RA" || !coSoTach)
+        return [{ ...r, khoa: goc, nhipGop: 1 }];
+      return [
+        { ...r, khoa: `${goc}-V`, nhipGop: 2, huong: "VAO",
+          tong: r.tongVao, taiOk: r.taiOkVao,
+          khongCoGoc: r.khongCoGocVao, loiThat: r.loiThatVao,
+          napMoi: r.napMoiVao, napCapNhat: r.napSuaVao },
+        // nhipGop = 0: antd bỏ hẳn ô đó đi, để ô của dòng trên phủ xuống
+        { ...r, khoa: `${goc}-R`, nhipGop: 0, huong: "RA",
+          tong: r.tongRa, taiOk: r.taiOkRa,
+          khongCoGoc: r.khongCoGocRa, loiThat: r.loiThatRa,
+          napMoi: r.napMoiRa, napCapNhat: r.napSuaRa },
+      ];
+    });
+  }, [phienCuaManNay]);
+
+  // Dùng cho những cột chung cả hai hướng
+  const gopO = (r: { nhipGop: number }) => ({ rowSpan: r.nhipGop });
+
   // Nút Lấy vẫn phải khóa khi CÓ BẤT KỲ phiên nào đang chạy, kể cả phiên của màn
   // kia — backend chỉ cho một phiên, bấm nữa chỉ tổ ăn thông báo lỗi.
   const dangChay = !!phien?.dangChay;
@@ -565,12 +598,13 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
             status={dangChayManNay ? "active" : "normal"}
           />
           <Table
-            className="luoi-gon" size="small" rowKey={(r) => `${r.tenantId}-${r.thang}`}
-            dataSource={phienCuaManNay.cac} pagination={false}
+            className="luoi-gon" size="small" rowKey={(r) => r.khoa}
+            dataSource={dongTienDo} pagination={false}
             scroll={{ x: 1420, y: 260 }}
             columns={[
-              { title: "Đơn vị", dataIndex: "code", width: 140, fixed: "left" },
-              { title: "Kỳ", width: 80,
+              { title: "Đơn vị", dataIndex: "code", width: 140, fixed: "left",
+                onCell: gopO },
+              { title: "Kỳ", width: 80, onCell: gopO,
                 render: (_: unknown, r) => `T${r.thang}/${r.nam}` },
               { title: "Hướng", dataIndex: "huong", width: 84,
                 render: (v: string) => v
@@ -578,7 +612,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                   : <Typography.Text type="secondary">—</Typography.Text> },
               // Giờ bấm Lấy — không có nó thì nhìn bảng không biết đây là phiên vừa
               // chạy hay phiên từ hôm kia còn treo trên màn hình
-              { title: "Bắt đầu", dataIndex: "batDau", width: 160,
+              { title: "Bắt đầu", dataIndex: "batDau", width: 160, onCell: gopO,
                 render: (v: string | null) => v
                   ? <span title={new Date(v).toLocaleString("vi-VN")}>
                       {new Date(v).toLocaleString("vi-VN",
@@ -587,7 +621,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                           hour12: false })}
                     </span>
                   : <Typography.Text type="secondary">—</Typography.Text> },
-              { title: "Trạng thái", dataIndex: "trangThai", width: 100,
+              { title: "Trạng thái", dataIndex: "trangThai", width: 100, onCell: gopO,
                 render: (v: string) => {
                   const mau: Record<string, string> = {
                     cho: "default", dang_chay: "blue", xong: "green", loi: "red", huy: "orange",
@@ -631,7 +665,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                                               {r.napCapNhat > 0 && ` · ${r.napCapNhat} sửa`}
                                             </span>
                 : <Typography.Text type="secondary">—</Typography.Text> },
-              { title: "Diễn biến", dataIndex: "thongDiep", ellipsis: true,
+              { title: "Diễn biến", dataIndex: "thongDiep", ellipsis: true, onCell: gopO,
                 render: (v: string, r) => r.loi
                   ? <Typography.Text type="danger" title={r.loi}>{r.loi}</Typography.Text>
                   : <span title={r.napThongDiep ?? v}>{r.napThongDiep || v}</span> },
