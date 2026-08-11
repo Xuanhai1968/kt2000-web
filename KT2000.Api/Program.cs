@@ -19,6 +19,7 @@ builder.Services.AddSingleton<TenantDbResolver>();
 builder.Services.AddScoped<AdminService>();
 builder.Services.AddScoped<ImportService>();
 builder.Services.AddScoped<NoiBoService>();   // phần nội bộ: danh mục + phiếu xuất/nhập
+builder.Services.AddScoped<ThueService>();    // sổ thuế: đọc HOA_DON của đơn vị đang đăng nhập
 
 // Mật khẩu cổng TCT mã hóa hai chiều bằng Data Protection. Khóa PHẢI lưu ra đĩa:
 // mặc định nó nằm trong profile người dùng và đổi theo tài khoản chạy tiến trình —

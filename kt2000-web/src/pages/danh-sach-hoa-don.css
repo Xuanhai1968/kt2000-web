@@ -1,0 +1,193 @@
+.ds-hoadon {
+  background: #d6f0f5;
+  border: 1px solid #9ec9d4;
+  padding: 6px 8px 8px;
+}
+
+/* ----- Thanh lọc trên cùng ----- */
+.ds-hoadon .thanh-loc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+
+.ds-hoadon .nhan {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.ds-hoadon .nhan-xanh { color: #0000cd; }
+
+.ds-hoadon.ds-hoadon .ant-input,
+.ds-hoadon.ds-hoadon .ant-input-number,
+.ds-hoadon.ds-hoadon .ant-input-number .ant-input-number-input,
+.ds-hoadon.ds-hoadon .ant-select .ant-select-selector {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 20px;
+  border-radius: 2px;
+}
+
+.ds-hoadon.ds-hoadon .ant-select-single .ant-select-selector .ant-select-selection-item,
+.ds-hoadon.ds-hoadon .ant-select-single .ant-select-selector .ant-select-selection-placeholder {
+  line-height: 20px;
+  font-size: 13px;
+}
+
+.ds-hoadon .ant-input-number-handler-wrap { display: none; }
+
+.ds-hoadon .ant-checkbox-wrapper,
+.ds-hoadon .ant-radio-wrapper {
+  font-size: 13px;
+  white-space: nowrap;
+  margin-inline-end: 0;
+}
+
+.ds-hoadon .ant-btn {
+  font-size: 12px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 2px;
+}
+
+.ds-hoadon.ds-hoadon .luoi-ds .ant-table-thead > tr > th,
+.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr > td {
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 20px;
+  height: 22px;
+  max-height: 22px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ds-hoadon .luoi-ds .ant-table-tbody > tr {
+  height: 22px;
+}
+
+.ds-hoadon.ds-hoadon .luoi-ds .ant-table table {
+  table-layout: fixed;
+}
+
+.ds-hoadon .luoi-ds .ant-table-thead > tr > th {
+  background: #e8e8e8;
+  font-weight: 600;
+  border-bottom: 1px solid #a0a0a0;
+}
+
+.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr:hover > td {
+  background: #eaf7ff;
+}
+
+/* Dòng đang chọn: xanh lá nhạt như thanh chọn của lưới VFP */
+.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr.dong-dang-chon > td {
+  background: #b7f0c5;
+}
+
+.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr > td.o-dang-dung,
+.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr:hover > td.o-dang-dung {
+  outline: 2px solid #0958d9;
+  outline-offset: -2px;
+  background: #cfe8ff;
+}
+
+.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr > td.o-dang-sua,
+.ds-hoadon.ds-hoadon .luoi-ds .ant-table-tbody > tr:hover > td.o-dang-sua {
+  outline: 2px solid #d48806;
+  outline-offset: -2px;
+  background: #fffbe6;
+  padding: 0;
+}
+
+.ds-hoadon .khung-ban-phim:focus,
+.ds-hoadon .khung-ban-phim:focus-visible {
+  outline: none;
+}
+
+/* ----- Ba tầng thanh công cụ dưới lưới ----- */
+.ds-hoadon .tang-cong-cu {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+
+.ds-hoadon .cot-cong-cu {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ds-hoadon .hang-cong-cu {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+/* ----- Bảng màu nút, bám theo bản gốc -----
+   Lặp lớp gốc vì antd khai màu nền nút ở .ant-btn (và biến thể :hover). */
+.ds-hoadon.ds-hoadon .nut-vang   { background: #fff08a; border-color: #d4b106; color: #000; }
+.ds-hoadon.ds-hoadon .nut-cam    { background: #ffc9a0; border-color: #d46b08; color: #000; }
+.ds-hoadon.ds-hoadon .nut-xanhla { background: #a8e6b8; border-color: #389e0d; color: #000; }
+.ds-hoadon.ds-hoadon .nut-xanhdg { background: #a8d8f0; border-color: #0958d9; color: #000; }
+.ds-hoadon.ds-hoadon .nut-hong   { background: #ffb8d9; border-color: #c41d7f; color: #000; }
+.ds-hoadon.ds-hoadon .nut-tim    { background: #d3adf7; border-color: #531dab; color: #000; }
+.ds-hoadon.ds-hoadon .nut-do     { background: #ffa39e; border-color: #cf1322; color: #000; }
+.ds-hoadon.ds-hoadon .nut-xanhdam{ background: #1d39c4; border-color: #10239e; color: #fff; }
+
+/* Nút chưa nối nghiệp vụ vẫn giữ màu nhưng mờ — nhìn là biết chưa dùng được */
+.ds-hoadon .ant-btn[disabled] { opacity: 0.5; }
+
+/* ----- Ô tổng tiền giữa form ----- */
+.ds-hoadon .o-tong {
+  background: #fff;
+  border: 1px solid #91caff;
+  font-size: 13px;
+  text-align: right;
+  padding: 1px 6px;
+  height: 22px;
+  line-height: 20px;
+  min-width: 150px;
+}
+
+/* ----- Khung ghi chú / danh sách phụ giữa form ----- */
+.ds-hoadon .khung-phu {
+  background: #fff;
+  border: 1px solid #91caff;
+  min-height: 90px;
+}
+
+.ds-hoadon.ds-hoadon .khung-phu .ant-table-thead > tr > th,
+.ds-hoadon.ds-hoadon .khung-phu .ant-table-tbody > tr > td {
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ----- Cột SL File XML bên phải ----- */
+.ds-hoadon .cot-sl-xml {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 190px;
+}
+
+.ds-hoadon .cot-sl-xml .nhan-sl {
+  color: #1d39c4;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ds-hoadon .cot-sl-xml .o-sl {
+  background: #fff;
+  border: 1px solid #91caff;
+  height: 20px;
+}
