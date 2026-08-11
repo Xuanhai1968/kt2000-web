@@ -85,6 +85,11 @@
   white-space: nowrap;
 }
 
+.phieu-nhap .hang-tieu-de {
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
 /* ----- Khối HĐ Liên quan: nhãn phải, ô trái, nền trắng ----- */
 .phieu-nhap .khoi-lquan .hang { justify-content: flex-end; }
 .phieu-nhap .khoi-lquan .nhan { width: 150px; text-align: right; }
@@ -92,8 +97,13 @@
 /* ----- Khối cộng tiền dưới lưới ----- */
 .phieu-nhap .khoi-cong .nhan { width: 140px; text-align: right; }
 
-/* Ô tổng thanh toán: chỉ đọc nhưng phải nổi bật vì là số người dùng nhìn nhiều nhất.
-   Khai sau luật ô chỉ đọc ở trên và cụ thể hơn nó, nên thắng mà không cần !important. */
+.phieu-nhap.phieu-nhap .khoi-cong .nhan-tien-vat {
+  width: auto;
+  flex: none;
+  text-align: left;
+  padding-left: 4px;
+}
+
 .phieu-nhap.phieu-nhap .o-tong-tt .ant-input-number .ant-input-number-input,
 .phieu-nhap.phieu-nhap .o-tong-tt .ant-input-number-disabled .ant-input-number-input {
   font-weight: 700;
@@ -101,7 +111,18 @@
   background: #f0f0f0;
 }
 
-/* ----- Lưới mặt hàng ----- */
+
+.phieu-nhap.phieu-nhap .luoi-hang .ant-table-body {
+  height: 210px;
+  max-height: 210px !important;
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+
+.phieu-nhap.phieu-nhap .luoi-hang .ant-table-placeholder > td {
+  border-bottom: none;
+}
+
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-thead > tr > th,
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr > td {
   padding: 1px 5px;
@@ -115,17 +136,13 @@
   white-space: nowrap;
 }
 
-/* Dòng đang chọn: xanh đậm chữ trắng như thanh chọn của lưới VFP.
-   Kèm biến thể :hover vì antd có luật nền riêng cho dòng đang rê chuột — không
-   khai thì rê vào dòng đang chọn là mất màu xanh. */
+
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon > td,
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon:hover > td {
   background: #4a90d9;
   color: #fff;
 }
 
-/* Ô nhập nằm trong ô bảng: thấp hơn ô nhập ngoài form một chút cho vừa dòng lưới.
-   Khai sau luật ô nhập chung và cùng độ đặc hiệu + thêm .luoi-hang nên thắng. */
 .phieu-nhap.phieu-nhap .luoi-hang .ant-input,
 .phieu-nhap.phieu-nhap .luoi-hang .ant-input-number .ant-input-number-input {
   height: 19px;
@@ -133,12 +150,8 @@
   line-height: 17px;
 }
 
-/* ----- Nhóm nút chức năng -----
-   Lặp lớp gốc vì antd khai màu nền nút ở .ant-btn. */
 .phieu-nhap.phieu-nhap .nut-vang  { background: #ffe08a; border-color: #d4b106; }
 .phieu-nhap.phieu-nhap .nut-cam   { background: #ffc9a0; border-color: #d46b08; }
 .phieu-nhap.phieu-nhap .nut-xanh  { background: #b7e3c0; border-color: #389e0d; }
 .phieu-nhap.phieu-nhap .nut-hong  { background: #ffc0d9; border-color: #c41d7f; }
-
-/* Nút chưa nối nghiệp vụ vẫn giữ màu nhưng mờ đi — nhìn là biết chưa dùng được */
 .phieu-nhap .ant-btn[disabled] { opacity: 0.55; }
