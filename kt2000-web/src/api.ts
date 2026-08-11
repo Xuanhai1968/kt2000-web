@@ -589,10 +589,6 @@ export const nbGhepDonVaoGoi = (maGoi: string, dsMaHd: string[]) =>
 export const nbRutDonKhoiGoi = (dsMaHd: string[]) =>
   api.post<{ message: string; soDon: number }>("/nb/goi/rut", dsMaHd);
 
-// CHỐT GÓI -> sinh phiếu soạn hàng (snapshot) + khóa sửa đơn con
-// KHÔNG còn nút nào gọi hàm này: phiếu gói giờ TỰ dựng lại sau mỗi lần ghép/rút đơn
-// (xem DungLaiSnapshot bên NoiBoService). Giữ endpoint để gọi tay khi cần dựng lại
-// snapshot của một gói cũ, hoặc lỡ có gói nào lệch.
 export const nbChotGoi = (maGoi: string) =>
   api.post<GoiHd>(`/nb/goi/${encodeURIComponent(maGoi)}/chot`);
 
@@ -600,3 +596,67 @@ export const nbChotGoi = (maGoi: string) =>
 export const nbXuatGoi = (maGoi: string, ngayXuat?: string) =>
   api.post<GoiHd>(`/nb/goi/${encodeURIComponent(maGoi)}/xuat`, null,
                   { params: { ngayXuat } });
+
+export interface HoaDonLine {
+  sttLine: number;
+  maHang: string | null;
+  tenHang: string;
+  dvt: string | null;
+  soLuong: number;
+  donGia: number;
+  thanhTien: number;
+  ptVat: number;
+  tienCk: number;
+  ghiNo: string | null;
+  ghiCo: string | null;
+  maNgan: string | null;
+  tinhChat: string | null;
+  ghiChu: string | null;
+}
+
+// Một hóa đơn GTGT trong sổ thuế — ánh xạ HOA_DON
+export interface HoaDonThue {
+  maHd: string;
+  huong: string | null;          // VAO | RA (cột tính sẵn của bảng)
+  ngay: string | null;           // ISO date
+  ngayNh: string | null;
+  thang: number | null;
+  khhd: string | null;
+  soHd: string | null;
+  mst: string | null;
+  tenKh: string | null;
+  diaChi: string | null;
+  nguoiGiaoDich: string | null;
+  soPtc: string | null;
+  maTv: string | null;
+  tenTv: string | null;
+  tienHang: number;
+  tienVat: number;
+  tienCk: number;
+  tongTien: number;
+  soDongHang: number;
+  ghiNo: string | null;
+  ghiCo: string | null;
+  maCtNo: string | null;
+  maCtCo: string | null;
+  ghiChu: string | null;
+  tthaiHd: string | null;
+  tichChatHdLienquan: string | null;
+  loaiHdLienquan: string | null;
+  mauSoHdLienquan: string | null;
+  khhdLienquan: string | null;
+  sohdLienquan: string | null;
+  ngayLienquan: string | null;
+  lines: HoaDonLine[];
+}
+
+export const thueDanhSachHoaDon = (
+  huong?: "VAO" | "RA", thang?: number, tu?: string, gioiHan = 200
+) => api.get<HoaDonThue[]>("/thue/hoa-don", { params: { huong, thang, tu, gioiHan } });
+
+export const thueChiTietHoaDon = (maHd: string) =>
+  api.get<HoaDonThue>(`/thue/hoa-don/${encodeURIComponent(maHd)}`);
+
+export const thueHtmlHoaDon = (maHd: string) =>
+  api.get<string>(`/thue/hoa-don/${encodeURIComponent(maHd)}/html`,
+                  { responseType: "text" });

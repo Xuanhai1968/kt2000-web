@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card, Table, Button, message, Typography, Input, Select, Space,
   Tag, Checkbox, Progress, Alert, Modal, Empty, InputNumber, Popconfirm,
@@ -6,14 +6,17 @@ import {
 import {
   getAdminTenants, getLeftoverFiles, getRawFiles, getRawHtml, importOne,
   getTctCredential, saveTctCredential, fetchStart, fetchProgress, fetchStop,
-  loiApi,
+  loiApi, thueDanhSachHoaDon, thueChiTietHoaDon, thueHtmlHoaDon,
 } from "../api";
 import type {
   AdminTenant, LeftoverInfo, HuongLay, HoaDonConLai, MatHang, PhienLay,
+  HoaDonThue, HoaDonLine,
 } from "../api";
 import { useAuth } from "../AuthContext";
+import DanhSachHoaDon from "./DanhSachHoaDon";
 import "./luoi-gon.css";
 import "./mau-huong.css";
+import "./hoa-don-dau-vao.css";
 
 // NT-06 (Q2): ghi nhớ theo MÁY chứ không theo người — đúng hành vi VFP cũ, nơi
 // trạng thái nằm trong KT2000.INI của máy đó. localStorage là chỗ tương đương.
@@ -744,18 +747,639 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
   );
 }
 
-// ============ RUỘT 2: đơn vị thường (TUAN_NGA…) ============
+// ============ RUỘT 2: đơn vị thường (TUAN_NGA…) — FRM_NHAP_HANG ============
+const TK_NO_GOI_Y = ["156", "152", "153", "211", "242", "641", "642", "627"];
+const TK_CO_GOI_Y = ["331", "111", "112", "141", "331"];
+const TK_VAT_GOI_Y = ["1331", "1332"];
+
+interface DinhKhoan {
+  ghiNo: string; ghiCo: string; tkVat: string; tkDuVat: string;
+  maCtNo: string; maCtCo: string; dtkt: string; thuongVu: string;
+  ngayNhapHang: string; khaiThang: number; soPhieuTC: string; nguoiGD: string;
+  ghiChu: string;
+  hoaDonHuy: boolean; daIn: boolean; printPreview: boolean; chiInMotTrang: boolean;
+  soSanhDuLieu: boolean; khongKiemTraTen: boolean;
+  coDuLieuGoc: boolean; dungTkNganHang: boolean; banHangQuaDienThoai: boolean;
+  tenHangLaBangKe: boolean;
+  suaTienCk: boolean; suaTienVat: boolean;
+  thueSuat: number; chietKhau: number; tienVat: number;
+  ghiNoCk: string; maCtNoCk: string; ghiCoCk: string; maCtCoCk: string;
+  // Khối HĐ Liên quan
+  tinhChatLQ: string; loaiLQ: string; maSoLQ: string;
+  khhdLQ: string; soHdLQ: string; ngayLQ: string;
+}
+
+const dinhKhoanRong = (): DinhKhoan => ({
+  ghiNo: "156", ghiCo: "331", tkVat: "1331", tkDuVat: "331",
+  maCtNo: "", maCtCo: "", dtkt: "", thuongVu: "",
+  ngayNhapHang: "", khaiThang: 0, soPhieuTC: "", nguoiGD: "", ghiChu: "XML File-",
+  hoaDonHuy: false, daIn: false, printPreview: true, chiInMotTrang: false,
+  soSanhDuLieu: false, khongKiemTraTen: true,
+  coDuLieuGoc: false, dungTkNganHang: false, banHangQuaDienThoai: false,
+  tenHangLaBangKe: false,
+  suaTienCk: false, suaTienVat: true,
+  thueSuat: 8, chietKhau: 0, tienVat: 0,
+  ghiNoCk: "", maCtNoCk: "", ghiCoCk: "", maCtCoCk: "",
+  tinhChatLQ: "", loaiLQ: "", maSoLQ: "", khhdLQ: "", soHdLQ: "", ngayLQ: "",
+});
+
 function HoaDonCuaDonVi({ huongMacDinh }: Props) {
   const { session } = useAuth();
-  const ten = huongMacDinh === "ra" ? "Hóa đơn GTGT đầu ra" : "Hóa đơn GTGT đầu vào";
+  const namLamViec = session?.fiscalYear ?? new Date().getFullYear();
+  const laDauRa = huongMacDinh === "ra";
+  const tenMan = laDauRa ? "Hóa đơn GTGT đầu ra" : "Hóa đơn GTGT đầu vào";
+  const [dsHd, setDsHd] = useState<HoaDonThue[]>([]);
+  const [tenFileChon, setTenFileChon] = useState<string | null>(null);
+  const [tai, setTai] = useState(true);
+  const [sttChon, setSttChon] = useState<number | null>(null);
+  const [moDanhSach, setMoDanhSach] = useState(false);
+  const [dinhKhoanTheoFile, setDinhKhoanTheoFile] =
+    useState<Record<string, DinhKhoan>>({});
+
+  const hd = dsHd.find((x) => x.maHd === tenFileChon) ?? null;
+  const tenDoiTac = hd?.tenKh ?? "";
+  const mstDoiTac = hd?.mst ?? "";
+  const dk = (tenFileChon && dinhKhoanTheoFile[tenFileChon]) || dinhKhoanRong();
+
+  const suaDk = (thayDoi: Partial<DinhKhoan>) => {
+    if (!tenFileChon) return;
+    setDinhKhoanTheoFile((m) => ({
+      ...m, [tenFileChon]: { ...(m[tenFileChon] ?? dinhKhoanRong()), ...thayDoi },
+    }));
+  };
+
+  const napHoaDon = async (baoKhiXong = false) => {
+    setTai(true);
+    try {
+      const r = await thueDanhSachHoaDon(laDauRa ? "RA" : "VAO", undefined, undefined, 2000);
+      const ds = r.data;
+      setDsHd(ds);
+      const dau = ds[0] ?? null;
+      setTenFileChon(dau?.maHd ?? null);
+      if (dau) {
+        await taiChiTiet(dau.maHd);
+        // Số đã có trong DB đổ sẵn vào phần định khoản để khỏi gõ lại
+        setDinhKhoanTheoFile((m) => m[dau.maHd] ? m : {
+          ...m,
+          [dau.maHd]: {
+            ...dinhKhoanRong(),
+            khaiThang: dau.thang ?? 0,
+            tienVat: dau.tienVat,
+            chietKhau: dau.tienCk,
+            ngayNhapHang: (dau.ngayNh ?? dau.ngay ?? "").slice(0, 10),
+            ghiNo: dau.ghiNo || "156",
+            ghiCo: dau.ghiCo || "331",
+            maCtNo: dau.maCtNo ?? "",
+            maCtCo: dau.maCtCo ?? "",
+            thuongVu: dau.maTv ?? "",
+            nguoiGD: dau.nguoiGiaoDich ?? "",
+            soPhieuTC: dau.soPtc ?? "",
+            ghiChu: dau.ghiChu || "XML File-",
+            tinhChatLQ: dau.tichChatHdLienquan ?? "",
+            loaiLQ: dau.loaiHdLienquan ?? "",
+            maSoLQ: dau.mauSoHdLienquan ?? "",
+            khhdLQ: dau.khhdLienquan ?? "",
+            soHdLQ: dau.sohdLienquan ?? "",
+            ngayLQ: (dau.ngayLienquan ?? "").slice(0, 10),
+          },
+        });
+      }
+      if (baoKhiXong) message.success(`Đã đọc ${ds.length} hóa đơn`);
+    } catch (e) {
+      setDsHd([]);
+      setTenFileChon(null);
+      message.error(loiApi(e, "Không đọc được sổ hóa đơn của đơn vị"));
+    } finally {
+      setTai(false);
+    }
+  };
+
+  const dangTaiRef = useRef<Set<string>>(new Set());
+  const yeuCauCuoiRef = useRef<string | null>(null);
+  const laHdMoi = (maHd: string) => maHd.startsWith("__moi_");
+  const taiChiTiet = async (maHd: string) => {
+    if (laHdMoi(maHd)) return;
+    if (dangTaiRef.current.has(maHd)) return;
+    dangTaiRef.current.add(maHd);
+    yeuCauCuoiRef.current = maHd;
+    try {
+      const r = await thueChiTietHoaDon(maHd);
+      setDsHd((ds) => ds.map((x) => (x.maHd === maHd ? r.data : x)));
+      // Chỉ đổi dòng hàng đang chọn nếu đây vẫn là hóa đơn người dùng đang xem
+      if (yeuCauCuoiRef.current === maHd)
+        setSttChon(r.data.lines[0]?.sttLine ?? null);
+    } catch (e) {
+      message.error(loiApi(e, `Không đọc được chi tiết hóa đơn ${maHd}`));
+    } finally {
+      dangTaiRef.current.delete(maHd);
+    }
+  };
+
+  const soNhapRef = useRef(0);
+
+  const taoMoi = () => {
+    soNhapRef.current += 1;
+    const khoaTam = `__moi_${soNhapRef.current}`;
+    const homNay = new Date().toISOString().slice(0, 10);
+    const hdMoi: HoaDonThue = {
+      maHd: khoaTam,
+      huong: laDauRa ? "RA" : "VAO",
+      ngay: homNay, ngayNh: homNay, thang: new Date().getMonth() + 1,
+      khhd: "", soHd: "", mst: "", tenKh: "", diaChi: "",
+      nguoiGiaoDich: "", soPtc: "", maTv: "", tenTv: "",
+      tienHang: 0, tienVat: 0, tienCk: 0, tongTien: 0, soDongHang: 0,
+      ghiNo: "156", ghiCo: "331", maCtNo: "", maCtCo: "",
+      ghiChu: "", tthaiHd: null,
+      tichChatHdLienquan: null, loaiHdLienquan: null, mauSoHdLienquan: null,
+      khhdLienquan: null, sohdLienquan: null, ngayLienquan: null,
+      lines: [],
+    };
+    setDsHd((ds) => [hdMoi, ...ds]);
+    setTenFileChon(khoaTam);
+    setSttChon(null);
+    setDinhKhoanTheoFile((m) => ({
+      ...m,
+      [khoaTam]: {
+        ...dinhKhoanRong(),
+        khaiThang: hdMoi.thang ?? 0,
+        ngayNhapHang: homNay,
+      },
+    }));
+    message.info("Đã tạo hóa đơn trống, chưa có API lưu, dữ liệu chỉ giữ trong phiên làm việc");
+  };
+
+  const xemHtml = async (maHd: string) => {
+    if (!maHd) return;
+    try {
+      const r = await thueHtmlHoaDon(maHd);
+      const url = URL.createObjectURL(
+        new Blob([r.data], { type: "text/html;charset=utf-8" }));
+      window.open(url, "_blank", "noopener");
+      // Thu hồi muộn để tab kịp đọc xong
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e: unknown) {
+      const st = (e as { response?: { status?: number } })?.response?.status;
+      message.error(st === 404
+        ? "Hóa đơn này không có bản HTML kèm theo"
+        : loiApi(e, "Không mở được bản HTML"));
+    }
+  };
+  useEffect(() => {
+    let huy = false;
+    const id = setTimeout(() => { if (!huy) void napHoaDon(); }, 0);
+    return () => { huy = true; clearTimeout(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.tenant.id, namLamViec, huongMacDinh]);
+
+  const chonHoaDon = (maHd: string) => {
+    setTenFileChon(maHd);
+    const x = dsHd.find((h) => h.maHd === maHd);
+    if (!x) return;
+    if (x.lines.length === 0) void taiChiTiet(maHd);
+    else setSttChon(x.lines[0]?.sttLine ?? null);
+    setDinhKhoanTheoFile((m) => m[maHd] ? m : {
+      ...m,
+      [maHd]: {
+        ...dinhKhoanRong(),
+        khaiThang: x.thang ?? 0,
+        tienVat: x.tienVat,
+        chietKhau: x.tienCk,
+        ngayNhapHang: (x.ngayNh ?? x.ngay ?? "").slice(0, 10),
+        ghiNo: x.ghiNo || "156",
+        ghiCo: x.ghiCo || "331",
+        maCtNo: x.maCtNo ?? "",
+        maCtCo: x.maCtCo ?? "",
+        thuongVu: x.maTv ?? "",
+        nguoiGD: x.nguoiGiaoDich ?? "",
+        soPhieuTC: x.soPtc ?? "",
+        ghiChu: x.ghiChu || "XML File-",
+        tinhChatLQ: x.tichChatHdLienquan ?? "",
+        loaiLQ: x.loaiHdLienquan ?? "",
+        maSoLQ: x.mauSoHdLienquan ?? "",
+        khhdLQ: x.khhdLienquan ?? "",
+        soHdLQ: x.sohdLienquan ?? "",
+        ngayLQ: (x.ngayLienquan ?? "").slice(0, 10),
+      },
+    });
+  };
+
+  const congTienHang = useMemo(
+    () => (hd?.lines ?? []).reduce((s, x) => s + x.thanhTien, 0), [hd]);
+  const congThanhToan = congTienHang - (dk.chietKhau || 0) + (dk.tienVat || 0);
+
+  const oNhan = (t: string, rong: number, do_ = false) => (
+    <span className={do_ ? "nhan nhan-do" : "nhan"} style={{ width: rong }}>{t}</span>
+  );
+
+  const nutChuaNoi = (nhan: string, lop = "") => (
+    <Button size="small" className={lop} disabled
+            title="Nghiệp vụ này chưa nối backend">
+      {nhan}
+    </Button>
+  );
+
   return (
-    <Card title={`${ten} — ${session?.tenant.name}`}>
-      <Input.Search placeholder="Tìm theo số HĐ, MST, tên đối tác…" disabled />
-      <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
-        Danh sách hóa đơn của đơn vị sẽ hiện ở đây sau khi có dữ liệu từ chức
-        năng Lấy HĐ điện tử (WP-03) và màn hình làm kho (WP-04).
-      </Typography.Paragraph>
-    </Card>
+    <div className={laDauRa ? "huong-ra" : "huong-vao"}>
+      <Card
+        title={`${tenMan} — ${session?.tenant.name ?? ""} (năm ${namLamViec})`}
+        styles={{ body: { padding: 8 } }}
+        extra={
+          <Space size={6}>
+            <Select
+              size="small" style={{ width: 300 }} placeholder="Chọn hóa đơn"
+              value={tenFileChon ?? undefined} onChange={chonHoaDon}
+              showSearch optionFilterProp="label"
+              options={dsHd.map((x) => ({
+                value: x.maHd,
+                label: laHdMoi(x.maHd)
+                  ? `● HĐ mới soạn — ${x.khhd || "(chưa có ký hiệu)"}`
+                    + `/${x.soHd || "(chưa có số)"}`
+                  : `${(x.ngay ?? "").slice(0, 10)} · ${x.khhd}/${x.soHd} · `
+                    + `${x.tenKh ?? ""}`,
+              }))}
+            />
+            <Button size="small" type="primary" onClick={taoMoi}>
+              Tạo mới
+            </Button>
+            <Button size="small" onClick={() => setMoDanhSach(true)}>
+              Tìm
+            </Button>
+            <Button size="small" onClick={() => napHoaDon(true)} loading={tai}>
+              Đọc lại
+            </Button>
+          </Space>
+        }
+      >
+
+        {!tai && dsHd.length === 0 && (
+          <Alert type="info" showIcon style={{ marginBottom: 8 }}
+                 message={`Chưa có hóa đơn ${laDauRa ? "đầu ra" : "đầu vào"} nào trong sổ năm ${namLamViec}`}
+                 description="Hóa đơn hiện ở đây sau khi bộ phận kế toán chạy Lấy HĐ điện tử từ cổng TCT và nạp vào sổ." />
+        )}
+
+        <div className="phieu-nhap">
+          {/* ===== HÀNG 1: Mã HĐ · Ký hiệu · Số HĐ · tiêu đề · các checkbox in ===== */}
+          <div className="hang">
+            {oNhan("Mã HĐ", 52)}
+            {/* Mã HĐ hệ thống tự sinh theo BR-HD-01 lúc ghi vào sổ — hóa đơn mới
+                soạn thì chưa có, hiện "(mới)" thay vì khóa tạm __moi_n */}
+            <Input size="small" style={{ width: 96 }} disabled
+                   value={hd ? (laHdMoi(hd.maHd) ? "(mới)" : hd.maHd) : ""}
+                   title={hd && !laHdMoi(hd.maHd) ? hd.maHd
+                        : "Mã sinh tự động khi ghi vào sổ"} />
+            {oNhan("Ký hiệu", 56)}
+            <Input size="small" style={{ width: 96 }} value={hd?.khhd ?? ""} readOnly />
+            {oNhan("Số HĐ", 50)}
+            <Input size="small" style={{ width: 90 }} value={hd?.soHd ?? ""} readOnly />
+
+            <div className="tieu-de-phieu" style={{ marginLeft: 10, marginRight: 10 }}>
+              {laDauRa ? "PHIẾU XUẤT HÀNG" : "PHIẾU NHẬP HÀNG"}
+            </div>
+
+            <Checkbox checked={dk.hoaDonHuy}
+                      onChange={(e) => suaDk({ hoaDonHuy: e.target.checked })}>
+              Hóa đơn hủy
+            </Checkbox>
+            {oNhan("M.Phiếu T/C", 82)}
+            <Input size="small" style={{ width: 150 }} value={dk.soPhieuTC}
+                   onChange={(e) => suaDk({ soPhieuTC: e.target.value })} />
+            {oNhan("Ngày lập HĐ", 84)}
+            <Input size="small" style={{ width: 110 }} readOnly
+                   value={(hd?.ngay ?? "").slice(0, 10)} />
+          </div>
+
+          {/* ===== HÀNG 2: Ngày HĐ · ngày nhập hàng · khai tháng · Đã In ===== */}
+          <div className="hang">
+            {oNhan("Ngày HĐ", 52)}
+            <Input size="small" style={{ width: 96 }} readOnly
+                   value={(hd?.ngay ?? "").slice(0, 10)} />
+            {oNhan("Ngày nhập hàng", 100)}
+            <Input size="small" style={{ width: 96 }} value={dk.ngayNhapHang}
+                   placeholder="yyyy-MM-dd"
+                   onChange={(e) => suaDk({ ngayNhapHang: e.target.value })} />
+            {oNhan("Khai tháng", 70)}
+            <Select size="small" style={{ width: 100 }}
+                    value={dk.khaiThang || undefined} placeholder="Tháng"
+                    onChange={(v) => suaDk({ khaiThang: v })}
+                    options={Array.from({ length: 12 }, (_, i) => ({
+                      value: i + 1, label: `Tháng ${i + 1}` }))} />
+            <Checkbox checked={dk.daIn} onChange={(e) => suaDk({ daIn: e.target.checked })}>
+              Đã In
+            </Checkbox>
+            <span style={{ flex: 1 }} />
+            <Checkbox checked={dk.printPreview}
+                      onChange={(e) => suaDk({ printPreview: e.target.checked })}>
+              Print Preview
+            </Checkbox>
+            <Checkbox checked={dk.chiInMotTrang}
+                      onChange={(e) => suaDk({ chiInMotTrang: e.target.checked })}>
+              Chỉ in một trang
+            </Checkbox>
+          </div>
+
+          {/* ===== HÀNG 3: MST KH · địa chỉ · người GD ===== */}
+          <div className="hang">
+            {oNhan("MST KH", 52)}
+            <Input size="small" style={{ width: 150 }} readOnly value={mstDoiTac} />
+            {oNhan("Địa chỉ", 52)}
+            <Input size="small" style={{ flex: 1, minWidth: 240 }} readOnly
+                   value={hd?.diaChi ?? ""} title={hd?.diaChi ?? ""} />
+            {oNhan("Người GD", 62)}
+            <Input size="small" style={{ width: 240 }} value={dk.nguoiGD}
+                   onChange={(e) => suaDk({ nguoiGD: e.target.value })} />
+          </div>
+
+          {/* ===== HÀNG 4: Tên NB · địa chỉ GH ===== */}
+          <div className="hang">
+            {oNhan("Tên NB", 52)}
+            <Input size="small" style={{ width: 110 }} readOnly value={mstDoiTac} />
+            <Input size="small" style={{ flex: 1, minWidth: 240 }} readOnly
+                   value={tenDoiTac} title={tenDoiTac} />
+            {oNhan("Địa chỉ GH", 70)}
+            <Input size="small" style={{ width: 240 }} disabled />
+          </div>
+
+          {/* ===== KHỐI ĐỊNH KHOẢN + KHỐI HĐ LIÊN QUAN (hai cột) ===== */}
+          <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+            {/* ---- Cột trái: định khoản ---- */}
+            <div style={{ flex: "1 1 62%", minWidth: 0 }}>
+              <div className="hang">
+                {oNhan("GHI NỢ", 52, true)}
+                <Select size="small" style={{ width: 74 }} value={dk.ghiNo}
+                        onChange={(v) => suaDk({ ghiNo: v })}
+                        options={TK_NO_GOI_Y.map((x) => ({ value: x, label: x }))} />
+                <Input size="small" style={{ width: 170 }} value="Hàng hoá" readOnly />
+                {oNhan("Mã CT nợ", 66)}
+                <Input size="small" style={{ flex: 1, minWidth: 150 }} value={dk.maCtNo}
+                       onChange={(e) => suaDk({ maCtNo: e.target.value })} />
+              </div>
+              <div className="hang">
+                {oNhan("GHI CÓ", 52, true)}
+                <Select size="small" style={{ width: 74 }} value={dk.ghiCo}
+                        onChange={(v) => suaDk({ ghiCo: v })}
+                        options={TK_CO_GOI_Y.map((x) => ({ value: x, label: x }))} />
+                <Input size="small" style={{ width: 170 }} value="Phải trả cho người bán"
+                       readOnly />
+                {oNhan("Mã CT có", 66)}
+                <Input size="small" style={{ flex: 1, minWidth: 150 }} value={dk.maCtCo}
+                       onChange={(e) => suaDk({ maCtCo: e.target.value })}
+                       placeholder={tenDoiTac} />
+              </div>
+              <div className="hang">
+                {oNhan("TK VAT", 52, true)}
+                <Select size="small" style={{ width: 74 }} value={dk.tkVat}
+                        onChange={(v) => suaDk({ tkVat: v })}
+                        options={TK_VAT_GOI_Y.map((x) => ({ value: x, label: x }))} />
+                <Input size="small" style={{ width: 170 }} value="Thuế GTGT được khấu trừ"
+                       readOnly />
+                {oNhan("TK ĐƯ VAT", 76, true)}
+                <Select size="small" style={{ width: 74 }} value={dk.tkDuVat}
+                        onChange={(v) => suaDk({ tkDuVat: v })}
+                        options={TK_CO_GOI_Y.map((x) => ({ value: x, label: x }))} />
+                <Input size="small" style={{ flex: 1, minWidth: 120 }}
+                       value="Phải trả cho người bán" readOnly />
+              </div>
+              <div className="hang">
+                {oNhan("Đ.T.K.T", 52, true)}
+                <Input size="small" style={{ width: 250 }} value={dk.dtkt}
+                       onChange={(e) => suaDk({ dtkt: e.target.value })} />
+                {oNhan("Thương vụ", 72)}
+                <Input size="small" style={{ flex: 1, minWidth: 150 }} value={dk.thuongVu}
+                       onChange={(e) => suaDk({ thuongVu: e.target.value })} />
+              </div>
+              <div className="hang">
+                {oNhan("Ghi chú", 52)}
+                <Input size="small" style={{ flex: 1 }} value={dk.ghiChu}
+                       onChange={(e) => suaDk({ ghiChu: e.target.value })} />
+              </div>
+
+              {/* Cụm nút giữa form */}
+              <div className="hang" style={{ marginTop: 4, flexWrap: "wrap" }}>
+                <Checkbox checked={dk.soSanhDuLieu}
+                          onChange={(e) => suaDk({ soSanhDuLieu: e.target.checked })}>
+                  So sánh dữ liệu
+                </Checkbox>
+                {nutChuaNoi("Ghi lại HĐ lỗi", "nut-cam")}
+                <Button size="small" className="nut-xanh"
+                        disabled={!hd || laHdMoi(hd.maHd)}
+                        onClick={() => hd && xemHtml(hd.maHd)}
+                        title={!hd ? "Chưa chọn hóa đơn"
+                             : laHdMoi(hd.maHd) ? "Hóa đơn mới soạn — chưa có bản gốc"
+                             : `Mở bản HTML gốc của ${hd.maHd}`}>
+                  Xem gốc
+                </Button>
+                {nutChuaNoi("Lấy dòng từ Excel", "nut-xanh")}
+                <Checkbox checked={dk.tenHangLaBangKe}
+                          onChange={(e) => suaDk({ tenHangLaBangKe: e.target.checked })}>
+                  H.Đơn T.Bảy
+                </Checkbox>
+              </div>
+              <div className="hang">
+                <Checkbox checked={dk.khongKiemTraTen}
+                          onChange={(e) => suaDk({ khongKiemTraTen: e.target.checked })}>
+                  Không kiểm tra tên khi thêm dòng
+                </Checkbox>
+              </div>
+            </div>
+
+            {/* ---- Cột phải: HĐ Liên quan ---- */}
+            <div className="khoi-lquan" style={{ flex: "0 0 330px" }}>
+              {([
+                ["Tính chất HĐ LQuan", "tinhChatLQ"],
+                ["Loại HĐ LQuan", "loaiLQ"],
+                ["Mã số HĐ LQuan", "maSoLQ"],
+                ["KHHD LQuan", "khhdLQ"],
+                ["Số HĐ LQuan", "soHdLQ"],
+                ["Ngày HĐ LQuan", "ngayLQ"],
+              ] as [string, keyof DinhKhoan][]).map(([nhan, khoa]) => (
+                <div className="hang" key={khoa}>
+                  <span className="nhan">{nhan}</span>
+                  <Input size="small" style={{ width: 150 }}
+                         value={String(dk[khoa] ?? "")}
+                         onChange={(e) => suaDk({ [khoa]: e.target.value } as Partial<DinhKhoan>)} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ===== THANH CÔNG CỤ TRÊN LƯỚI ===== */}
+          <div className="hang" style={{ marginTop: 6, flexWrap: "wrap" }}>
+            <Typography.Text strong style={{ fontSize: 13, marginRight: 8 }}>
+              Chi tiết hàng hoá dịch vụ
+            </Typography.Text>
+            <InputNumber size="small" style={{ width: 56 }} min={1}
+                         value={hd?.lines.length || 1} readOnly />
+            <Checkbox checked={dk.tenHangLaBangKe}
+                      onChange={(e) => suaDk({ tenHangLaBangKe: e.target.checked })}>
+              Tên hàng là bảng kê
+            </Checkbox>
+            {nutChuaNoi("Đọc Excel TKHQ", "nut-xanh")}
+            <Checkbox checked={dk.coDuLieuGoc}
+                      onChange={(e) => suaDk({ coDuLieuGoc: e.target.checked })}>
+              Có dữ liệu gốc
+            </Checkbox>
+            <Checkbox checked={dk.dungTkNganHang}
+                      onChange={(e) => suaDk({ dungTkNganHang: e.target.checked })}>
+              Dùng TK Ngân h
+            </Checkbox>
+            <Checkbox checked={dk.banHangQuaDienThoai}
+                      onChange={(e) => suaDk({ banHangQuaDienThoai: e.target.checked })}>
+              Bán hàng qua điện thoại
+            </Checkbox>
+          </div>
+
+          {/* ===== LƯỚI MẶT HÀNG ===== */}
+          <Table
+            className="luoi-hang"
+            rowKey="sttLine" size="small" pagination={false}
+            dataSource={hd?.lines ?? []}
+            loading={tai}
+            scroll={{ x: 1180, y: 210 }}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                        description="Hóa đơn không có dòng hàng" /> }}
+            onRow={(m: HoaDonLine) => ({
+              onClick: () => setSttChon(m.sttLine),
+              className: m.sttLine === sttChon ? "dong-dang-chon" : undefined,
+              style: { cursor: "pointer" },
+            })}
+            columns={[
+              { title: "STT", dataIndex: "sttLine", width: 46, fixed: "left" },
+              { title: "Tên hàng hoá dịch vụ", dataIndex: "tenHang", width: 230,
+                ellipsis: true,
+                render: (v: string) => <span title={v}>{v}</span> },
+              { title: "ĐVT", dataIndex: "dvt", width: 74 },
+              { title: "Số lượng", dataIndex: "soLuong", width: 92, align: "right",
+                render: (v: number) => v.toLocaleString("vi-VN",
+                  { minimumFractionDigits: 4, maximumFractionDigits: 4 }) },
+              { title: "Đơn giá", dataIndex: "donGia", width: 120, align: "right",
+                render: (v: number) => v.toLocaleString("vi-VN",
+                  { minimumFractionDigits: 4, maximumFractionDigits: 4 }) },
+              // ThanhTien do SQL nhân SL × ĐG nên không thể lệch — bỏ phép kiểm lệch
+              // vốn dành cho số đọc thẳng từ XML.
+              { title: "Thành tiền", dataIndex: "thanhTien", width: 140, align: "right",
+                render: (v: number) => (
+                  <b>{v.toLocaleString("vi-VN",
+                      { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</b>
+                ) },
+              { title: "Ghi chú", dataIndex: "ghiChu", width: 260, ellipsis: true,
+                render: (v: string | null, m: HoaDonLine) => {
+                  const t = v || m.tenHang;
+                  return <span title={t}>{t}</span>;
+                } },
+              { title: "Nợ", dataIndex: "ghiNo", width: 56, align: "center",
+                render: (v: string | null) => v || dk.ghiNo },
+              { title: "Có", dataIndex: "ghiCo", width: 56, align: "center",
+                render: (v: string | null) => v || dk.ghiCo },
+              { title: "% VAT", dataIndex: "ptVat", width: 74, align: "right",
+                render: (v: number) => v.toLocaleString("vi-VN",
+                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+              { title: "C.Khấu", dataIndex: "tienCk", width: 80, align: "right",
+                render: (v: number) => v.toLocaleString("vi-VN",
+                  { minimumFractionDigits: 4, maximumFractionDigits: 4 }) },
+            ]}
+          />
+
+          {/* ===== KHỐI CỘNG TIỀN + NÚT DƯỚI ===== */}
+          <div style={{ display: "flex", gap: 12, marginTop: 6 }}>
+            {/* ô ghi chú trống bên trái như bản gốc */}
+            <Input.TextArea rows={4} style={{ flex: "0 0 230px" }}
+                            value={dk.ghiChu}
+                            onChange={(e) => suaDk({ ghiChu: e.target.value })} />
+
+            <div className="khoi-cong" style={{ flex: "0 0 330px" }}>
+              <div className="hang">
+                {oNhan("Cộng tiền hàng", 140)}
+                <InputNumber size="small" style={{ width: 165 }} readOnly
+                             value={congTienHang} controls={false}
+                             formatter={(v) => Number(v ?? 0).toLocaleString("vi-VN",
+                               { minimumFractionDigits: 4, maximumFractionDigits: 4 })} />
+              </div>
+              <div className="hang">
+                {oNhan("Chiết khấu", 140)}
+                <InputNumber size="small" style={{ width: 165 }} controls={false}
+                             value={dk.chietKhau} disabled={!dk.suaTienCk}
+                             onChange={(v) => suaDk({ chietKhau: v ?? 0 })} />
+                <Checkbox checked={dk.suaTienCk}
+                          onChange={(e) => suaDk({ suaTienCk: e.target.checked })}>
+                  Sửa tiền CK
+                </Checkbox>
+              </div>
+              <div className="hang">
+                {oNhan("Thuế suất", 90)}
+                <InputNumber size="small" style={{ width: 46 }} controls={false}
+                             value={dk.thueSuat}
+                             onChange={(v) => suaDk({ thueSuat: v ?? 0 })} />
+                <span className="nhan" style={{ width: 46 }}>% Tiền VAT</span>
+                <InputNumber size="small" style={{ width: 165 }} controls={false}
+                             value={dk.tienVat} disabled={!dk.suaTienVat}
+                             onChange={(v) => suaDk({ tienVat: v ?? 0 })} />
+                <Checkbox checked={dk.suaTienVat}
+                          onChange={(e) => suaDk({ suaTienVat: e.target.checked })}>
+                  Sửa tiền VAT
+                </Checkbox>
+              </div>
+              <div className="hang o-tong-tt">
+                {oNhan("Cộng tiền thanh toán", 140)}
+                <InputNumber size="small" style={{ width: 165 }} readOnly controls={false}
+                             value={congThanhToan}
+                             formatter={(v) => Number(v ?? 0).toLocaleString("vi-VN",
+                               { minimumFractionDigits: 4, maximumFractionDigits: 4 })} />
+              </div>
+            </div>
+
+            {/* Cụm GHI NỢ/CÓ CK bên phải */}
+            <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+              {([
+                ["GHI NỢ CK", "ghiNoCk"], ["Mã CT Nợ CK", "maCtNoCk"],
+                ["GHI CÓ CK", "ghiCoCk"], ["Mã CT Có CK", "maCtCoCk"],
+              ] as [string, keyof DinhKhoan][]).map(([nhan, khoa]) => (
+                <div className="hang" key={khoa}>
+                  <span className="nhan nhan-do" style={{ width: 96, textAlign: "right" }}>
+                    {nhan}
+                  </span>
+                  <Input size="small" style={{ flex: 1, minWidth: 150 }}
+                         value={String(dk[khoa] ?? "")}
+                         onChange={(e) => suaDk({ [khoa]: e.target.value } as Partial<DinhKhoan>)} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ===== HÀNG NÚT CUỐI ===== */}
+          <div className="hang" style={{ marginTop: 8, flexWrap: "wrap", gap: 6 }}>
+            {nutChuaNoi("Ghi HĐ cần sửa", "nut-cam")}
+            {nutChuaNoi("Sử lý TKHQ", "nut-xanh")}
+            {nutChuaNoi("Lấy KM", "nut-cam")}
+            {nutChuaNoi("T.Phẩm SX Thêm")}
+            {nutChuaNoi("Thành tiền có VAT")}
+            {nutChuaNoi("In HĐ GTGT …")}
+            {nutChuaNoi("Print", "nut-hong")}
+            <span style={{ flex: 1 }} />
+            {nutChuaNoi("Tạo HĐ Lắp ráp")}
+            {nutChuaNoi("Lấy HĐ lỗi")}
+          </div>
+        </div>
+
+        <Typography.Text type="secondary"
+                         style={{ display: "block", marginTop: 6, fontSize: 12 }}>
+          Đang xem hóa đơn mới nhất trong <code>raw\</code> ({dsHd.length} hóa đơn cả năm).
+          Ô định khoản (GHI NỢ/CÓ, TK VAT, Mã CT, Thương vụ, HĐ Liên quan) nhập được
+          nhưng <b>chưa có API lưu</b> — số gõ vào chỉ giữ trong phiên làm việc.
+          Các nút mờ là nghiệp vụ chưa nối backend.
+        </Typography.Text>
+      </Card>
+
+      <DanhSachHoaDon
+        mo={moDanhSach}
+        onDong={() => setMoDanhSach(false)}
+        dsHd={dsHd}
+        namLamViec={namLamViec}
+        tenDonVi={session?.tenant.name ?? ""}
+        laDauRa={laDauRa}
+        onChon={chonHoaDon}
+        onXemHtml={xemHtml}
+      />
+    </div>
   );
 }
 

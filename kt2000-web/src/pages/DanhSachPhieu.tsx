@@ -62,8 +62,6 @@ export default function DanhSachPhieu() {
   const [thang, setThang] = useState<number | undefined>();
   const [locHuong, setLocHuong] = useState<HuongDon | undefined>();
   // Tích chọn để GHÉP GÓI (BR-NB-08). Chọn ở đây chứ không phải trong màn Gói: người
-  // dùng đang xem danh sách đơn thì chọn ngay tại chỗ mới thuận, chứ không phải nhớ
-  // số đơn rồi sang màn khác gõ lại.
   const [dsChon, setDsChon] = useState<string[]>([]);
 
   const doc = useCallback(async (kw?: string, th?: number) => {
@@ -99,9 +97,7 @@ export default function DanhSachPhieu() {
   const soChuaGiao = dsHien.length - soDaXuat;
 
   // ---------- TẠO GÓI NHANH: một cú bấm, không hỏi gì ----------
-  // Gói sinh ra từ CHÍNH mấy phiếu xuất đang tích, mã tự sinh G+số. KHÔNG bắt đặt tên:
-  // tên/khu vực/NVVC chỉ là thứ ghi thêm cho dễ nhận ra chuyến, sửa sau ở màn Gói hàng
-  // lúc nào cũng được — chặn người dùng ở đây chỉ làm chậm việc.
+
   const [dangTaoGoi, setDangTaoGoi] = useState(false);
   const taoGoiNhanh = useCallback(async () => {
     if (dsChon.length === 0) return;
@@ -128,19 +124,12 @@ export default function DanhSachPhieu() {
   }, [nav]);
 
   // ---------- In ngay tại danh sách, không phải mở form ----------
-  // Dòng trong lưới chỉ có phần đầu đơn, KHÔNG có dòng hàng — phải gọi chi tiết
-  // rồi mới in được. Ra thẳng hộp thoại in (hộp thoại đó đã có xem trước sẵn).
   const [dangIn, setDangIn] = useState<string | null>(null);
   const inDon = useCallback(async (d: DonNb) => {
     if (!d.maHd) return;
     setDangIn(d.maHd);
     try {
-      // Phải gọi chi tiết mới có dòng hàng, rồi dùng ĐÚNG mẫu in dùng chung với form —
-      // hai nơi in ra một tờ giấy y hệt nhau.
       const r = await nbLayDon(d.maHd);
-      // Session chỉ mang name/code/dbName — KHÔNG có địa chỉ/điện thoại đơn vị, nên
-      // chân trang tạm chỉ có giờ in. Muốn in đủ như Hoa_Sang thì phải bổ sung
-      // Address/Phone vào LoginResponse.Tenant (backend) — chưa làm.
       inPhieuDon(r.data, { ten: session?.tenant.name });
     } catch (e) {
       message.error(loiApi(e, "Không in được phiếu"));
@@ -187,8 +176,6 @@ export default function DanhSachPhieu() {
       render: (v: number) => <b style={kieuSo}>{soTien(Number(v) || 0)}</b>,
     },
     {
-      // Nút biểu tượng cho gọn cột. Tooltip giữ lại chữ để người mới không phải đoán
-      // hình vẽ nghĩa là gì.
       title: "", width: 80, align: "center" as const,
       render: (_: unknown, r: DonNb) => (
         <Space size={0}>

@@ -1,0 +1,144 @@
+/* Khung PHIẾU NHẬP HÀNG / PHIẾU XUẤT HÀNG của màn Hóa đơn đầu vào — đầu ra.
+   Dựng lại form VFP (FRM_NHAP_HANG) của KT2000.
+
+   Vì sao dùng CSS riêng chứ không Form của antd: form gốc là lưới nhãn-ô dày đặc,
+   nhãn nằm SÁT trái ô và mỗi hàng có 3–4 cặp nhãn/ô độ rộng khác nhau. Form antd
+   với labelCol/wrapperCol chia cột đều nhau nên không tả được bố cục đó; ở đây
+   dùng grid tự khai độ rộng từng cặp, bám đúng ảnh chụp màn hình.
+
+   KHÔNG dùng !important. Để thắng CSS mặc định của antd, mọi luật đều lặp lớp
+   gốc (.phieu-nhap.phieu-nhap) cho đủ độ đặc hiệu. Cách này giữ nguyên khả năng
+   ghi đè về sau: muốn sửa chỗ nào chỉ cần một selector cụ thể hơn, thay vì phải
+   leo thang !important lẫn nhau. */
+
+.phieu-nhap {
+  background: #ffe8ef;               /* nền hồng của form VFP gốc */
+  border: 1px solid #d9a8b8;
+  padding: 8px 10px 10px;
+}
+
+/* ----- Hàng nhãn + ô ----- */
+.phieu-nhap .hang {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 3px;
+  flex-wrap: nowrap;
+}
+
+.phieu-nhap .nhan {
+  font-size: 13px;
+  color: #0000cd;                    /* nhãn xanh dương như bản gốc */
+  white-space: nowrap;
+  text-align: left;
+}
+
+/* Nhãn đỏ: các ô bắt buộc / cảnh báo trong form gốc (TK VAT, TK ĐƯ VAT, Đ.T.K.T) */
+.phieu-nhap .nhan-do { color: #cf1322; }
+
+/* Ô nhập nén sát mật độ VFP: cao 22px thay vì 32px mặc định của antd.
+   Lặp lớp gốc để vượt đặc hiệu của antd (.ant-input-number .ant-input-number-input). */
+.phieu-nhap.phieu-nhap .ant-input,
+.phieu-nhap.phieu-nhap .ant-input-number,
+.phieu-nhap.phieu-nhap .ant-input-number .ant-input-number-input,
+.phieu-nhap.phieu-nhap .ant-picker,
+.phieu-nhap.phieu-nhap .ant-select .ant-select-selector {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 20px;
+  border-radius: 2px;
+}
+
+.phieu-nhap.phieu-nhap .ant-select-single .ant-select-selector .ant-select-selection-item,
+.phieu-nhap.phieu-nhap .ant-select-single .ant-select-selector .ant-select-selection-placeholder {
+  line-height: 20px;
+  font-size: 13px;
+}
+
+.phieu-nhap .ant-input-number-handler-wrap { display: none; }
+
+.phieu-nhap .ant-checkbox-wrapper {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* Ô chỉ đọc: nền xám để phân biệt với ô nhập được, giống VFP disable */
+.phieu-nhap.phieu-nhap .ant-input[disabled],
+.phieu-nhap.phieu-nhap .ant-input-number-disabled .ant-input-number-input {
+  background: #f0f0f0;
+  color: #262626;
+  cursor: default;
+}
+
+/* ----- Tiêu đề PHIẾU NHẬP HÀNG (khung đỏ bo tròn giữa form) ----- */
+.phieu-nhap .tieu-de-phieu {
+  border: 2px solid #cf1322;
+  border-radius: 14px;
+  color: #cf1322;
+  font-weight: 700;
+  font-size: 15px;
+  text-align: center;
+  padding: 3px 14px;
+  background: #fff;
+  white-space: nowrap;
+}
+
+/* ----- Khối HĐ Liên quan: nhãn phải, ô trái, nền trắng ----- */
+.phieu-nhap .khoi-lquan .hang { justify-content: flex-end; }
+.phieu-nhap .khoi-lquan .nhan { width: 150px; text-align: right; }
+
+/* ----- Khối cộng tiền dưới lưới ----- */
+.phieu-nhap .khoi-cong .nhan { width: 140px; text-align: right; }
+
+/* Ô tổng thanh toán: chỉ đọc nhưng phải nổi bật vì là số người dùng nhìn nhiều nhất.
+   Khai sau luật ô chỉ đọc ở trên và cụ thể hơn nó, nên thắng mà không cần !important. */
+.phieu-nhap.phieu-nhap .o-tong-tt .ant-input-number .ant-input-number-input,
+.phieu-nhap.phieu-nhap .o-tong-tt .ant-input-number-disabled .ant-input-number-input {
+  font-weight: 700;
+  color: #cf1322;
+  background: #f0f0f0;
+}
+
+/* ----- Lưới mặt hàng ----- */
+.phieu-nhap.phieu-nhap .luoi-hang .ant-table-thead > tr > th,
+.phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr > td {
+  padding: 1px 5px;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.phieu-nhap .luoi-hang .ant-table-thead > tr > th {
+  background: #d9d9d9;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Dòng đang chọn: xanh đậm chữ trắng như thanh chọn của lưới VFP.
+   Kèm biến thể :hover vì antd có luật nền riêng cho dòng đang rê chuột — không
+   khai thì rê vào dòng đang chọn là mất màu xanh. */
+.phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon > td,
+.phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon:hover > td {
+  background: #4a90d9;
+  color: #fff;
+}
+
+/* Ô nhập nằm trong ô bảng: thấp hơn ô nhập ngoài form một chút cho vừa dòng lưới.
+   Khai sau luật ô nhập chung và cùng độ đặc hiệu + thêm .luoi-hang nên thắng. */
+.phieu-nhap.phieu-nhap .luoi-hang .ant-input,
+.phieu-nhap.phieu-nhap .luoi-hang .ant-input-number .ant-input-number-input {
+  height: 19px;
+  min-height: 19px;
+  line-height: 17px;
+}
+
+/* ----- Nhóm nút chức năng -----
+   Lặp lớp gốc vì antd khai màu nền nút ở .ant-btn. */
+.phieu-nhap.phieu-nhap .nut-vang  { background: #ffe08a; border-color: #d4b106; }
+.phieu-nhap.phieu-nhap .nut-cam   { background: #ffc9a0; border-color: #d46b08; }
+.phieu-nhap.phieu-nhap .nut-xanh  { background: #b7e3c0; border-color: #389e0d; }
+.phieu-nhap.phieu-nhap .nut-hong  { background: #ffc0d9; border-color: #c41d7f; }
+
+/* Nút chưa nối nghiệp vụ vẫn giữ màu nhưng mờ đi — nhìn là biết chưa dùng được */
+.phieu-nhap .ant-btn[disabled] { opacity: 0.55; }
