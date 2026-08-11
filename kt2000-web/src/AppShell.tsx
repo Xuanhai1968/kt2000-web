@@ -26,6 +26,29 @@ const menuThue = [
   },
 ];
 
+// Bộ menu MDN_NB (tenant_type = 'internal') — bàn làm việc của kế toán DỊCH VỤ.
+// Đây KHÔNG phải sổ của một đơn vị, nên không có Phiếu thu/chi, Tồn kho, Công nợ:
+// những sổ đó thuộc về từng khách hàng, bày ở đây thì bấm vào cũng chẳng biết đang
+// xem kho của ai. Sau này màn theo dõi phí dịch vụ sẽ thay chỗ.
+//
+// Nhãn "Lấy HĐ…" thay vì "Hóa đơn…" vì việc ở màn này là ĐI LẤY về cho khách,
+// không phải xem hóa đơn của chính mình. Đơn vị khách hàng vẫn giữ nhãn cũ.
+const menuMdnNb = [
+  {
+    type: "group" as const, label: "LẤY DỮ LIỆU",
+    children: [
+      { key: "/app/hoa-don-vao", label: "Lấy HĐ GTGT đầu Vào" },
+      { key: "/app/hoa-don-ra", label: "Lấy HĐ GTGT đầu Ra" },
+    ],
+  },
+  {
+    type: "group" as const, label: "BÁO CÁO",
+    children: [
+      { key: "/app/bao-cao-thue", label: "Báo cáo thuế" },
+    ],
+  },
+];
+
 const menuNoiBo = [
   {
     type: "group" as const, label: "PHIẾU",
@@ -91,20 +114,20 @@ export default function AppShell() {
               // Tenant 'noibo' CHỈ thấy menu NB, không thấy sổ thuế lẫn quản trị.
               isNoiBo
                 ? menuNoiBo
-                : [
-                    ...menuThue,
-                    ...(isInternal
-                      ? [{
-                          type: "group" as const, label: "QUẢN TRỊ",
-                          children: [
-                            { key: "/app/don-vi", label: "Đơn vị khách hàng" },
-                            { key: "/app/mo-nam", label: "Mở năm làm việc" },
-                            { key: "/app/quan-ly-user", label: "Quản lý người dùng" },
-                            { key: "/app/nhat-ky", label: "Nhật ký hệ thống" },
-                          ],
-                        }]
-                      : []),
-                  ]
+                : isInternal
+                  ? [
+                      ...menuMdnNb,
+                      {
+                        type: "group" as const, label: "QUẢN TRỊ",
+                        children: [
+                          { key: "/app/don-vi", label: "Đơn vị khách hàng" },
+                          { key: "/app/mo-nam", label: "Mở năm làm việc" },
+                          { key: "/app/quan-ly-user", label: "Quản lý người dùng" },
+                          { key: "/app/nhat-ky", label: "Nhật ký hệ thống" },
+                        ],
+                      },
+                    ]
+                  : menuThue
             }
             selectedKeys={[loc.pathname]}
             onClick={(e) => nav(e.key)}

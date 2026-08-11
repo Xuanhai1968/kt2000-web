@@ -150,6 +150,9 @@ namespace KT2000.Api.Models
         public string Huong { get; set; } = "vao";
         // NT-03: lấy xong nạp luôn, nên lựa chọn của pha nạp phải gửi kèm ngay từ đầu
         public bool XoaTruocKhiGhi { get; set; } = false;
+        // [ĐANG THỬ] bật cờ --tang_dan của script: bỏ tải hóa đơn đã có XML.
+        // Mặc định false — nút "Lấy hóa đơn điện tử" thường vẫn chạy đầy đủ như cũ.
+        public bool TangDan { get; set; } = false;
     }
 
     // Xem chi tiết các hóa đơn còn nằm lại raw\ của MỘT đơn vị

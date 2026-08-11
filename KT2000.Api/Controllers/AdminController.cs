@@ -521,7 +521,7 @@ namespace KT2000.Api.Controllers
                 var phien = _tct.BatDauPhien(
                     ds.Select(x => (x.Id, x.Code)).ToList(),
                     req.Nam, req.ThangBd, req.ThangKt, req.Huong,
-                    req.XoaTruocKhiGhi, CurrentLoginName());
+                    req.XoaTruocKhiGhi, CurrentLoginName(), req.TangDan);
                 return Ok(phien);
             }
             catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }

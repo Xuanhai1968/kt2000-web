@@ -15,15 +15,20 @@ namespace KT2000.Api.Services
     public record LoiNap(string MaHd, string Huong, string LoaiLoi, string LyDo);
 
     // Một dòng hàng đọc thẳng từ XML gốc của TCT
+    // TinhChat = TChat của TCT: 1 hàng hóa/dịch vụ, 2 khuyến mại, 3 CHIẾT KHẤU thương mại,
+    // 4 ghi chú. Phải mang ra tận giao diện: dòng chiết khấu ghi ThTien DƯƠNG trong XML
+    // nhưng bản chất là TRỪ. Cộng thẳng vào là lệch đúng 2 lần số chiết khấu
+    // (ca thật: C26TLC/10 — CK 4.195.324, Σ line vượt master đúng 8.390.648).
     public record MatHang(int Stt, string TenHang, string Dvt, decimal SoLuong,
-                          decimal DonGia, decimal ThanhTien, string ThueSuat);
+                          decimal DonGia, decimal ThanhTien, string ThueSuat,
+                          string TinhChat = "1");
 
     // Một hóa đơn còn nằm lại raw\ — dựng từ chính file XML chứ không từ Excel tổng,
     // vì file lạc (không có dòng master) thì trong Excel không có gì để đọc.
     public record HoaDonConLai(
         string TenFile, string Huong, int Thang, string MauSo, string KhHd, string SoHd,
         string Ngay, string MstBan, string TenBan, string MstMua, string TenMua,
-        decimal TienHang, decimal TienVat, decimal TongTien,
+        decimal TienHang, decimal TienVat, decimal TongTien, decimal TienCk,
         string LyDo, bool CoTrongExcel, List<MatHang> MatHangs);
 
     public class ImportService
@@ -119,13 +124,37 @@ namespace KT2000.Api.Services
                     // hào so với tổng đã làm tròn — vd HUY_THANH T1/2026 lệch 0,4đ và 0,25đ.
                     // Từ 10 đồng trở lên là sai thật, phải để lại raw\ xử lý tay.
                     const decimal SAI_SO_CHO_PHEP = 10m;
+
+                    // Dòng CHIẾT KHẤU thương mại (LOAI_HH = TChat = 3) ghi thành tiền
+                    // DƯƠNG trong XML của TCT, nhưng bản chất là TRỪ vào tiền hàng.
+                    // Cộng thẳng là lệch đúng HAI LẦN số chiết khấu — một lần thiếu phép
+                    // trừ, một lần cộng nhầm.
+                    //   Ca thật C26TLC/10: Σ 12 dòng = 128.929.583, master = 120.538.935,
+                    //   chênh 8.390.648 = 2 × 4.195.324. Chín hóa đơn của cùng người bán
+                    //   6200068486 bị đá ra raw\ vì lý do này.
+                    // Chốt với Trường 11/08: CHỈ sửa phép so sánh, KHÔNG đổi dấu dòng
+                    // chiết khấu khi ghi vào HOA_DON_LINE — kế toán không nhận số âm.
+                    decimal Cong(string cot) => lines.Sum(x =>
+                        (S(x, L, "LOAI_HH").Trim() == "3" ? -1m : 1m) * N(x, L, cot));
+
                     decimal mNorm = N(r, M, "TIEN_HANG");
-                    decimal sNorm = lines.Sum(x => N(x, L, "THANH_TIEN"));
+                    decimal sNorm = Cong("THANH_TIEN");
                     decimal mG    = N(r, M, "TT_HD_G");
-                    decimal sG    = lines.Sum(x => N(x, L, "TTIEN_LINE"));
+                    decimal sG    = Cong("TTIEN_LINE");
                     bool useNorm  = mNorm != 0 || sNorm != 0;
                     decimal masterVal = useNorm ? mNorm : mG;
                     decimal sumLine   = useNorm ? sNorm : sG;
+
+                    // Hóa đơn KHÔNG CHỊU THUẾ: cổng không khai tiền chưa thuế nên cả
+                    // TIEN_HANG lẫn TT_HD_G đều rỗng → masterVal = 0, và hóa đơn bị đá ra
+                    // với "chênh" đúng bằng toàn bộ giá trị của nó.
+                    //   Ca thật C26MYY/3: Σ line 1.750.000 vs master 0.
+                    // Suy ngược từ tổng trừ thuế; hết đường mới lấy chính Σ line.
+                    if (masterVal == 0 && sumLine != 0)
+                    {
+                        decimal suyRa = N(r, M, "TONG_TIEN") - N(r, M, "TIEN_VAT");
+                        masterVal = suyRa > 0 ? suyRa : sumLine;
+                    }
 
                     // HĐ đặc biệt không có gốc trên TCT (điện, viễn thông, ngân hàng —
                     // NGUON_DL = EXCEL_NO_XML): THANH_TIEN của line là tiền ĐÃ GỒM VAT,
@@ -519,16 +548,37 @@ namespace KT2000.Api.Services
                 var hangs = new List<MatHang>();
                 foreach (var h in nd.Element("DSHHDVu")?.Elements("HHDVu")
                                   ?? Enumerable.Empty<System.Xml.Linq.XElement>())
+                {
+                    // TChat rỗng thì coi là hàng hóa — đa số hóa đơn không khai trường này
+                    string tchat = V(h, "TChat");
                     hangs.Add(new MatHang(
                         int.TryParse(V(h, "STT"), out var stt) ? stt : hangs.Count + 1,
                         V(h, "THHDVu"), V(h, "DVTinh"),
-                        D(h, "SLuong"), D(h, "DGia"), D(h, "ThTien"), V(h, "TSuat")));
+                        D(h, "SLuong"), D(h, "DGia"), D(h, "ThTien"), V(h, "TSuat"),
+                        string.IsNullOrWhiteSpace(tchat) ? "1" : tchat));
+                }
+
+                decimal tienVat  = D(tt, "TgTThue");
+                decimal tongTien = D(tt, "TgTTTBSo");
+                decimal tienHang = D(tt, "TgTCThue");
+
+                // Hóa đơn không chịu thuế thường KHÔNG khai TgTCThue (ca thật: C26MYY/3 —
+                // chỉ có TgTTTBSo = 1.750.000). Để nguyên 0 thì cột Tiền hàng trống trơn
+                // và mọi phép kiểm Σ line đều báo lệch oan. Suy ngược từ tổng trừ thuế;
+                // hết đường mới lấy Σ dòng hàng.
+                if (tienHang == 0)
+                {
+                    tienHang = tongTien - tienVat;
+                    if (tienHang <= 0)
+                        tienHang = hangs.Where(x => x.TinhChat != "3").Sum(x => x.ThanhTien)
+                                 - hangs.Where(x => x.TinhChat == "3").Sum(x => x.ThanhTien);
+                }
 
                 return new HoaDonConLai(
                     Path.GetFileName(path), huong, thang,
                     V(chung, "KHMSHDon"), V(chung, "KHHDon"), V(chung, "SHDon"), V(chung, "NLap"),
                     V(ban, "MST"), V(ban, "Ten"), V(mua, "MST"), V(mua, "Ten"),
-                    D(tt, "TgTCThue"), D(tt, "TgTThue"), D(tt, "TgTTTBSo"),
+                    tienHang, tienVat, tongTien, D(tt, "TTCKTMai"),
                     "", false, hangs);
             }
             catch { return null; }
@@ -683,9 +733,56 @@ namespace KT2000.Api.Services
         {
             if (!m.TryGetValue(col, out var i)) return 0m;
             var cell = r.Cell(i);
-            if (cell.TryGetValue<decimal>(out var v)) return v;
-            var s = cell.GetString().Trim().Replace(",", "");
-            return decimal.TryParse(s, System.Globalization.NumberStyles.Any,
+            // Ô SỐ thật thì lấy thẳng — không có dấu phân cách nào để hiểu nhầm.
+            // Chỉ ô Text mới phải đoán khuôn, và đó là chỗ từng gây họa (xem DocSo).
+            if (cell.DataType == XLDataType.Number && cell.TryGetValue<decimal>(out var v))
+                return v;
+            return DocSo(cell.GetString());
+        }
+
+        // Đọc một con số ghi dưới dạng CHUỖI trong Excel.
+        //
+        // Vì sao phải cẩn thận đến thế: Excel tổng do Python sinh ra không nhất quán —
+        // có file ghi "2152778.40" (dấu chấm thập phân), có file ghi "128929583,000000"
+        // (dấu phẩy thập phân, 6 chữ số lẻ). Bản cũ cứ Replace(",", "") rồi parse với
+        // NumberStyles.Any: gặp khuôn thứ hai là "128929583,000000" thành 128929583000000
+        // — sai GẤP 10^6. Đó chính là thứ đã ghi 32 hóa đơn sai vào HOA_SANG_2026 lúc
+        // 11:03 ngày 10/08/2026 (VAT lên tới 13.909.091.000.000) và đá hàng loạt hóa đơn
+        // khác ra raw\ vì Σ line lệch.
+        //
+        // Quy tắc: dấu phân cách XUẤT HIỆN SAU CÙNG là dấu thập phân; loại còn lại là
+        // phân cách nghìn. Một loại xuất hiện nhiều lần thì chắc chắn là phân cách nghìn.
+        // Xuất hiện đúng một lần và là loại duy nhất thì coi là dấu thập phân — dữ liệu
+        // TCT không bao giờ ghi phân cách nghìn, nên đây là suy đoán đúng với nguồn thật.
+        internal static decimal DocSo(string tho)
+        {
+            string s = (tho ?? "").Trim().Replace(" ", "").Replace(" ", "");
+            if (s.Length == 0) return 0m;
+
+            int viTriCham = s.LastIndexOf('.');
+            int viTriPhay = s.LastIndexOf(',');
+
+            if (viTriCham >= 0 && viTriPhay >= 0)
+            {
+                // Có cả hai: cái đứng sau là dấu thập phân
+                char thapPhan = viTriCham > viTriPhay ? '.' : ',';
+                char nghin    = thapPhan == '.' ? ',' : '.';
+                s = s.Replace(nghin.ToString(), "").Replace(thapPhan, '.');
+            }
+            else if (viTriCham >= 0 || viTriPhay >= 0)
+            {
+                char dau = viTriCham >= 0 ? '.' : ',';
+                int soLan = s.Count(c => c == dau);
+                s = soLan > 1
+                    ? s.Replace(dau.ToString(), "")   // nhiều lần → phân cách nghìn
+                    : s.Replace(dau, '.');            // một lần → dấu thập phân
+            }
+
+            // KHÔNG dùng NumberStyles.Any: nó bật AllowThousands, mà tới đây chuỗi đã
+            // sạch phân cách nghìn rồi — để bật chỉ tổ mở lại đúng cái cửa vừa đóng.
+            return decimal.TryParse(s,
+                System.Globalization.NumberStyles.AllowLeadingSign
+              | System.Globalization.NumberStyles.AllowDecimalPoint,
                 System.Globalization.CultureInfo.InvariantCulture, out var p) ? p : 0m;
         }
         private static decimal N2(IXLRow r, Dictionary<string,int> m, string col, string fb)

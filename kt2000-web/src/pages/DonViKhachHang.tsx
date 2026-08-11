@@ -3,17 +3,13 @@ import {
   Card, Table, Button, Modal, Form, Input, InputNumber, Switch, Tag, Select, message,
   Typography,
 } from "antd";
-import { getAdminTenants, createTenant, updateTenant } from "../api";
+import {
+  getAdminTenants, createTenant, updateTenant, saveTctCredential, loiApi,
+} from "../api";
 import type { AdminTenant } from "../api";
 import { useAuth } from "../AuthContext";
-
-// Nâu cho đơn vị nội bộ, đỏ cho đơn vị khai THÁNG, còn lại để màu mặc định.
-// Nội bộ xét trước: nó không có kỳ khai nên không được nhuộm theo khaiQuy — mà
-// khaiQuy của tenant nội bộ mặc định false, để nguyên là cả đám hiện đỏ như khai tháng.
-const mauDong = (t: AdminTenant): string | undefined =>
-  t.tenantType === "noibo" ? "#873800"      // volcano-8, đúng tông với Tag "Nội bộ"
-  : t.khaiQuy ? undefined
-  : "#cf1322";
+import { mauDonVi, damDonVi } from "../theme/donViColors";
+import "./luoi-gon.css";
 
 export default function DonViKhachHang() {
   const { session } = useAuth();
@@ -41,6 +37,23 @@ export default function DonViKhachHang() {
                                      tenantType: v.tenantType ?? "headquarter",
                                      linkedTenantCode: v.linkedTenantCode || null });
       message.success(`Đã tạo đơn vị + database ${r.data.dbCreated}`);
+
+      // Mật khẩu cổng TCT lưu bằng lượt gọi RIÊNG, sau khi đã có tenantId. Cố tình
+      // không nhét vào CreateTenant: mật khẩu phải đi qua đúng một cửa (đường
+      // tct-credential — có mã hóa, có ghi nhật ký), không đẻ thêm cửa thứ hai.
+      //
+      // Đơn vị đã tạo xong rồi nên lưu mật khẩu hỏng KHÔNG phải là tạo hỏng: báo
+      // riêng để người dùng vào nhập lại, đừng bắt họ tạo lại từ đầu.
+      if (v.matKhauTct) {
+        try {
+          await saveTctCredential(r.data.id, v.matKhauTct);
+          message.success("Đã lưu mật khẩu cổng TCT");
+        } catch (e2) {
+          message.warning(loiApi(e2,
+            "Đã tạo đơn vị nhưng chưa lưu được mật khẩu TCT — vào form Lấy HĐĐT nhập lại"));
+        }
+      }
+
       setOpenNew(false); formNew.resetFields(); reload();
     } catch (e: any) {
       message.error(e?.response?.data?.message ?? "Không tạo được đơn vị");
@@ -79,22 +92,24 @@ export default function DonViKhachHang() {
                Thêm đơn vị
              </Button>}
     >
+      {/* Cuộn ~10 dòng thay vì lật trang — quy ước UI toàn cục, xem CLAUDE.md */}
       <Table
+        className="luoi-gon"
         rowKey="id" size="small" loading={loading} dataSource={tenants}
-        pagination={{ pageSize: 20 }}
+        pagination={false}
+        scroll={{ y: 290 }}
         columns={[
-          // Màu ở đây trả lời một câu duy nhất: "đơn vị này thuộc thế giới nào".
-          // Nâu = nội bộ (không có hóa đơn thuế, không có kỳ khai). Đỏ = khai THÁNG,
-          // đúng quy ước đang dùng ở form Lấy HĐĐT nên nhìn hai màn không phải đổi não.
+          // BR-GD-01: màu trả lời một câu duy nhất — "đơn vị này thuộc thế giới nào".
+          // Mã màu lấy từ theme/donViColors, cấm gõ hex tại chỗ.
           { title: "Mã", dataIndex: "code", width: 130,
             render: (v: string, r: AdminTenant) => (
-              <span style={{ color: mauDong(r), fontWeight: mauDong(r) ? 600 : undefined }}>
+              <span style={{ color: mauDonVi(r), fontWeight: damDonVi(r) }}>
                 {v}
               </span>
             ) },
           { title: "Tên đơn vị", dataIndex: "name",
             render: (v: string, r: AdminTenant) => (
-              <span style={{ color: r.isActive ? mauDong(r) : "#999" }}>
+              <span style={{ color: r.isActive ? mauDonVi(r) : "#999" }}>
                 {v}{!r.isActive && <> <Tag color="red">Ngừng</Tag></>}
               </span>
             ) },
@@ -107,7 +122,7 @@ export default function DonViKhachHang() {
           // là bịa ra một thuộc tính nghiệp vụ không tồn tại.
           { title: "Kỳ khai", dataIndex: "khaiQuy", width: 100,
             render: (q: boolean, r: AdminTenant) =>
-              r.tenantType === "noibo"
+              r.tenantType === "noibo" || r.tenantType === "internal"
                 ? <Typography.Text type="secondary">—</Typography.Text>
                 : q ? <Tag>Quý</Tag> : <Tag color="red">Tháng</Tag> },
           { title: "MST", dataIndex: "taxCode", width: 130 },
@@ -137,6 +152,13 @@ export default function DonViKhachHang() {
             <Input />
           </Form.Item>
           <Form.Item name="taxCode" label="Mã số thuế"><Input /></Form.Item>
+          {/* Khai luôn ở đây thì lập đơn vị xong là lấy HĐ được ngay, không phải mở
+              form Lấy HĐĐT rồi đi tìm nút. Để trống cũng được — nhập sau vẫn kịp. */}
+          <Form.Item name="matKhauTct" label="Mật khẩu cổng TCT (không bắt buộc)"
+                     extra="Mã hóa trước khi lưu, không API nào đọc ngược ra. Bỏ trống thì nhập sau ở form Lấy HĐĐT.">
+            <Input.Password autoComplete="new-password"
+                            placeholder="Mật khẩu hoadondientu.gdt.gov.vn" />
+          </Form.Item>
           <Form.Item name="address" label="Địa chỉ"><Input /></Form.Item>
           <Form.Item name="firstYear" label="Năm làm việc đầu tiên" rules={[{ required: true }]}>
             <InputNumber min={2000} max={2100} style={{ width: 140 }} />
