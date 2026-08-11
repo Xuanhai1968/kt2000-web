@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card, Table, Button, message, Typography, Input, Select, Space,
-  Tag, Checkbox, Progress, Alert, Modal, Empty, Popconfirm,
+  Tag, Checkbox, Progress, Alert, Modal, Empty, InputNumber, Popconfirm,
 } from "antd";
 import {
   getAdminTenants, getLeftoverFiles, getRawFiles, getRawHtml, importOne,
