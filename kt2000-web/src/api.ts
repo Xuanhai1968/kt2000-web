@@ -301,8 +301,9 @@ export interface PhienLay {
 
 // NT-03: một nút duy nhất — lấy xong backend nạp luôn, nên xoaTruocKhiGhi (lựa chọn
 // của pha nạp) phải gửi kèm ngay từ lúc bắt đầu.
-// tangDan [ĐANG THỬ]: bật cờ --tang_dan của script — bỏ tải hóa đơn đã có XML.
-// Mặc định false để nút "Lấy hóa đơn điện tử" thường vẫn chạy đầy đủ như cũ.
+// tangDan: bật cờ --tang_dan của script — bỏ tải hóa đơn đã có đường dẫn XML trong
+// Excel tổng. Màn hình luôn gửi true (chốt Trường 11/08, gộp hai nút làm một); tham
+// số vẫn giữ mặc định false để đường gọi khác — cron, script — chủ động chọn được.
 export const fetchStart = (
   tenantIds: string[], nam: number, thangBd: number, thangKt: number,
   huong: HuongLay, xoaTruocKhiGhi: boolean, tangDan = false
@@ -324,6 +325,9 @@ export interface MatHang {
   // TChat của TCT: "1" hàng hóa/dịch vụ · "2" khuyến mại · "3" CHIẾT KHẤU thương mại
   // · "4" ghi chú. Dòng "3" ghi thành tiền DƯƠNG nhưng bản chất là TRỪ.
   tinhChat: string;
+  // STCKhau — chiết khấu của RIÊNG dòng này. Khác HoaDonConLai.tienCk (chiết khấu
+  // của cả hóa đơn, lấy từ TTCKTMai). Hai con số khác nhau, đừng gộp.
+  chietKhau: number;
 }
 
 // Một hóa đơn còn nằm lại raw\ — dựng từ file XML, kèm lý do bị giữ lại

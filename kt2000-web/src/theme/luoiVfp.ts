@@ -1,6 +1,6 @@
 import {
   ModuleRegistry, AllCommunityModule, themeBalham,
-  type ColDef, type GridOptions,
+  type ColDef, type GridOptions, type GridReadyEvent, type ColumnResizedEvent,
 } from "ag-grid-community";
 
 // AG Grid v33 trở lên KHÔNG tự đăng ký module nữa — thiếu dòng này thì lưới dựng ra
@@ -65,6 +65,7 @@ export const colSo = {
 export const dinhDangTien = (v: number | null | undefined) =>
   v == null ? "" : Number(v).toLocaleString("vi-VN", { maximumFractionDigits: 2 });
 
+
 // %VAT hiện dạng người đọc quen: 10 chứ không phải 0.1.
 //
 // Cột pt_vat trong DB KHÔNG thống nhất đơn vị, tùy hóa đơn vào bằng đường nào:
@@ -80,3 +81,35 @@ export const dinhDangPhanTramVat = (v: number | null | undefined) => {
   // Bỏ đuôi ,00 cho các mức nguyên (8 · 10) nhưng vẫn giữ số lẻ nếu có
   return Number.isInteger(pt) ? String(pt) : pt.toLocaleString("vi-VN");
 };
+
+// Nhớ bề rộng cột theo MÁY, cùng cách với checkbox "Cả vào và ra" (NT-06 Q2).
+// Trả về hai handler để rải thẳng vào <AgGridReact {...nhoDoRongCot("ten")} />.
+//
+// LƯU Ý người dùng sau: bề rộng chỉ giữ được nếu columnDefs được useMemo. Truyền
+// mảng cột dựng mới mỗi lần render thì AG Grid coi là bộ cột KHÁC và đặt lại bề
+// rộng — triệu chứng là "bấm vào ô để sửa cũng làm cột nhảy về như cũ".
+export function nhoDoRongCot(ten: string) {
+  const khoa = `kt2000_cot_${ten}`;
+  return {
+    onGridReady: (e: GridReadyEvent) => {
+      try {
+        const luu = localStorage.getItem(khoa);
+        if (!luu) return;
+        const rong = JSON.parse(luu) as Record<string, number>;
+        e.api.applyColumnState({
+          state: Object.entries(rong).map(([colId, width]) => ({ colId, width })),
+        });
+      } catch {
+        // Dữ liệu lưu hỏng thì dùng bề rộng mặc định — không đáng để chặn cả lưới
+      }
+    },
+    onColumnResized: (e: ColumnResizedEvent) => {
+      // Chỉ ghi khi người dùng thả chuột; kéo một cái bắn ra hàng chục sự kiện
+      if (!e.finished || e.source === "api") return;
+      const rong: Record<string, number> = {};
+      for (const c of e.api.getColumnState())
+        if (c.colId && c.width) rong[c.colId] = c.width;
+      try { localStorage.setItem(khoa, JSON.stringify(rong)); } catch { /* hết chỗ */ }
+    },
+  };
+}

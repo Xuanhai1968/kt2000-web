@@ -115,13 +115,8 @@
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-body {
   height: 210px;
   max-height: 210px !important;
+  overflow-x: auto !important;
   overflow-y: auto !important;
-}
-
-
-.phieu-nhap.phieu-nhap .luoi-hang .ant-table-header {
-  overflow-y: scroll !important;
-  scrollbar-color: transparent transparent;
 }
 
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-placeholder > td {

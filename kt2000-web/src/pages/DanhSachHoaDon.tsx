@@ -1,15 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal, Button, Input, Select, Checkbox, Radio, Typography, Space,
 } from "antd";
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef } from "ag-grid-community";
 import type { HoaDonThue, HoaDonLine } from "../api";
-import { useAuth } from "../AuthContext";
 import {
-  themeVfp, luoiVfpProps, colVfp, dinhDangPhanTramVat,
+  themeVfp, luoiVfpProps, colVfp, dinhDangPhanTramVat, nhoDoRongCot,
 } from "../theme/luoiVfp";
-import { useNhoRongCot } from "../theme/nhoRongCot";
 import "./mau-huong.css";          // .ag-row.dong-dang-chon — tô dòng đang chọn
 import "./keo-cot.css";            // con trỏ ↔ ở mép cột, báo cho biết kéo được
 import "./danh-sach-hoa-don.css";
@@ -33,8 +31,6 @@ interface Props {
   namLamViec: number;
   tenDonVi: string;
   laDauRa: boolean;
-  // bucTaiLai = true khi người dùng bấm Enter để gọi lại hóa đơn đang đứng: màn
-  // cha phải hỏi lại server kể cả khi đã có dòng hàng trong bộ nhớ.
   onChon: (maHd: string, bucTaiLai?: boolean) => void;
   onXemHtml: (maHd: string) => void;
 }
@@ -55,10 +51,6 @@ export default function DanhSachHoaDon({
 }: Props) {
   const [thang, setThang] = useState<number | "all">("all");
   const [thangKT, setThangKT] = useState<number | "all">("all");
-  // Tìm nhanh tách làm HAI biến: oTuKhoa là chữ đang gõ trong ô, tuKhoa là từ
-  // khóa ĐÃ ÁP vào lưới. Gõ không lọc ngay — chỉ khi bấm Enter (hoặc nút Tìm)
-  // mới đẩy sang tuKhoa. Sổ thuế cả năm vài nghìn dòng, lọc theo từng phím gõ
-  // là mỗi ký tự quét lại toàn bộ danh sách, gõ tới đâu lưới giật tới đó.
   const [oTuKhoa, setOTuKhoa] = useState("");
   const [tuKhoa, setTuKhoa] = useState("");
   const timNgay = () => setTuKhoa(oTuKhoa);
@@ -108,11 +100,6 @@ export default function DanhSachHoaDon({
     return p.length === 3 && p[0] ? `${p[2]}/${p[1]}/${p[0].slice(2)}` : "";
   };
 
-
-  // ===== Đổi dòng ở lưới trên -> đổ dòng hàng ở lưới dưới =====
-  // Bấm chuột thì gọi luôn. Đi bằng MŨI TÊN thì hoãn một nhịp: giữ ↓ lướt qua
-  // 50 dòng mà mỗi dòng gọi API là 50 request cho một hóa đơn người dùng thực sự
-  // muốn xem. Chỉ dòng người dùng DỪNG LẠI mới được tải.
   const hoanRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const huyHoan = () => {
     if (hoanRef.current) { clearTimeout(hoanRef.current); hoanRef.current = null; }
@@ -125,8 +112,6 @@ export default function DanhSachHoaDon({
     onChon(maHd);
   };
 
-  // Dùng cho điều hướng bàn phím: đổi dòng đang chọn ngay cho mắt thấy, còn việc
-  // tải chi tiết thì đợi người dùng dừng tay.
   const chonDongHoan = (maHd: string) => {
     huyHoan();
     setFileChon(maHd);
@@ -136,77 +121,59 @@ export default function DanhSachHoaDon({
     }, 250);
   };
 
-  const { session } = useAuth();
-  const nguoiDung = session?.user.loginName;
-  const nhoCotTren = useNhoRongCot({ tenLuoi: "ds-hoadon-tren", nguoiDung });
-  const nhoCotDuoi = useNhoRongCot({ tenLuoi: "ds-hoadon-duoi", nguoiDung });
-
   const chonVaDong = () => {
     if (fileChon) { onChon(fileChon); onDong(); }
   };
 
-  // ===== Cột "In": đánh dấu hóa đơn để in =====
-  // Giữ tập mã HĐ đã tích. Dùng Set chứ không thêm cờ vào HoaDonThue: mảng dsHd
-  // là của màn cha truyền xuống, sửa vào đó là sửa dữ liệu người khác đang dùng.
-  const [dsInDanhDau, setDsInDanhDau] = useState<Set<string>>(new Set());
-
-  // Renderer của cột đọc qua ref, KHÔNG qua biến state trực tiếp: mảng columnDefs
-  // phải giữ nguyên tham chiếu (deps rỗng) — cho dsInDanhDau vào deps thì mỗi lần
-  // tích một ô là AG Grid nhận bộ cột mới và dựng lại toàn bộ cột, mất cả vị trí
-  // cuộn ngang. Ở đây chỉ làm mới đúng ô vừa đổi, xem refreshCells bên dưới.
-  const danhDauRef = useRef(dsInDanhDau);
-  useEffect(() => { danhDauRef.current = dsInDanhDau; }, [dsInDanhDau]);
-
-  const luoiTrenRef = useRef<AgGridReact<HoaDonThue> | null>(null);
-
-  const datIn = (maHd: string, tich: boolean) => {
-    setDsInDanhDau((cu) => {
-      const moi = new Set(cu);
-      if (tich) moi.add(maHd); else moi.delete(maHd);
-      danhDauRef.current = moi;   // renderer đọc ngay trong lần refresh dưới đây
-      return moi;
-    });
-    const node = luoiTrenRef.current?.api?.getRowNode(maHd);
-    if (node) {
-      luoiTrenRef.current?.api?.refreshCells({ rowNodes: [node], columns: ["in"],
-                                               force: true });
-    }
-  };
-
+  // ===== Cột "In": TỰ tích theo dữ liệu, vẫn bấm được =====
+  //
   // BR: hóa đơn ĐIỀU CHỈNH / THAY THẾ nhận biết bằng tich_chat_hd_lienquan khác
   // trống (docs/THUE/BienBan_RaSoat.md — cột hd_thay_the_dieu_chinh bị bỏ vì suy
   // ra được từ đây). Không dò theo chữ trong tthaiHd: giá trị đó là văn bản tự do
   // của TCT, đổi cách viết một cái là phép lọc câm lặng bỏ sót hóa đơn.
-  // Nghiệp vụ được giao: tích những HĐ VỪA có chiết khấu VỪA là điều chỉnh/thay
-  // thế. useCallback để soCanIn bên dưới có mảng phụ thuộc đúng — hàm dựng mới
-  // mỗi render thì useMemo tính lại mọi lần, coi như không có memo.
-  const laCanIn = useCallback(
-    (h: HoaDonThue) =>
-      (h.tienCk ?? 0) !== 0 && (h.tichChatHdLienquan ?? "").trim() !== "",
-    []);
+  //
+  // Đánh dấu hóa đơn VỪA có chiết khấu VỪA là điều chỉnh/thay thế.
+  const laCanIn = (h: HoaDonThue) =>
+    (h.tienCk ?? 0) !== 0 && (h.tichChatHdLienquan ?? "").trim() !== "";
 
-  // Chỉ quét danh sách ĐANG LỌC — người dùng lọc tháng 3 thì không tự tích thêm
-  // hóa đơn tháng khác mà họ không nhìn thấy.
-  const soCanIn = useMemo(() => dsLoc.filter(laCanIn).length, [dsLoc, laCanIn]);
+  // Chỉ giữ những mã người dùng TỰ BẤM ngược lại mặc định, không giữ cả tập đã
+  // tích. Nhờ vậy ô tích luôn bám theo dữ liệu mới nhất: tải lại danh sách hay
+  // sửa chiết khấu là dấu tự đúng, không cần đồng bộ tay và không bao giờ lệch.
+  // (Ghi đè chỉ sống trong phiên — chưa có cột nào dưới DB để lưu.)
+  const [inGhiDe, setInGhiDe] = useState<Record<string, boolean>>({});
 
-  // Sau khi đổi hàng loạt phải vẽ lại CẢ cột In — refreshCells một ô như datIn
-  // không đủ, và columnDefs cố tình không phụ thuộc state nên React không tự làm.
-  const veLaiCotIn = () =>
+  const laDanhDauIn = (h: HoaDonThue) => inGhiDe[h.maHd] ?? laCanIn(h);
+
+  const datIn = (h: HoaDonThue, tich: boolean) => {
+    setInGhiDe((cu) => {
+      // Bấm về đúng giá trị mặc định thì XÓA ghi đè, đừng lưu lại — để dòng đó
+      // tiếp tục bám dữ liệu nếu chiết khấu đổi về sau.
+      if (tich === laCanIn(h)) {
+        const moi = { ...cu };
+        delete moi[h.maHd];
+        return moi;
+      }
+      return { ...cu, [h.maHd]: tich };
+    });
+  };
+
+  const soDanhDau = useMemo(
+    () => dsLoc.filter(laDanhDauIn).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dsLoc, inGhiDe]);
+
+  // Cầu nối cho cell renderer của cột In: xem chú thích tại colId "in".
+  const luoiTrenRef = useRef<AgGridReact<HoaDonThue> | null>(null);
+  const hamRef = useRef({ laDanhDauIn, datIn });
+
+  // Làm mới cầu nối rồi bảo AG Grid vẽ lại cột In. Nó không tự biết state React
+  // đã đổi vì mảng cột cố tình không phụ thuộc state. Chạy theo cả dsLoc: tải
+  // lại danh sách hay sửa chiết khấu thì dấu tự tính lại cho đúng.
+  useEffect(() => {
+    hamRef.current = { laDanhDauIn, datIn };
     luoiTrenRef.current?.api?.refreshCells({ columns: ["in"], force: true });
-
-  const tichTuDong = () => {
-    const moi = new Set(dsInDanhDau);
-    for (const h of dsLoc) if (laCanIn(h)) moi.add(h.maHd);
-    danhDauRef.current = moi;
-    setDsInDanhDau(moi);
-    veLaiCotIn();
-  };
-
-  const boTichHet = () => {
-    danhDauRef.current = new Set();
-    setDsInDanhDau(new Set());
-    veLaiCotIn();
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inGhiDe, dsLoc]);
 
   const cacThang = Array.from({ length: 12 }, (_, i) => i + 1);
   const optThang = [{ value: "all" as const, label: "Tất cả các tháng" },
@@ -242,20 +209,25 @@ export default function DanhSachHoaDon({
     { colId: "maTv", headerName: "Thương vụ", field: "maTv", width: 90 },
     { colId: "ghiChu", headerName: "Ghi chú", field: "ghiChu", width: 130,
       tooltipField: "ghiChu" },
-    // Ô tích thật, bấm được. checkbox thuần thay vì antd Checkbox: ô lưới cao 22px
-    // và cell renderer dựng lại liên tục khi cuộn — component nặng ở đây không đáng.
+    // Ô tích TỰ BẬT cho hóa đơn có chiết khấu + điều chỉnh/thay thế, nhưng vẫn
+    // bấm được. checkbox thuần thay vì antd Checkbox: ô lưới cao 22px và cell
+    // renderer dựng lại liên tục khi cuộn — component nặng ở đây không đáng.
+    //
+    // Đọc qua hamRef chứ không gọi thẳng laDanhDauIn/datIn: mảng cột này để deps
+    // rỗng cho AG Grid giữ nguyên tham chiếu (nhoDoRongCot cần thế), nên closure
+    // ở đây bắt mất bản đầu tiên của hai hàm và ô tích sẽ đứng im khi bấm.
     { colId: "in", headerName: "In", width: 46,
-      headerTooltip: "Đánh dấu hóa đơn để in",
-      valueGetter: (p) => (p.data ? danhDauRef.current.has(p.data.maHd) : false),
+      headerTooltip: "Tự đánh dấu: HĐ có chiết khấu và là HĐ điều chỉnh/thay thế",
+      valueGetter: (p) => (p.data ? hamRef.current.laDanhDauIn(p.data) : false),
       cellStyle: { backgroundColor: "#f5f5f5", textAlign: "center" },
       // onClick chặn nổi bọt: bấm ô tích không được kéo theo "chọn dòng" của
       // lưới — hai hành động khác nhau, gộp lại thì tích một cái là đổi luôn
       // hóa đơn đang xem ở bảng dưới.
       cellRenderer: (p: { data?: HoaDonThue }) => p.data ? (
         <input type="checkbox"
-               checked={danhDauRef.current.has(p.data.maHd)}
+               checked={hamRef.current.laDanhDauIn(p.data)}
                onClick={(e) => e.stopPropagation()}
-               onChange={(e) => p.data && datIn(p.data.maHd, e.target.checked)} />
+               onChange={(e) => p.data && hamRef.current.datIn(p.data, e.target.checked)} />
       ) : null },
     { colId: "tongTien", headerName: "Tổng G.Vốn", field: "tongTien", width: 130,
       type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
@@ -343,17 +315,14 @@ export default function DanhSachHoaDon({
           <NutCho nhan="Xem tờ khai gốc" />
 
           <span style={{ flex: 1 }} />
-          <NutCho nhan="Chuyển VAT Vào Gía trị" lop="nut-xanhdam" />
+          <NutCho nhan="Chuyển VAT Vào Giá trị" lop="nut-xanhdam" />
           <NutCho nhan="Chuyển Chi phí hoặc Thu nhập khác" lop="nut-hong" />
         </div>
 
         <div className="thanh-loc">
           <span className="nhan nhan-xanh">Tìm nhanh</span>
-          {/* Gõ xong bấm Enter mới lọc — xem chú thích ở chỗ khai oTuKhoa.
-              onSearch của Input.Search bắt cả Enter lẫn nút kính lúp; allowClear
-              bấm dấu X thì onSearch KHÔNG bắn, nên phải tự xóa ở onChange. */}
           <Input.Search size="small" allowClear style={{ width: 420 }}
-                 placeholder="Số HĐ, ký hiệu, MST, tên đối tác, tên file… — Enter để tìm"
+                 placeholder="Số HĐ, ký hiệu, MST, tên đối tác, tên file. Enter để tìm"
                  value={oTuKhoa}
                  onChange={(e) => {
                    setOTuKhoa(e.target.value);
@@ -362,8 +331,13 @@ export default function DanhSachHoaDon({
                  onSearch={timNgay} />
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {dsLoc.length}/{dsHd.length} hóa đơn
+            {soDanhDau > 0 && (
+              <span title="Hóa đơn vừa có chiết khấu vừa là HĐ điều chỉnh/thay thế — đã tự tích ở cột In">
+                {" · "}<b>{soDanhDau}</b> HĐ đánh dấu ở cột In
+              </span>
+            )}
             {oTuKhoa !== tuKhoa && (
-              <span style={{ color: "#d46b08" }}> · bấm Enter để tìm</span>
+              <span style={{ color: "#d46b08" }}> Bấm Enter để tìm</span>
             )}
           </Typography.Text>
           <span style={{ flex: 1 }} />
@@ -377,27 +351,6 @@ export default function DanhSachHoaDon({
                   onClick={chonVaDong}>
             Chọn hóa đơn này
           </Button>
-          <Button size="small" onClick={nhoCotTren.datLai}
-                  title="Trả bề rộng các cột của bảng hóa đơn về mặc định">
-            Đặt lại cột
-          </Button>
-        </div>
-
-        {/* ===== Thanh đánh dấu cột In ===== */}
-        <div className="thanh-loc">
-          <span className="nhan nhan-xanh">Cột In</span>
-          <Button size="small" className="nut-xanhla" onClick={tichTuDong}
-                  disabled={soCanIn === 0}
-                  title="Tích cột In cho các hóa đơn vừa có chiết khấu vừa là HĐ điều chỉnh/thay thế">
-            Đánh dấu HĐ có CK &amp; điều chỉnh/thay thế ({soCanIn})
-          </Button>
-          <Button size="small" onClick={boTichHet}
-                  disabled={dsInDanhDau.size === 0}>
-            Bỏ đánh dấu
-          </Button>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Đã đánh dấu <b>{dsInDanhDau.size}</b> hóa đơn
-          </Typography.Text>
         </div>
 
         <div style={{ height: 260 }}>
@@ -405,7 +358,7 @@ export default function DanhSachHoaDon({
           ref={luoiTrenRef}
           theme={themeVfp}
           {...luoiVfpProps}
-          {...nhoCotTren.props}
+          {...nhoDoRongCot("ds_hoadon_tren")}
           rowData={dsLoc}
           getRowId={(p) => p.data.maHd}
           defaultColDef={colVfp}
@@ -416,21 +369,13 @@ export default function DanhSachHoaDon({
           onRowDoubleClicked={(e) => {
             if (e.data) { onChon(e.data.maHd); onDong(); }
           }}
-          // ↑/↓ đổi dòng thì đổ luôn dòng hàng của hóa đơn đó. Bắt ở
-          // onCellFocused chứ không tự nghe keydown: AG Grid đã lo phần di
-          // chuyển con trỏ (kể cả PageUp/Down, Ctrl+Home/End), ở đây chỉ cần
-          // biết con trỏ dừng ở đâu. Tải chi tiết đi qua bản HOÃN — xem chú
-          // thích ở chonDongHoan.
           onCellFocused={(e) => {
             if (e.rowIndex == null) return;
             const node = e.api.getDisplayedRowAtIndex(e.rowIndex);
             const maHd = node?.data?.maHd;
             if (maHd && maHd !== fileChon) chonDongHoan(maHd);
           }}
-          // Enter = gọi lại đúng hóa đơn đang đứng. Lối thoát khi lưới dưới
-          // lệch với dòng đang chọn (mạng chậm, request lỗi, hoặc bản hoãn bị
-          // hủy giữa chừng): bấm Enter là nạp lại ngay, không phải bấm chuột
-          // sang dòng khác rồi quay lại.
+
           onCellKeyDown={(e) => {
             const phim = (e.event as KeyboardEvent | null)?.key;
             if (phim !== "Enter") return;
@@ -475,7 +420,7 @@ export default function DanhSachHoaDon({
           <div className="cot-cong-cu" style={{ marginLeft: "auto" }}>
             <Checkbox checked={cb.chuyenSangGhiChuG}
                       onChange={(e) => datCb("chuyenSangGhiChuG", e.target.checked)}>
-              Chuyển sang GHI_CHU_G
+              Chuyển sang GHI_CHU
             </Checkbox>
             <div className="hang-cong-cu">
               <NutCho nhan="Sửa ghi chú" lop="nut-vang" />
@@ -598,12 +543,12 @@ export default function DanhSachHoaDon({
             {hdDangChon ? (
               <Typography.Text style={{ fontSize: 12 }}>
                 — {hdDangChon.khhd}/{hdDangChon.soHd} · {ngayNgan(hdDangChon.ngay)} ·{" "}
-                {hdDangChon.tenKh} ·{" "}
+                {hdDangChon.tenKh} {" "}
                 <b>{hdDangChon.lines.length || hdDangChon.soDongHang}</b> dòng
               </Typography.Text>
             ) : (
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                — bấm một hóa đơn ở bảng trên để xem dòng hàng
+                Bấm một hóa đơn ở bảng trên để xem dòng hàng
               </Typography.Text>
             )}
             <span style={{ flex: 1 }} />
@@ -615,16 +560,12 @@ export default function DanhSachHoaDon({
                 {soVn(sumDuoi)}
               </b>
             </Typography.Text>
-            <Button size="small" onClick={nhoCotDuoi.datLai}
-                    title="Trả bề rộng các cột của bảng dòng hàng về mặc định">
-              Đặt lại cột
-            </Button>
           </div>
           <div className="khung-phu" style={{ height: 170 }}>
             <AgGridReact<HoaDonLine>
               theme={themeVfp}
               {...luoiVfpProps}
-              {...nhoCotDuoi.props}
+              {...nhoDoRongCot("ds_hoadon_duoi")}
               rowData={hdDangChon?.lines ?? []}
               getRowId={(p) => String(p.data.sttLine)}
               defaultColDef={colVfp}
@@ -761,7 +702,7 @@ export default function DanhSachHoaDon({
             Tổng Thanh toán <b>{soVn(tongThanhToan)}</b>
           </Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Bấm đúp một dòng để mở hóa đơn đó. Các nút mờ là nghiệp vụ chưa nối backend.
+            Bấm đúp một dòng để mở hóa đơn đó. Các nút mờ là nghiệp vụ chưa xử lý
           </Typography.Text>
         </Space>
       </div>
