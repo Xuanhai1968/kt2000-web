@@ -4,14 +4,34 @@ import { useAuth } from "./AuthContext";
 import ErrorBoundary from "./ErrorBoundary";
 import DoiMatKhauBatBuoc from "./DoiMatKhauBatBuoc";
 
+export const MAU_HD_RA = "#cf1322";
+export const MAU_HD_VAO = "#0958d9";
+
+// Chấm tròn đứng trước nhãn menu
+function ChamMau({ mau }: { mau: string }) {
+  return (
+    <span style={{
+      display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+      background: mau, marginRight: 8, verticalAlign: "middle",
+    }} />
+  );
+}
+
+// Nhãn menu kèm chấm màu — dùng cho cả hai bộ menu thuế và MDN_NB
+const nhanHd = (chu: string, mau: string) => (
+  <span><ChamMau mau={mau} />{chu}</span>
+);
+
 // Bộ menu KẾ TOÁN THUẾ — dành cho tenant thường và tenant nội bộ quản trị (MDN_NB).
 // Giữ tên menuThue (không phải menuItems) vì giờ có HAI bộ menu, tên chung dễ lẫn.
 const menuThue = [
   {
     type: "group" as const, label: "NHẬP DỮ LIỆU",
     children: [
-      { key: "/app/hoa-don-vao", label: "Hóa đơn GTGT đầu vào" },
-      { key: "/app/hoa-don-ra", label: "Hóa đơn GTGT đầu ra" },
+      { key: "/app/hoa-don-vao",
+        label: nhanHd("Hóa đơn GTGT đầu vào", MAU_HD_VAO) },
+      { key: "/app/hoa-don-ra",
+        label: nhanHd("Hóa đơn GTGT đầu ra", MAU_HD_RA) },
       { key: "/app/phieu-thu", label: "Phiếu thu" },
       { key: "/app/phieu-chi", label: "Phiếu chi" },
     ],
@@ -37,8 +57,10 @@ const menuMdnNb = [
   {
     type: "group" as const, label: "LẤY DỮ LIỆU",
     children: [
-      { key: "/app/hoa-don-vao", label: "Lấy HĐ GTGT đầu Vào" },
-      { key: "/app/hoa-don-ra", label: "Lấy HĐ GTGT đầu Ra" },
+      { key: "/app/hoa-don-vao",
+        label: nhanHd("Lấy HĐ GTGT đầu Vào", MAU_HD_VAO) },
+      { key: "/app/hoa-don-ra",
+        label: nhanHd("Lấy HĐ GTGT đầu Ra", MAU_HD_RA) },
     ],
   },
   {
@@ -75,6 +97,11 @@ export default function AppShell() {
 
   const isInternal = session.tenant.tenantType === "internal";
   const isNoiBo = session.tenant.tenantType === "noibo";
+  const laManHdRa = loc.pathname === "/app/hoa-don-ra";
+  const laManHdVao = loc.pathname === "/app/hoa-don-vao";
+  const nhanChieu = laManHdRa ? "HĐ GTGT ĐẦU RA"
+                  : laManHdVao ? "HĐ GTGT ĐẦU VÀO" : null;
+  const mauChieu = laManHdRa ? MAU_HD_RA : MAU_HD_VAO;
 
   return (
     // height (KHÔNG phải minHeight) + overflow:hidden: màn hình cao đúng bằng cửa sổ,
@@ -96,6 +123,22 @@ export default function AppShell() {
               : <Tag color="blue">{session.tenant.code}</Tag>}
             <Tag>Năm {session.fiscalYear}</Tag>
           </span>
+
+          {nhanChieu && (
+            <span style={{
+              border: `2px solid ${mauChieu}`,
+              borderRadius: 14,
+              color: mauChieu,
+              background: "#fff",
+              fontWeight: 700,
+              fontSize: 13,
+              padding: "1px 14px",
+              letterSpacing: 0.3,
+              whiteSpace: "nowrap",
+            }}>
+              {nhanChieu}
+            </span>
+          )}
         </Space>
         <Space>
           <span>{session.user.realName}</span>
