@@ -190,8 +190,11 @@
 
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon > td,
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon:hover > td {
-  background: #4a90d9;
-  color: #fff;
+  background: #eaf3fc;
+}
+
+.phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon > td:first-child {
+  box-shadow: inset 3px 0 0 #4a90d9;
 }
 
 .phieu-nhap.phieu-nhap .luoi-hang .ant-input,
