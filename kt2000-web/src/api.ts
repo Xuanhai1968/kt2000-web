@@ -16,7 +16,8 @@ export function loiApi(e: unknown, macDinh = "Thao tác không thành công"): s
 
 // Gan token vao moi request sau khi login
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("kt2000_token");
+  // sessionStorage: phiên tách theo TAB — xem AuthContext.tsx để biết vì sao
+  const token = sessionStorage.getItem("kt2000_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -28,8 +29,8 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err?.response?.status === 401) {
-      localStorage.removeItem("kt2000_token");
-      localStorage.removeItem("kt2000_session");
+      sessionStorage.removeItem("kt2000_token");
+      sessionStorage.removeItem("kt2000_session");
       if (location.pathname !== "/") {
         sessionStorage.setItem("kt2000_het_phien", "1");
         location.replace("/");

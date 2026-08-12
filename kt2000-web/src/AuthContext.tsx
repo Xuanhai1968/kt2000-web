@@ -26,21 +26,34 @@ const Ctx = createContext<AuthCtx>({
   session: null, signIn: () => {}, signOut: () => {}, xongDoiMatKhau: () => {},
 });
 
+// sessionStorage chứ KHÔNG phải localStorage (chốt Trường 12/08). localStorage dùng
+// CHUNG cho mọi tab/cửa sổ của cùng trình duyệt: mở tab thứ hai đăng nhập đơn vị khác
+// là ghi đè phiên của tab đầu, F5 một cái là tab đầu nhảy sang đơn vị mới — kế toán
+// đang nhập cho đơn vị A bỗng thấy số của đơn vị B. sessionStorage tách theo TAB và
+// vẫn sống qua F5.
+//
+// Đánh đổi: mở tab mới phải đăng nhập lại. Đó đúng là cái giá của việc xem hai đơn vị
+// song song mà không lẫn nhau.
+//
+// Chỉ chuyển HAI khóa phiên. Bề rộng cột, ô tích "Cả vào và ra", nháp phiếu vẫn ở
+// localStorage — đó là thói quen của MÁY, dùng chung giữa các tab mới đúng.
+const KHO = sessionStorage;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(() => {
-    const raw = localStorage.getItem("kt2000_session");
+    const raw = KHO.getItem("kt2000_session");
     return raw ? (JSON.parse(raw) as Session) : null;
   });
 
   const signIn = (s: Session) => {
-    localStorage.setItem("kt2000_token", s.accessToken);      // thay KT2000.INI
-    localStorage.setItem("kt2000_session", JSON.stringify(s));
+    KHO.setItem("kt2000_token", s.accessToken);      // thay KT2000.INI
+    KHO.setItem("kt2000_session", JSON.stringify(s));
     setSession(s);
   };
 
   const signOut = () => {
-    localStorage.removeItem("kt2000_token");
-    localStorage.removeItem("kt2000_session");
+    KHO.removeItem("kt2000_token");
+    KHO.removeItem("kt2000_session");
     setSession(null);
   };
 
@@ -48,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession((cu) => {
       if (!cu) return cu;
       const moi = { ...cu, user: { ...cu.user, mustChangePassword: false } };
-      localStorage.setItem("kt2000_session", JSON.stringify(moi));
+      KHO.setItem("kt2000_session", JSON.stringify(moi));
       return moi;
     });
   };
