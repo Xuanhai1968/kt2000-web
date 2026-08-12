@@ -7,8 +7,8 @@ import ErrorBoundary from "./ErrorBoundary";
 import DoiMatKhauBatBuoc from "./DoiMatKhauBatBuoc";
 import "./app-shell.css";
 
-export const MAU_HD_RA = "#cf1322";
-export const MAU_HD_VAO = "#0958d9";
+export const MAU_HD_RA = "#0958d9";    // đầu RA  = XANH
+export const MAU_HD_VAO = "#cf1322";   // đầu VÀO = ĐỎ
 
 // Chấm tròn đứng trước nhãn menu
 function ChamMau({ mau }: { mau: string }) {

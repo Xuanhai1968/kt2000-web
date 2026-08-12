@@ -785,6 +785,7 @@ export interface HoaDonThue {
   maCtCo: string | null;
   ghiChu: string | null;
   tthaiHd: string | null;
+  vat: number | null;            // %VAT của cả HĐ (HOA_DON.vat); null thì suy từ dòng
   tichChatHdLienquan: string | null;
   loaiHdLienquan: string | null;
   mauSoHdLienquan: string | null;
@@ -804,6 +805,12 @@ export const thueChiTietHoaDon = (maHd: string) =>
 
 export const thueLinesNhieuHoaDon = (maHds: string[]) =>
   api.post<Record<string, HoaDonLine[]>>("/thue/hoa-don/lines", { maHds });
+
+// Ghi lại TOÀN BỘ dòng hàng của một hóa đơn (xóa hết rồi chèn lại, trong một
+// transaction). Không đụng bảng HOA_DON — cột định khoản của header là việc khác.
+export const thueLuuLinesHoaDon = (maHd: string, lines: HoaDonLine[]) =>
+  api.put<{ message: string; soDong: number }>(
+    `/thue/hoa-don/${encodeURIComponent(maHd)}/lines`, lines);
 
 export const thueHtmlHoaDon = (maHd: string) =>
   api.get<string>(`/thue/hoa-don/${encodeURIComponent(maHd)}/html`,

@@ -52,6 +52,9 @@ namespace KT2000.Api.Models
         public string? MaCtCo { get; set; }
         public string? GhiChu { get; set; }
         public string? TthaiHd { get; set; }
+        // %VAT của cả hóa đơn — cột vat nằm trên HEADER. Có đơn vị để trống ở đây mà
+        // ghi %VAT xuống pt_vat của dòng, nên FE phải lùi về dòng khi cái này null.
+        public int? Vat { get; set; }
         // Khối HĐ Liên quan
         public string? TichChatHdLienquan { get; set; }
         public string? LoaiHdLienquan { get; set; }

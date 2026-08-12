@@ -1,9 +1,21 @@
 /* Cột dọc chiếm trọn chiều cao modal: các thanh công cụ giữ nguyên kích thước
    (flex: none), chỉ hai LƯỚI được giãn. Nhờ vậy màn hình to bao nhiêu thì phần
    thêm ra đều chảy vào lưới, không bị nuốt bởi khoảng trắng giữa các nút. */
+/* NT-11 — nhuộm theo CHIỀU hóa đơn: VÀO = đỏ, RA = xanh. Khai bằng biến để nền,
+   viền và các mảng con (nhóm công cụ, thanh thu gọn) chỉ sửa một chỗ.
+   Mặc định dưới đây là tông XANH của bản gốc — dùng cho đầu ra; .huong-vao ghi
+   đè sang tông đỏ. Xem mau-huong.css để biết quy ước chung. */
 .ds-hoadon {
-  background: #d6f0f5;
-  border: 1px solid #9ec9d4;
+  --ds-nen: #d6f0f5;
+  --ds-vien: #9ec9d4;
+  --ds-nen-nhom: #eaf7fa;
+  --ds-vien-nhom: #b6dde6;
+  --ds-nen-thanh: #cfeaf2;
+  --ds-nen-thanh-hover: #bfe3ee;
+  --ds-dam: #0958d9;
+
+  background: var(--ds-nen);
+  border: 1px solid var(--ds-vien);
   padding: 4px 6px;
   display: flex;
   flex-direction: column;
@@ -11,6 +23,18 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Màn ĐẦU VÀO: cùng bố cục, đổi sang tông đỏ. Chỉ ghi đè bộ biến ở trên — mọi
+   mảng con (nhóm công cụ, thanh thu gọn, vạch ngăn) tự đổi theo. */
+.ds-hoadon.huong-vao {
+  --ds-nen: #ffe8ec;
+  --ds-vien: #e0a8b4;
+  --ds-nen-nhom: #fff2f4;
+  --ds-vien-nhom: #f0c8d0;
+  --ds-nen-thanh: #ffd9e0;
+  --ds-nen-thanh-hover: #ffc9d3;
+  --ds-dam: #cf1322;
 }
 
 .ds-hoadon > * { flex: none; }
@@ -24,7 +48,7 @@
 }
 
 .ds-hoadon .nhan {
-  font-size: 13px;
+  font-size: 15px;
   white-space: nowrap;
 }
 
@@ -34,34 +58,34 @@
 .ds-hoadon.ds-hoadon .ant-input-number,
 .ds-hoadon.ds-hoadon .ant-input-number .ant-input-number-input,
 .ds-hoadon.ds-hoadon .ant-select .ant-select-selector {
-  height: 20px;
-  min-height: 20px;
+  height: 23px;
+  min-height: 23px;
   padding: 0 4px;
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 21px;
   border-radius: 2px;
 }
 
 .ds-hoadon.ds-hoadon .ant-select-single .ant-select-selector .ant-select-selection-item,
 .ds-hoadon.ds-hoadon .ant-select-single .ant-select-selector .ant-select-selection-placeholder {
-  line-height: 18px;
-  font-size: 12px;
+  line-height: 21px;
+  font-size: 14px;
 }
 
 .ds-hoadon .ant-input-number-handler-wrap { display: none; }
 
 .ds-hoadon .ant-checkbox-wrapper,
 .ds-hoadon .ant-radio-wrapper {
-  font-size: 12px;
+  font-size: 14px;
   white-space: nowrap;
   margin-inline-end: 0;
-  line-height: 18px;
+  line-height: 21px;
 }
 
 .ds-hoadon .ant-btn {
-  font-size: 12px;
-  height: 20px;
-  padding: 0 7px;
+  font-size: 14px;
+  height: 23px;
+  padding: 0 8px;
   border-radius: 2px;
 }
 
@@ -70,9 +94,20 @@
 .ds-hoadon.ds-hoadon textarea.ant-input {
   height: auto;
   min-height: 0;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 14px;
+  line-height: 19px;
   padding: 2px 4px;
+}
+
+/* Chữ trong LƯỚI cũng +2px như phần còn lại của modal. Không sửa themeVfp vì đó là
+   theme dùng chung nhiều màn — đổi ở đó là đổi cả hệ thống.
+   CHỈ đổi font-size, KHÔNG đụng chiều cao dòng: AG Grid tính vị trí từng dòng bằng
+   JS theo rowHeight, ép height bằng CSS thì các dòng chồng lên nhau. 14px vẫn vừa
+   trong dòng 22px của theme. */
+.ds-hoadon .ag-cell,
+.ds-hoadon .ag-header-cell-text,
+.ds-hoadon .ag-header-cell-label {
+  font-size: 14px;
 }
 
 .ds-hoadon .ag-header {
@@ -111,27 +146,54 @@
 .ds-hoadon .vung-luoi-phu .ag-root-wrapper { height: 100%; }
 
 
+/* Thanh = khung ngoài (div) + nút bật/tắt chiếm hết bề ngang + nút ✕ bám phải */
 .ds-hoadon .thanh-thu-gon {
   display: flex;
   align-items: center;
-  gap: 6px;
   width: 100%;
-  background: #cfeaf2;
-  border: 1px solid #9ec9d4;
+  background: var(--ds-nen-thanh);
+  border: 1px solid var(--ds-vien);
   border-radius: 2px;
+}
+
+.ds-hoadon .thanh-thu-gon:hover { background: var(--ds-nen-thanh-hover); }
+
+/* Nút bật/tắt: nuốt hết chỗ trống nên bấm đâu trên thanh cũng ăn, trừ nút ✕.
+   Nền trong suốt + viền none để nó hòa vào khung ngoài. */
+.ds-hoadon .nut-thu-gon {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
-  color: #0958d9;
+  color: var(--ds-dam);
   cursor: pointer;
   text-align: left;
 }
 
-.ds-hoadon .thanh-thu-gon:hover { background: #bfe3ee; }
+/* Nút ✕ đóng nhanh — cùng việc với bấm lại nhãn, nhưng khi vùng công cụ đang mở
+   cao 30vh thì nhãn bị đẩy xa khỏi tầm mắt, có nút ở mép phải bấm nhanh hơn. */
+.ds-hoadon .nut-dong-cong-cu {
+  flex: none;
+  background: none;
+  border: none;
+  padding: 0 8px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ds-dam);
+  cursor: pointer;
+  opacity: 0.65;
+}
+
+.ds-hoadon .nut-dong-cong-cu:hover { opacity: 1; }
 
 .ds-hoadon .thanh-thu-gon .mui-ten {
   display: inline-block;
-  font-size: 10px;
+  font-size: 12px;
   transition: transform 0.15s;
 }
 
@@ -141,7 +203,7 @@
 .ds-hoadon .thanh-thu-gon .ghi-chu-thu-gon {
   color: #5a7a85;
   font-weight: 400;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 /* ----- Vùng công cụ 4 cột theo chức năng ----- */
@@ -155,7 +217,7 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   align-items: start;
-  max-height: 30vh;
+  max-height: 34vh;
   overflow-y: auto;
 }
 
@@ -163,8 +225,8 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: #eaf7fa;
-  border: 1px solid #b6dde6;
+  background: var(--ds-nen-nhom);
+  border: 1px solid var(--ds-vien-nhom);
   border-radius: 2px;
   padding: 3px 5px 4px;
   min-width: 0;
@@ -172,18 +234,18 @@
 
 .ds-hoadon .nhom-cc > h4 {
   margin: 0 0 1px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
-  color: #0958d9;
+  color: var(--ds-dam);
   text-transform: uppercase;
   letter-spacing: 0.3px;
-  border-bottom: 1px solid #b6dde6;
+  border-bottom: 1px solid var(--ds-vien-nhom);
   padding-bottom: 1px;
 }
 
 /* Vạch ngăn hai nhóm nhỏ trong cùng một cột (vd ghi chú | in ấn) */
 .ds-hoadon .vach-nhom {
-  border-top: 1px dashed #9ec9d4;
+  border-top: 1px dashed var(--ds-vien);
   margin: 2px 0 1px;
 }
 
@@ -218,11 +280,11 @@
 .ds-hoadon .o-tong {
   background: #fff;
   border: 1px solid #91caff;
-  font-size: 12px;
+  font-size: 14px;
   text-align: right;
   padding: 0 5px;
-  height: 20px;
-  line-height: 18px;
+  height: 23px;
+  line-height: 21px;
   min-width: 120px;
 }
 
@@ -245,7 +307,7 @@
 /* ----- Dải báo kết quả kiểm tra thứ tự HĐ ra ----- */
 .ds-hoadon .bang-thung-so {
   border-radius: 2px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 18px;
   margin: 2px 0;
   padding: 3px 8px;

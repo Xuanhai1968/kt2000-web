@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Modal, Button, Input, Select, Checkbox, Radio, Typography, Space,
+  Modal, Button, Input, Select, Checkbox, Radio, Typography,
 } from "antd";
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef } from "ag-grid-community";
 import type { HoaDonThue, HoaDonLine } from "../api";
+import { MAU_HD_RA, MAU_HD_VAO } from "../AppShell";
 import {
   themeVfp, luoiVfpProps, colVfp, dinhDangPhanTramVat, nhoDoRongCot,
 } from "../theme/luoiVfp";
@@ -55,10 +56,6 @@ export default function DanhSachHoaDon({
 }: Props) {
   const [thang, setThang] = useState<number | "all">("all");
   const [thangKT, setThangKT] = useState<number | "all">("all");
-  // Lọc theo khoảng ngày — chỉ áp dụng khi bật, để nút "Theo ngày" bấm mới ăn
-  const [locNgay, setLocNgay] = useState(false);
-  const [tuNgay, setTuNgay] = useState("");
-  const [denNgay, setDenNgay] = useState("");
   // Vùng công cụ mặc định THU GỌN: phần lớn thời gian người dùng chỉ tra cứu và
   // chọn hóa đơn, mở sẵn cả rừng nút chỉ tổ ăn mất chiều cao của hai lưới.
   const [moCongCu, setMoCongCu] = useState(false);
@@ -81,42 +78,50 @@ export default function DanhSachHoaDon({
   });
   const datCb = (k: string, v: boolean) => setCb((m) => ({ ...m, [k]: v }));
 
-  // Tháng hạch toán suy từ ngay_nh (ngày nhập hàng), khác thang của tờ khai:
-  // một HĐ tháng 6 vẫn có thể được hạch toán sang tháng 7.
-  const thangHachToan = (x: HoaDonThue) => {
-    const s = (x.ngayNh ?? "").slice(0, 10);
-    const m = Number(s.split("-")[1]);
+  // HAI BỘ LỌC THÁNG BỔ TRỢ NHAU, đọc hai nguồn khác nhau:
+  //
+  //   "Tháng"    -> tháng của cột NGAY (ngày ghi trên hóa đơn) — hóa đơn phát sinh
+  //                 trong tháng nào.
+  //   "Tháng KT" -> cột THANG của HOA_DON (tháng KÊ KHAI) — hóa đơn được đưa vào tờ
+  //                 khai tháng nào.
+  //
+  // Hai cái lệch nhau là chuyện thường: hóa đơn ngày 28/6 về muộn thì vẫn kê khai
+  // sang tháng 7. Chọn Tháng 6 + Tháng KT 7 là ra đúng nhóm hóa đơn đó — chính là
+  // lý do phải tách làm hai ô chứ không gộp một.
+  const thangCuaNgay = (x: HoaDonThue) => {
+    const m = Number((x.ngay ?? "").slice(0, 10).split("-")[1]);
     return Number.isFinite(m) && m > 0 ? m : null;
   };
 
   const dsLoc = useMemo(() => {
     const k = tuKhoa.trim().toLowerCase();
-    return dsHd.filter((x) => {
-      if (thang !== "all" && x.thang !== thang) return false;
-      if (thangKT !== "all" && thangHachToan(x) !== thangKT) return false;
-      // Khoảng ngày so sánh trên chuỗi ISO yyyy-MM-dd nên không cần parse Date
-      if (locNgay) {
-        const d = (x.ngay ?? "").slice(0, 10);
-        if (!d) return false;
-        if (tuNgay && d < tuNgay) return false;
-        if (denNgay && d > denNgay) return false;
-      }
+    const loc = dsHd.filter((x) => {
+      if (thang !== "all" && thangCuaNgay(x) !== thang) return false;
+      if (thangKT !== "all" && x.thang !== thangKT) return false;
       if (!k) return true;
       return [x.soHd, x.khhd, x.mst, x.tenKh, x.maHd]
         .some((v) => (v ?? "").toLowerCase().includes(k));
     });
-  }, [dsHd, thang, thangKT, tuKhoa, locNgay, tuNgay, denNgay]);
+
+    // Sắp NGÀY TĂNG DẦN (1/1 -> 31/12) — đọc sổ theo trình tự phát sinh, giống
+    // cách lật cuốn sổ giấy. API trả ngay DESC (hóa đơn mới nhất trước) nên phải
+    // sắp lại ở đây; sắp tại chỗ này thì đổi thứ tự API về sau cũng không ảnh hưởng.
+    //
+    // Ngày dạng ISO yyyy-MM-dd nên so sánh chuỗi là ra đúng thứ tự thời gian,
+    // không cần parse Date. HĐ thiếu ngày dồn xuống cuối thay vì lên đầu.
+    // Cùng ngày thì xếp theo số HĐ để thứ tự cố định giữa các lần lọc.
+    const soSanh = (a: string, b: string) =>
+      a === b ? 0 : !a ? 1 : !b ? -1 : a < b ? -1 : 1;
+
+    return [...loc].sort((a, b) => {
+      const d = soSanh((a.ngay ?? "").slice(0, 10), (b.ngay ?? "").slice(0, 10));
+      return d !== 0 ? d : soSanh(a.soHd ?? "", b.soHd ?? "");
+    });
+  }, [dsHd, thang, thangKT, tuKhoa]);
 
   // Hóa đơn đang chọn ở bảng trên — nguồn của bảng dòng hàng bên dưới
   const hdDangChon = useMemo(
     () => dsHd.find((x) => x.maHd === fileChon) ?? null, [dsHd, fileChon]);
-
-  const tongTienHang = useMemo(
-    () => dsLoc.reduce((s, x) => s + x.tienHang, 0), [dsLoc]);
-  const tongTienVat = useMemo(
-    () => dsLoc.reduce((s, x) => s + x.tienVat, 0), [dsLoc]);
-  const tongThanhToan = useMemo(
-    () => dsLoc.reduce((s, x) => s + x.tongTien, 0), [dsLoc]);
 
   const soVn = (v: number) =>
     v.toLocaleString("vi-VN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -229,7 +234,7 @@ export default function DanhSachHoaDon({
   }, [inGhiDe, dsLoc]);
 
   const cacThang = Array.from({ length: 12 }, (_, i) => i + 1);
-  const optThang = [{ value: "all" as const, label: "Tất cả các tháng" },
+  const optThang = [{ value: "all" as const, label: "Tất cả" },
                     ...cacThang.map((m) => ({ value: m, label: `Tháng ${m}` }))];
 
   const cotTren = useMemo<ColDef<HoaDonThue>[]>(() => [
@@ -239,8 +244,6 @@ export default function DanhSachHoaDon({
       pinned: "left", tooltipField: "maHd" },
     { colId: "ngay", headerName: "Ngày", width: 74,
       valueGetter: (p) => ngayNgan(p.data?.ngay ?? null) },
-    { colId: "thang", headerName: "Tháng", field: "thang", width: 56,
-      type: "numericColumn" },
     { colId: "ngayNh", headerName: "Ngày NH", width: 74,
       valueGetter: (p) => ngayNgan(p.data?.ngayNh ?? p.data?.ngay ?? null) },
     { colId: "soHd", headerName: "Số HĐ", field: "soHd", width: 82 },
@@ -249,11 +252,15 @@ export default function DanhSachHoaDon({
       tooltipValueGetter: (p) => String(p.value ?? "") },
     { colId: "ghiNo", headerName: "Nợ", field: "ghiNo", width: 44 },
     { colId: "ghiCo", headerName: "Có", field: "ghiCo", width: 44 },
-    { colId: "ptVat", headerName: "%VAT", width: 50,
-      valueGetter: (p) => dinhDangPhanTramVat(p.data?.lines[0]?.ptVat) },
+    { colId: "ptVat", headerName: "%VAT", width: 56, type: "numericColumn",
+      valueGetter: (p) => p.data?.vat != null ? `${p.data.vat}%` : "" },
     { colId: "noVat", headerName: "Nợ VAT", width: 50, valueGetter: () => "" },
     { colId: "coVat", headerName: "Có VAT", width: 46, valueGetter: () => "" },
-    { colId: "kt", headerName: "KT", width: 44, valueGetter: () => "" },
+    // KT = tháng KÊ KHAI (cột thang của HOA_DON) — chính là cột mà ô lọc "Tháng KT"
+    // ở thanh trên đang lọc. Khác cột Ngày: HĐ ngày 28/6 về muộn vẫn kê khai tháng 7.
+    { colId: "kt", headerName: "KT", width: 44, field: "thang",
+      type: "numericColumn",
+      headerTooltip: "Tháng kê khai (HOA_DON.thang) — lọc bằng ô 'Tháng KT'" },
     { colId: "tienHang", headerName: "Tiền HĐ", field: "tienHang", width: 130,
       type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
     { colId: "tienCk", headerName: "Tiền CK", field: "tienCk", width: 110,
@@ -310,7 +317,6 @@ export default function DanhSachHoaDon({
       cellStyle: { backgroundColor: "#f5f5f5", fontWeight: 600 } },
     { colId: "ptVat", headerName: "% VAT", width: 66,
       valueGetter: (p) => dinhDangPhanTramVat(p.data?.ptVat) },
-    // Chưa định khoản thì hiện giá trị quy ước 156/331 như bản gốc
     { colId: "ghiNo", headerName: "Nợ", width: 50,
       valueGetter: (p) => p.data?.ghiNo || "" },
     { colId: "ghiCo", headerName: "Có", width: 50,
@@ -328,7 +334,16 @@ export default function DanhSachHoaDon({
 
   return (
     <Modal
-      title={`Danh sách hóa đơn GTGT ${laDauRa ? "đầu ra" : "đầu vào"} — ${tenDonVi}`}
+      title={
+        <span>
+          Danh sách hóa đơn GTGT{" "}
+          {/* Tô đúng màu chiều (NT-11) để liếc tiêu đề là biết đang xem sổ nào */}
+          <b style={{ color: laDauRa ? MAU_HD_RA : MAU_HD_VAO }}>
+            {laDauRa ? "đầu ra" : "đầu vào"}
+          </b>
+          {" "}— {tenDonVi}
+        </span>
+      }
       open={mo}
       onCancel={onDong}
       footer={null}
@@ -342,11 +357,16 @@ export default function DanhSachHoaDon({
         },
       }}
     >
-      <div className="ds-hoadon">
+      {/* NT-11: nhuộm theo chiều — VÀO đỏ, RA xanh. Modal mở toàn màn nên mất hẳn
+          ngữ cảnh màu của màn cha, không đánh dấu thì không biết đang xem sổ nào. */}
+      <div className={`ds-hoadon ${laDauRa ? "huong-ra" : "huong-vao"}`}>
         {/* ===== THANH LỌC TRÊN CÙNG ===== */}
         <div className="thanh-loc">
-          <span className="nhan">Tháng</span>
+          <span className="nhan">
+            Tháng
+          </span>
           <Select size="small" style={{ width: 150 }} value={thang}
+                  title="Tháng của cột Ngày — hóa đơn phát sinh trong tháng nào"
                   onChange={(v) => setThang(v)} options={optThang} />
           <span className="nhan">Năm {namLamViec}</span>
           <Button size="small" className="nut-xanhdg" loading={dangTai}
@@ -356,23 +376,11 @@ export default function DanhSachHoaDon({
                                   : "Màn cha chưa cấp hàm nạp lại"}>
             Refresh
           </Button>
-          {/* Bật/tắt lọc theo khoảng ngày. Tắt thì hai ô ngày mờ đi cho khỏi
-              tưởng là đang lọc mà không thấy tác dụng. */}
-          <Button size="small"
-                  className={locNgay ? "nut-xanhla" : "nut-xanhdg"}
-                  onClick={() => setLocNgay((v) => !v)}
-                  title="Lọc danh sách theo khoảng ngày hóa đơn">
-            Theo ngày{locNgay ? " ✓" : ""}
-          </Button>
-          <Input size="small" type="date" style={{ width: 130 }}
-                 disabled={!locNgay} value={tuNgay}
-                 onChange={(e) => setTuNgay(e.target.value)} />
-          <span className="nhan">→</span>
-          <Input size="small" type="date" style={{ width: 130 }}
-                 disabled={!locNgay} value={denNgay}
-                 onChange={(e) => setDenNgay(e.target.value)} />
-          <span className="nhan">Tháng KT:</span>
+          <span className="nhan">
+            Tháng KT:
+          </span>
           <Select size="small" style={{ width: 130 }} value={thangKT}
+                  title="Tháng kê khai"
                   onChange={(v) => setThangKT(v)} options={optThang} />
 
           <Checkbox checked={cb.kiemTraThuTu}
@@ -405,7 +413,7 @@ export default function DanhSachHoaDon({
                    if (e.target.value === "") setTuKhoa("");
                  }}
                  onSearch={timNgay} />
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 14 }}>
             {dsLoc.length}/{dsHd.length} hóa đơn
             {soDanhDau > 0 && (
               <span title="Hóa đơn vừa có chiết khấu vừa là HĐ điều chỉnh/thay thế — đã tự tích ở cột In">
@@ -466,22 +474,22 @@ export default function DanhSachHoaDon({
 
         <div className="vung-luoi-phu khoi-luoi-phu">
           <div className="hang-cong-cu">
-            <Typography.Text strong style={{ fontSize: 12 }}>
+            <Typography.Text strong style={{ fontSize: 14 }}>
               Chi tiết hàng hoá dịch vụ
             </Typography.Text>
             {hdDangChon ? (
-              <Typography.Text style={{ fontSize: 12 }}>
+              <Typography.Text style={{ fontSize: 14 }}>
                 — {hdDangChon.khhd}/{hdDangChon.soHd} · {ngayNgan(hdDangChon.ngay)} ·{" "}
                 {hdDangChon.tenKh} {" "}
                 <b>{hdDangChon.lines.length || hdDangChon.soDongHang}</b> dòng
               </Typography.Text>
             ) : (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 14 }}>
                 Bấm một hóa đơn ở bảng trên để xem dòng hàng
               </Typography.Text>
             )}
             <span style={{ flex: 1 }} />
-            <Typography.Text style={{ fontSize: 12 }}>
+            <Typography.Text style={{ fontSize: 14 }}>
               Tổng thành tiền{" "}
               <b style={{ color: !hdDangChon
                             || Math.abs(hdDangChon.tienHang - sumDuoi) < 10
@@ -514,16 +522,29 @@ export default function DanhSachHoaDon({
 
             Cả vùng THU GỌN được và mặc định đóng — nhường hết chiều cao cho hai
             lưới, mở ra khi cần thao tác. */}
-        <button type="button" className="thanh-thu-gon"
-                aria-expanded={moCongCu}
-                onClick={() => setMoCongCu((v) => !v)}
-                title={moCongCu ? "Thu gọn vùng công cụ" : "Mở vùng công cụ"}>
-          <span className={`mui-ten ${moCongCu ? "mo" : ""}`}>▶</span>
-          <span>Công cụ nghiệp vụ</span>
-          <span className="ghi-chu-thu-gon">
-            Nạp dữ liệu · Định khoản · Hàng KM · Ghi chú &amp; In
-          </span>
-        </button>
+        {/* Thanh gồm HAI nút nên phải là div bọc ngoài — button lồng button là HTML
+            không hợp lệ, trình duyệt tự tách ra và bố cục vỡ. */}
+        <div className="thanh-thu-gon">
+          <button type="button" className="nut-thu-gon"
+                  aria-expanded={moCongCu}
+                  onClick={() => setMoCongCu((v) => !v)}
+                  title={moCongCu ? "Thu gọn vùng công cụ" : "Mở vùng công cụ"}>
+            <span className={`mui-ten ${moCongCu ? "mo" : ""}`}>▶</span>
+            <span>Công cụ nghiệp vụ</span>
+            <span className="ghi-chu-thu-gon">
+              Nạp dữ liệu · Định khoản · Hàng KM · Ghi chú &amp; In
+            </span>
+          </button>
+          {/* Chỉ hiện khi đang mở: đóng rồi thì nút ✕ chẳng còn gì để đóng */}
+          {moCongCu && (
+            <button type="button" className="nut-dong-cong-cu"
+                    onClick={() => setMoCongCu(false)}
+                    aria-label="Đóng vùng công cụ"
+                    title="Đóng vùng công cụ">
+              ✕
+            </button>
+          )}
+        </div>
 
         {moCongCu && (
         <div className="luoi-cong-cu">
@@ -769,18 +790,6 @@ export default function DanhSachHoaDon({
           </section>
         </div>
         )}
-
-        <Typography.Text style={{ fontSize: 11, color: "#0000cd", display: "block",
-                                  lineHeight: "14px" }}>
-          Bấm chuột phải vào ô Mã hoá đơn (F3) của HĐ tương ứng để Sửa phiếu này
-        </Typography.Text>
-
-        <Space size={12}>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Tổng Tiền HĐ <b>{soVn(tongTienHang)}</b> · Σ VAT <b>{soVn(tongTienVat)}</b> ·
-            Tổng Thanh toán <b>{soVn(tongThanhToan)}</b>
-          </Typography.Text>
-        </Space>
       </div>
     </Modal>
   );
