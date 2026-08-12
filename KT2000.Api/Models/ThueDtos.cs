@@ -59,6 +59,7 @@ namespace KT2000.Api.Models
         public string? KhhdLienquan { get; set; }
         public string? SohdLienquan { get; set; }
         public DateTime? NgayLienquan { get; set; }
+        public string? TrangThaiHdLienQuan { get; set; }
         public List<HoaDonLineDto> Lines { get; set; } = new();
     }
 }
