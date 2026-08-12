@@ -175,6 +175,9 @@ namespace KT2000.Api.Models
         public decimal ThanhTien { get; set; }
         public string ThueSuat { get; set; } = "";
         public string TinhChat { get; set; } = "1";
+        // STCKhau — chiết khấu của RIÊNG dòng. Sửa được trên lưới từ 12/08 nên phải đi
+        // kèm khi nạp tay, không thì gõ xong số bay mất (tien_ck trước ghi cứng 0).
+        public decimal ChietKhau { get; set; }
     }
 
     // Nạp TAY một hóa đơn (đã sửa) từ file XML còn nằm lại raw\ vào database đơn vị-năm

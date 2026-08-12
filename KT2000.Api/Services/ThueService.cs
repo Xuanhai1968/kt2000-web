@@ -240,9 +240,14 @@ namespace KT2000.Api.Services
             else return (null, null);
             var duoi = maHd[(huong.Length + 1)..];
 
+            // Thư mục file gốc đặt tên theo tháng PHÁT SINH, nên phải lấy MONTH(ngay)
+            // chứ KHÔNG phải cột `thang` — từ 11/08 `thang` mang nghĩa tháng KÊ KHAI:
+            // đơn vị khai quý có HĐ tháng 1 ghi thang=3, hàm này sẽ đi tìm trong
+            // VAO_T3_2026 trong khi file nằm ở VAO_T1_2026.
             int? thang;
             using (var conn = await OpenAsync(code, year))
-            using (var cmd = new SqlCommand("SELECT thang FROM HOA_DON WHERE ma_hd=@id", conn))
+            using (var cmd = new SqlCommand(
+                "SELECT MONTH(ngay) FROM HOA_DON WHERE ma_hd=@id", conn))
             {
                 cmd.Parameters.AddWithValue("@id", maHd);
                 var o = await cmd.ExecuteScalarAsync();
@@ -251,15 +256,54 @@ namespace KT2000.Api.Services
             if (thang is null or <= 0) return (null, null);
 
             var thuMuc = Path.Combine(root, code, $"NAM{year}", $"{huong}_T{thang}_{year}");
-            var tenFile = $"{code}_{huong}_T{thang}_{duoi}.html";
-            var duongDan = Path.Combine(thuMuc, tenFile);
             var thuMucChuan = Path.GetFullPath(thuMuc + Path.DirectorySeparatorChar);
-            var duongDanChuan = Path.GetFullPath(duongDan);
-            if (!duongDanChuan.StartsWith(thuMucChuan, StringComparison.OrdinalIgnoreCase))
-                return (null, null);
 
-            if (!File.Exists(duongDanChuan)) return (null, null);
-            return (await File.ReadAllTextAsync(duongDanChuan), tenFile);
+            // Tên file do script tải đặt, mang số hóa đơn THÔ của cổng ("..._4490"), còn
+            // ma_hd trong DB đã đệm số 0 theo BR-HD-01 ("..._0004490") — ghép thẳng thì
+            // không bao giờ khớp. Thử lần lượt các ứng viên.
+            foreach (var ten in TenFileUngVien(code, huong, thang.Value, duoi, thuMucChuan))
+            {
+                var duongDanChuan = Path.GetFullPath(Path.Combine(thuMuc, ten));
+                if (!duongDanChuan.StartsWith(thuMucChuan, StringComparison.OrdinalIgnoreCase))
+                    continue;   // chặn ../ vượt thư mục
+                if (File.Exists(duongDanChuan))
+                    return (await File.ReadAllTextAsync(duongDanChuan), ten);
+            }
+            return (null, null);
+        }
+
+        // Bỏ số 0 đầu của đoạn CUỐI (số hóa đơn) để so khớp: "..._C26TTB_0004490" và
+        // "..._C26TTB_4490" phải coi là một.
+        private static string BoSoKhongDau(string duoi)
+        {
+            int i = duoi.LastIndexOf('_');
+            if (i < 0 || i == duoi.Length - 1) return duoi;
+            string so = duoi[(i + 1)..];
+            if (!so.All(char.IsAsciiDigit)) return duoi;
+            string goi = so.TrimStart('0');
+            return duoi[..(i + 1)] + (goi.Length == 0 ? "0" : goi);
+        }
+
+        private static IEnumerable<string> TenFileUngVien(
+            string code, string huong, int thang, string duoi, string thuMucChuan)
+        {
+            string dau = $"{code}_{huong}_T{thang}_";
+            yield return dau + duoi + ".html";
+
+            string duoiGon = BoSoKhongDau(duoi);
+            if (duoiGon != duoi) yield return dau + duoiGon + ".html";
+
+            // File tải từ các đợt trước có thể đệm kiểu khác (đợt 11/08 từng đệm 8 chữ
+            // số). Thay vì đoán từng kiểu, quét thư mục và so theo đuôi đã bỏ số 0 —
+            // chậm hơn nhưng bắt được mọi cách đặt tên đã từng dùng.
+            if (!Directory.Exists(thuMucChuan)) yield break;
+            foreach (var f in Directory.EnumerateFiles(thuMucChuan, "*.html"))
+            {
+                string ten = Path.GetFileNameWithoutExtension(f);
+                if (!ten.StartsWith(dau, StringComparison.OrdinalIgnoreCase)) continue;
+                if (BoSoKhongDau(ten[dau.Length..]) == duoiGon)
+                    yield return Path.GetFileName(f);
+            }
         }
     }
 }

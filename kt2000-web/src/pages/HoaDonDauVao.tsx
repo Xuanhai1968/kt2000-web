@@ -45,6 +45,29 @@ const laDongChietKhau = (m: MatHang) => m.tinhChat === "3";
 const sumLine = (hd: HoaDonConLai) =>
   hd.matHangs.reduce((s, m) => s + (laDongChietKhau(m) ? -m.thanhTien : m.thanhTien), 0);
 
+// Hóa đơn CHỈ có dòng chiết khấu, không có dòng hàng hóa nào (chốt 12/08). Khi đó số
+// tiền của dòng chính LÀ khoản chiết khấu chứ không phải giá trị hàng bán — để ở cột
+// Thành tiền thì đọc như đang bán được ngần ấy, ngược hẳn bản chất.
+// Hóa đơn vừa có hàng vừa có chiết khấu thì KHÔNG đụng: dòng TC=3 vẫn hiện thành tiền
+// như cũ, vì ở đó nó là một dòng trong bảng kê chứ không phải toàn bộ hóa đơn.
+const toanChietKhau = (mh: MatHang[]) => mh.length > 0 && mh.every(laDongChietKhau);
+
+// Dời số tiền sang cột Chiết khấu ngay lúc nhận dữ liệu, KHÔNG làm ở tầng hiển thị:
+// lưới sửa thẳng vào mảng này, có hai cách đọc song song là chỗ nào cũng phải nhớ
+// dịch, sót một chỗ là ra số sai.
+const chuanHoaMatHang = (hd: HoaDonConLai): HoaDonConLai =>
+  toanChietKhau(hd.matHangs)
+    ? { ...hd, matHangs: hd.matHangs.map((m) => ({ ...m, chietKhau: m.thanhTien, thanhTien: 0 })) }
+    : hd;
+
+// Chiết khấu của cả hóa đơn = Σ chiết khấu từng dòng. Không dòng nào khai thì lùi về
+// số cổng khai ở mức hóa đơn (TTCKTMai) — thà lấy số của cổng còn hơn hiện 0.
+const ckCuaHoaDon = (hd?: HoaDonConLai) => {
+  if (!hd) return 0;
+  const tong = hd.matHangs.reduce((s, m) => s + (m.chietKhau || 0), 0);
+  return tong || hd.tienCk || 0;
+};
+
 
 // Mảng cột phải ĐỨNG YÊN giữa các lần render. Dựng mới mỗi lần thì AG Grid coi
 // là bộ cột khác và đặt lại bề rộng — triệu chứng là bấm vào ô để sửa cũng làm
@@ -53,9 +76,12 @@ const COT_HOA_DON: ColDef<HoaDonConLai>[] = [
           { headerName: "Tháng", field: "thang", width: 70 },
           // Bỏ cột Hướng: tiêu đề modal đã ghi hướng rồi. Ký hiệu nới rộng vì độ dài
           // không đoán trước; Số HĐ và Ngày co lại vì đã có khuôn cố định.
-          { ...colSua, headerName: "Ký hiệu", field: "khHd", width: 130 },
-          { ...colSua, headerName: "Số HĐ", field: "soHd", width: 95 },
-          { ...colSua, headerName: "Ngày", field: "ngay", width: 110 },
+          // CHỈ ĐỌC (chốt 12/08): ba ô này là danh tính hóa đơn — ma_hd dựng từ chính
+          // ký hiệu + số HĐ (BR-HD-01), sửa ở đây là nạp vào một hóa đơn KHÁC mà không
+          // ai hay. Sai thì sửa ở cổng rồi tải lại, không phải gõ đè trên lưới.
+          { ...colVfp, headerName: "Ký hiệu", field: "khHd", width: 130 },
+          { ...colVfp, headerName: "Số HĐ", field: "soHd", width: 95 },
+          { ...colVfp, headerName: "Ngày", field: "ngay", width: 110 },
           // colId tường minh cho cột KHÔNG có field: AG Grid tự sinh id theo vị trí,
           // mà id đó chính là khóa lưu bề rộng — đổi thứ tự cột là mất hết.
           { colId: "doiTac", headerName: "Đối tác", width: 240,
@@ -70,12 +96,15 @@ const COT_HOA_DON: ColDef<HoaDonConLai>[] = [
             type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
           { headerName: "VAT", field: "tienVat", width: 115,
             type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
-          // Ô DUY NHẤT được sửa ở lưới này. Cổng không phải lúc nào cũng khai
-          // TTCKTMai, nên đây là chỗ kế toán điền tay khi cần.
-          { ...colSo, headerName: "Chiết khấu", field: "tienCk", width: 120,
-            valueFormatter: (p) => dinhDangTien(p.value) },
-          { headerName: "Tổng", field: "tongTien", width: 125,
-            type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
+          // CHỈ ĐỌC, tự CỘNG từ chiết khấu của các dòng hàng (chốt 12/08). Kế toán sửa
+          // ở lưới dưới, số này chạy theo — một nguồn sự thật, hai chỗ không thể lệch.
+          // Cổng có khai TTCKTMai thì dùng số đó; không khai thì Σ dòng chính là nó.
+          { colId: "tienCk", headerName: "Chiết khấu", width: 120, type: "numericColumn",
+            valueGetter: (p) => ckCuaHoaDon(p.data),
+            valueFormatter: (p) => dinhDangTien(p.value),
+            cellStyle: { backgroundColor: "#f5f5f5" } },
+          // Cột "Tổng" đã bỏ theo yêu cầu 12/08 — tổng tiền suy được từ Tiền hàng + VAT,
+          // để thêm chỉ tổ chiếm chỗ của mấy cột phải đọc kỹ hơn.
           // Ngưỡng 10đ khớp SAI_SO_CHO_PHEP bên ImportService — không thì hóa đơn
           // backend đã nhận vẫn hiện đỏ ở đây, đọc như còn lỗi.
           { colId: "lechSigma", headerName: "Lệch Σ line", width: 125, type: "numericColumn",
@@ -115,11 +144,13 @@ const COT_MAT_HANG: ColDef<MatHang>[] = [
             valueFormatter: (p) => dinhDangTien(p.value) },
           { ...colSo, headerName: "Đơn giá", field: "donGia", width: 130,
             valueFormatter: (p) => dinhDangTien(p.value) },
-          // Chiết khấu của RIÊNG dòng (STCKhau) — khác cột "Chiết khấu" ở lưới trên,
-          // vốn là chiết khấu của cả hóa đơn (TTCKTMai). Hai con số khác nhau.
-          { headerName: "Chiết khấu", field: "chietKhau", width: 115,
-            headerTooltip: "STCKhau — chiết khấu của riêng dòng này",
-            type: "numericColumn", valueFormatter: (p) => dinhDangTien(p.value) },
+          // Chiết khấu của RIÊNG dòng (STCKhau). SỬA ĐƯỢC (chốt 12/08) — cổng nhiều khi
+          // không khai STCKhau, đây là chỗ kế toán điền tay; ô Chiết khấu ở lưới trên
+          // cộng lại từ chính cột này nên sửa ở đây là trên kia đổi theo.
+          { ...colSo, headerName: "Chiết khấu", field: "chietKhau", width: 115,
+            headerTooltip: "STCKhau — chiết khấu của riêng dòng này. Hóa đơn chỉ toàn "
+                         + "dòng TC=3 thì thành tiền đã được chuyển sang cột này.",
+            valueFormatter: (p) => dinhDangTien(p.value) },
           // colId tường minh cho cột KHÔNG có field: AG Grid tự sinh id theo vị trí,
           // mà id đó chính là khóa lưu bề rộng — đổi thứ tự cột là mất hết.
           { colId: "slNhanDg", headerName: "SL × ĐG", width: 140, type: "numericColumn",
@@ -210,7 +241,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
     setChonFile(null);
     try {
       const r = await getRawFiles(t.id, namLamViec, tuThang, denThang, huong);
-      setDsConLai(r.data);
+      setDsConLai(r.data.map(chuanHoaMatHang));
       // Chọn sẵn dòng đầu để khung dưới có nội dung ngay, khỏi phải bấm thêm
       if (r.data.length) setChonFile(r.data[0].tenFile);
     } catch (e) {
@@ -340,9 +371,10 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
         // Người phát hành luôn là NGƯỜI BÁN, kể cả hóa đơn ra (khi đó là chính mình)
         mstPhatHanh: hd.mstBan,
         tenKh: hd.huong === "VAO" ? hd.tenBan : hd.tenMua,
-        // tienCk phải gửi giá trị THẬT: cột Chiết khấu nay sửa được, gửi cứng 0 thì
-        // người dùng gõ vào rồi bấm Ghi mà số không vào sổ — một ô giả.
-        diaChi: "", tienHang: hd.tienHang, tienVat: hd.tienVat, tienCk: hd.tienCk,
+        // tienCk phải gửi giá trị THẬT: chiết khấu nay sửa được ở lưới dòng hàng, gửi
+        // cứng 0 (hay gửi hd.tienCk không đổi theo) thì người dùng gõ vào rồi bấm Ghi
+        // mà số không vào sổ — một ô giả. Lấy đúng con số đang hiện trên lưới.
+        diaChi: "", tienHang: hd.tienHang, tienVat: hd.tienVat, tienCk: ckCuaHoaDon(hd),
         matHangs: hd.matHangs,
       });
       const d = r.data;

@@ -400,8 +400,11 @@ namespace KT2000.Api.Services
                         var hd = DocXmlHoaDon(f, h, thang);
                         if (hd == null) continue;
 
-                        // MA_HD kết thúc bằng _<KHHD>_<SO_HD>, tên file cũng vậy
-                        string duoi = $"_{hd.KhHd}_{hd.SoHd}";
+                        // MA_HD kết thúc bằng _<KHHD>_<SO_HD>, tên file cũng vậy. Nhưng
+                        // hd.SoHd đọc THÔ từ XML ("4490") còn ImportError.MaHd đã đệm số 0
+                        // theo BR-HD-01 ("0004490") — so thẳng là không bao giờ khớp, cột
+                        // "Vì sao còn nằm lại" trống trơn. So bằng bản đã chuẩn hóa.
+                        string duoi = $"_{hd.KhHd}_{ChuanSoHd(hd.SoHd)}";
                         var khop = loi.FirstOrDefault(x => x.MaHd.EndsWith(duoi, StringComparison.OrdinalIgnoreCase));
                         kq.Add(khop != null
                             ? hd with { LyDo = khop.LyDo ?? "", CoTrongExcel = true }
@@ -520,7 +523,7 @@ namespace KT2000.Api.Services
                         using var ins = new SqlCommand(@"
                             INSERT INTO HOA_DON_LINE (ma_hd, stt_line, ten_hang_goc, dvt, so_luong,
                                 don_gia, pt_vat, tien_ck, tinh_chat, created_by)
-                            VALUES (@id, @stt, @ten, @dvt, @sl, @dg, @pt_vat, 0, @tc, @user)", conn, tx);
+                            VALUES (@id, @stt, @ten, @dvt, @sl, @dg, @pt_vat, @tien_ck, @tc, @user)", conn, tx);
                         var p = ins.Parameters;
                         p.AddWithValue("@id", maHd);
                         p.AddWithValue("@stt", m.Stt);
@@ -529,6 +532,9 @@ namespace KT2000.Api.Services
                         p.AddWithValue("@sl", m.SoLuong);
                         p.AddWithValue("@dg", m.DonGia);
                         p.AddWithValue("@pt_vat", DocPhanTram(m.ThueSuat));
+                        // Trước ghi cứng 0: cột Chiết khấu ở lưới dòng hàng nay sửa được
+                        // (chốt 12/08), không ghi thì gõ xong số bay mất.
+                        p.AddWithValue("@tien_ck", m.ChietKhau);
                         p.AddWithValue("@tc", (object?)Nz(m.TinhChat) ?? DBNull.Value);
                         p.AddWithValue("@user", userName);
                         await ins.ExecuteNonQueryAsync();
@@ -640,13 +646,20 @@ namespace KT2000.Api.Services
         // cùng một hóa đơn lấy hai đường có thể ra HAI ma_hd khác nhau, nằm hai dòng
         // trong DB. Đệm về 8 để danh tính chỉ có một dạng duy nhất.
         //
-        // CHỈ đệm khi toàn chữ số và NGẮN hơn 8. Đo trên 1.500 hóa đơn thật của 3 đơn vị:
-        // 0 số có ký tự lạ, 0 số dài quá 8 — nhưng vẫn chừa đường cho ca ngoại lệ mai sau
-        // thay vì cắt cụt dữ liệu.
+        // 7 chữ số (chốt Trường 12/08). Cách làm: BỎ HẾT số 0 đầu rồi đệm lại cho đủ 7 —
+        // nhờ vậy "00000003" của cổng cũng về đúng "0000003", không còn hai dạng song song.
+        // Số thật dài hơn 7 (vd 12345678) thì GIỮ NGUYÊN, không cắt — cắt là mất dữ liệu.
+        // Chuỗi có ký tự lạ cũng để nguyên: 1.500 hóa đơn thật của 3 đơn vị không có ca
+        // nào như vậy, nhưng chừa đường vẫn hơn làm hỏng.
+        internal const int DO_DAI_SO_HD = 7;
+
         internal static string ChuanSoHd(string tho)
         {
             string s = (tho ?? "").Trim();
-            return s.Length is > 0 and < 8 && s.All(char.IsAsciiDigit) ? s.PadLeft(8, '0') : s;
+            if (s.Length == 0 || !s.All(char.IsAsciiDigit)) return s;
+            string loi = s.TrimStart('0');
+            if (loi.Length == 0) loi = "0";                    // "0000" -> "0"
+            return loi.Length >= DO_DAI_SO_HD ? loi : loi.PadLeft(DO_DAI_SO_HD, '0');
         }
 
         // Đệm phần ĐUÔI số hóa đơn của ma_hd. Cố tình KHÔNG dựng lại ma_hd từ các mảnh:
@@ -711,19 +724,19 @@ namespace KT2000.Api.Services
             // ngay_nh dùng ISNULL: luật #5 — hàm nguồn KHÔNG được đè ngày hạch toán
             // kế toán đã tự nhập. Chỉ điền khi cột còn trống ("cập nhật có chừa").
               ? @"UPDATE HOA_DON SET ngay=@ngay, thang=@thang, ngay_nh=ISNULL(ngay_nh,@ngay_nh),
-                    vat=@vat, khhd=@khhd, so_hd=@so_hd,
+                    vat=@vat, ghi_chu=ISNULL(ghi_chu,@ghi_chu), khhd=@khhd, so_hd=@so_hd,
                     mst=@mst, ten_kh=@ten_kh, dia_chi=@dia_chi, nguoi_giao_dich=@ng_gd,
                     tien_vat=@tien_vat, tien_ck=@tien_ck, edit_vat=@edit_vat, edit_ck=@edit_ck,
                     tthai_hd=@tthai, tich_chat_hd_lienquan=@tc_lq, loai_hd_lienquan=@l_lq,
                     mau_so_hd_lienquan=@ms_lq, khhd_lienquan=@kh_lq, sohd_lienquan=@so_lq,
                     ngay_lienquan=@ngay_lq, updated_by=@user, updated_at=SYSDATETIME()
                   WHERE ma_hd=@id"
-              : @"INSERT INTO HOA_DON (ma_hd, ngay, thang, ngay_nh, vat, khhd, so_hd,
+              : @"INSERT INTO HOA_DON (ma_hd, ngay, thang, ngay_nh, vat, ghi_chu, khhd, so_hd,
                     mst, ten_kh, dia_chi,
                     nguoi_giao_dich, tien_vat, tien_ck, edit_vat, edit_ck, tthai_hd,
                     tich_chat_hd_lienquan, loai_hd_lienquan, mau_so_hd_lienquan,
                     khhd_lienquan, sohd_lienquan, ngay_lienquan, created_by)
-                  VALUES (@id, @ngay, @thang, @ngay_nh, @vat, @khhd, @so_hd,
+                  VALUES (@id, @ngay, @thang, @ngay_nh, @vat, @ghi_chu, @khhd, @so_hd,
                     @mst, @ten_kh, @dia_chi,
                     @ng_gd, @tien_vat, @tien_ck, @edit_vat, @edit_ck, @tthai,
                     @tc_lq, @l_lq, @ms_lq, @kh_lq, @so_lq, @ngay_lq, @user)";
@@ -739,6 +752,13 @@ namespace KT2000.Api.Services
             // sửa lại được, và lần nạp sau sẽ không đè (ISNULL ở câu UPDATE).
             p.AddWithValue("@ngay_nh", (object?)ngayHd ?? DBNull.Value);
             p.AddWithValue("@vat", SuyThueSuat(tienVat, tienHang));
+            // Hóa đơn không có bản gốc trên cổng (điện, nước, viễn thông, ngân hàng):
+            // đánh dấu ngay ở ghi chú kèm TÊN đối tác, để nhìn là biết của ai mà khỏi
+            // phải mở từng cái ra tra (chốt Trường 12/08).
+            // ISNULL ở câu UPDATE — luật #5: không đè ghi chú kế toán đã nhập.
+            string ghiChu = S(r, M, "XML_PATH").Trim().Length == 0
+                ? ("NoXml" + (Nz(tenKh) == null ? "" : " - " + tenKh)) : "";
+            p.AddWithValue("@ghi_chu", (object?)Nz(ghiChu) ?? DBNull.Value);
             p.AddWithValue("@khhd", khhd);
             p.AddWithValue("@so_hd", soHd);
             p.AddWithValue("@mst", (object?)Nz(mst) ?? DBNull.Value);
