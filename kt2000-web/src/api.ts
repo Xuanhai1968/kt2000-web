@@ -429,7 +429,10 @@ export const importJob = (
 
 export interface DmHangNb {
   maHang: string | null;
-  tenHang: string;
+  tenHang: string;             // tên ĐÁNH ĐƠN (có ghi chú nắp/lô cho kho)
+  // Tên CHUẨN đưa lên hóa đơn điện tử (Viettel). Trống = dùng luôn tenHang.
+  // Hai tên vì ghi chú thực địa ("nắp trắng") không được lên hóa đơn thuế.
+  tenHd: string | null;
   dvt: string | null;
   quyCach: string | null;
   giaBan: number | null;
@@ -445,6 +448,44 @@ export interface DmHangNb {
   dvtLon: string | null;      // 1 dvtLon = heSoLon × dvt
   heSoLon: number | null;
   giaBanLon: number | null;
+  // 018 — MỘT mặt hàng NHIỀU quy cách (bảng DM_QUY_CACH_NB).
+  // Backend trả kèm ngay trong kết quả tìm hàng, không phải gọi thêm vòng nữa: gõ tên
+  // hàng xong Enter là ô ĐVT xổ ra được ngay, không chờ mạng (BR-NB-05).
+  // Mảng rỗng = mặt hàng chưa khai quy cách -> ô ĐVT lùi về gõ tay như trước.
+  quyCach2: QuyCachNb[];
+}
+
+// Một quy cách bán được của mặt hàng (dòng DM_QUY_CACH_NB ghép DM_DVT_NB).
+export interface QuyCachNb {
+  maDvt: string;
+  tenDvt: string | null;
+  tenTat: string | null;      // "18L" — thứ người bán gõ
+  heSoQd: number | null;      // 1 ĐVT này = heSoQd × dvtGoc
+  dvtGoc: string | null;      // "L" / "KG"
+  laDvtGoc: boolean;          // quy cách mặc định của mặt hàng
+  giaBan: number | null;
+  giaMua: number | null;
+  maVach: string | null;
+}
+
+// KHUYẾN MÃI "mua N tặng M" (DM_KM_NB, script 018).
+// KM gắn theo CẶP (mặt hàng, quy cách): H00021 có ba KM khác nhau cho thùng 18L và hộp
+// 5L. Quy cách TẶNG có thể khác quy cách MUA (mua 3 thùng tặng 1 hộp 5L).
+export interface DmKmNb {
+  maKm: string | null;          // để trống khi thêm mới -> backend sinh KM0028...
+  tenKm: string;
+  maHang: string;
+  maDvt: string;                // quy cách phải MUA
+  maDvtTang: string;            // quy cách được TẶNG
+  slMua: number;
+  slTang: number;
+  tuNgay: string | null;        // null = không giới hạn thời gian
+  denNgay: string | null;
+  ghiChu: string | null;
+  // Backend đọc kèm để hiện chữ, không phải tra thêm danh mục. Chỉ có khi ĐỌC.
+  tenHang?: string | null;
+  tenDvt?: string | null;
+  tenDvtTang?: string | null;
 }
 
 // BR-NB-01: DM_KH_NB là danh mục ĐỐI TƯỢNG CÔNG NỢ — khách VÀ nhân viên chung một
@@ -466,12 +507,40 @@ export interface DmKhNb {
   // 014
   tenTat: string | null;
   diaChiGiao: string | null;   // địa chỉ GIAO, khác địa chỉ trên hóa đơn
+  // 018 — nạp từ hệ USA_Meva cũ
+  maNhan: string | null;       // nhãn hàng đại lý này bán (-> DM_NHAN)
+  tenNhan: string | null;      // đọc ra để hiện, không ghi xuống
+  maTinh: string | null;
+}
+
+// Danh mục NHÃN HÀNG (DM_NHAN). Trên form đánh đơn, nhãn vừa để hiện vừa là BỘ LỌC
+// khách: 1600+ khách, gõ tên không nhớ thì chọn nhãn cho danh sách ngắn lại.
+export interface DmNhan {
+  maNhan: string | null;
+  tenNhan: string;
+  tenCty: string | null;       // pháp nhân in trên phiếu
+  mst: string | null;
+  tenTat: string | null;
+}
+
+// Danh mục MÀU PHA (DM_MAU) — bảng màu của thợ pha sơn, ~1131 dòng.
+export interface DmMau {
+  maMau: string;               // vd "2532-P"
+  nhomMau: string;             // vd "Yellow" / "Pastel"
+  maHex: string | null;        // vd "#f8ebbf" — tô ô chọn màu
+  thuTu: number | null;        // giữ đúng thứ tự bảng màu giấy
+  ghiChu: string | null;
 }
 
 export interface DonNbLine {
   sttLine: number;
   maHang: string | null;
-  tenHang: string | null;
+  tenHang: string | null;      // nguyên văn lúc lập đơn — phiếu giao hàng in cái này
+  // Tên CHUẨN lên hóa đơn điện tử, backend đọc SỐNG từ DM_HANG_NB.ten_hd lúc tra đơn.
+  // Trống = mặt hàng chỉ có một tên, dùng luôn tenHang.
+  // KHÔNG bắt buộc: chỉ có khi ĐỌC đơn về; lúc dựng payload để LƯU thì không gửi (và
+  // backend cũng bỏ qua) — tên hóa đơn sống ở danh mục, không lưu xuống dòng đơn.
+  tenHd?: string | null;
   dvt: string | null;
   soLuong: number;
   donGia: number;
@@ -485,6 +554,13 @@ export interface DonNbLine {
   laHangTang: boolean;
   quyCach: string | null;
   ngayNhL: string | null;      // BR-NB-07: mốc rời kho của riêng dòng này
+  // --- 019: pha màu (ngành sơn) ---
+  // Mã màu khách yêu cầu pha (-> DM_MAU.ma_mau). Trống = bán nguyên trạng.
+  maMau: string | null;
+  // Tiền công pha màu CỦA CẢ DÒNG — cộng thẳng vào thành tiền, KHÔNG nhân số lượng:
+  //     thành tiền = soLuong × donGia + tienTinhMau
+  tienTinhMau: number;
+  maHex: string | null;        // đọc kèm từ DM_MAU để tô ô màu. Chỉ ĐỌC RA.
 }
 
 // Đơn hàng NB = HOA_DON (khuôn dùng chung với sổ thuế, SPEC mục 4).
@@ -498,7 +574,9 @@ export interface DonNb {
   maKh: string | null;
   tenKh: string | null;
   mst: string | null;
-  diaChi: string | null;
+  diaChi: string | null;       // địa chỉ CỬA HÀNG của khách
+  // Địa chỉ GIAO khi khách muốn chở tới chỗ khác. Trống = giao đúng địa chỉ cửa hàng.
+  diaChiGiao: string | null;
   maNvkd: string | null;       // -> DM_KH_NB (loaiDt='NV')
   maNvvc: string | null;
   maGoi: string | null;        // BR-NB-08: thuộc gói nào
@@ -512,6 +590,9 @@ export interface DonNb {
   huong: HuongDon | null;
   tenNvkd: string | null;      // đọc ra để hiện, không ghi xuống
   tenNvvc: string | null;
+  // Nhãn hàng của KHÁCH, backend JOIN sẵn từ DM_KH_NB -> DM_NHAN. Chỉ ĐỌC RA, để in
+  // lên phiếu — mỗi đơn một khách nên phải lấy theo đơn, không truyền chung từ ngoài.
+  tenNhan: string | null;
   lines: DonNbLine[];
 }
 
@@ -567,15 +648,39 @@ export interface GoiHd {
 // của khuôn HOA_DON)
 export type HuongDon = "VAO" | "RA";
 
-export const nbTimHang = (tu?: string, gioiHan = 50) =>
-  api.get<DmHangNb[]>("/nb/hang", { params: { tu, gioiHan } });
+// boQua: số dòng bỏ qua từ đầu — combobox cuộn tới đáy thì gọi tiếp (cuộn vô tận).
+export const nbTimHang = (tu?: string, gioiHan = 50, boQua = 0) =>
+  api.get<DmHangNb[]>("/nb/hang", { params: { tu, gioiHan, boQua } });
 
 export const nbLuuHang = (d: Partial<DmHangNb>) => api.post<DmHangNb>("/nb/hang", d);
 
-export const nbTimKh = (tu?: string, loaiDt?: LoaiDoiTuong, gioiHan = 50) =>
-  api.get<DmKhNb[]>("/nb/kh", { params: { tu, loaiDt, gioiHan } });
+// maNhan: lọc khách theo nhãn hàng họ bán. Bỏ trống = không lọc.
+// boQua: xem nbTimHang — cùng cơ chế cuộn vô tận.
+export const nbTimKh = (tu?: string, loaiDt?: LoaiDoiTuong, gioiHan = 50,
+                        maNhan?: string | null, boQua = 0) =>
+  api.get<DmKhNb[]>("/nb/kh",
+    { params: { tu, loaiDt, gioiHan, maNhan: maNhan || undefined, boQua } });
+
+// 43 nhãn, trả hết một lượt nên lọc tại chỗ, không cần gọi lại mỗi lần gõ.
+export const nbTimNhan = (tu?: string) =>
+  api.get<DmNhan[]>("/nb/nhan", { params: { tu } });
 
 export const nbLuuKh = (d: Partial<DmKhNb>) => api.post<DmKhNb>("/nb/kh", d);
+
+// Bảng màu ~1131 dòng nên KHÔNG trả hết như nhãn hàng: lọc + chặn số dòng, cuộn tiếp
+// bằng boQua. Tìm theo mã màu, nhóm màu và ghi chú.
+export const nbTimMau = (tu?: string, gioiHan = 50, boQua = 0) =>
+  api.get<DmMau[]>("/nb/mau", { params: { tu, gioiHan, boQua } });
+
+// Khuyến mãi. chiConHieuLuc = true -> chỉ KM đang chạy theo mốc hôm nay (form đánh
+// đơn dùng); màn danh mục để mặc định false để còn thấy KM đã hết hạn mà sửa.
+export const nbTimKm = (tu?: string, gioiHan = 200, boQua = 0, chiConHieuLuc = false) =>
+  api.get<DmKmNb[]>("/nb/km", { params: { tu, gioiHan, boQua, chiConHieuLuc } });
+
+export const nbLuuKm = (d: Partial<DmKmNb>) => api.post<DmKmNb>("/nb/km", d);
+
+export const nbXoaKm = (maKm: string) =>
+  api.delete<{ message: string }>(`/nb/km/${encodeURIComponent(maKm)}`);
 
 // BR-NB-03: tra tên hàng bên sổ thuế. Đơn vị thuế lấy từ LinkedTenantCode của
 // chính tenant đang đăng nhập — frontend không gửi mã đơn vị nào cả.
@@ -595,6 +700,15 @@ export const nbDanhSachDonTatCa = (thang?: number, tu?: string, gioiHan = 200) =
 
 export const nbLayDon = (maHd: string) =>
   api.get<DonNb>(`/nb/don/chi-tiet/${encodeURIComponent(maHd)}`);
+
+// Đơn GẦN NHẤT của một khách, kèm đủ dòng hàng — cho "dùng lại đơn trước".
+// Lọc theo maKh phải làm ở backend: tham số `tu` của nbDanhSachDon chỉ tìm trong
+// ma_hd và ten_kh, truyền mã khách vào đó sẽ ra rỗng hoặc trúng nhầm khách khác.
+// Khách chưa từng mua -> backend trả 204, axios cho data = "" -> quy về null.
+export const nbDonGanNhat = async (huong: HuongDon, maKh: string) => {
+  const r = await api.get<DonNb | "">(`/nb/don/gan-nhat/${huong}`, { params: { maKh } });
+  return r.status === 204 || !r.data ? null : (r.data as DonNb);
+};
 
 export const nbLuuDon = (huong: HuongDon, d: Partial<DonNb>) =>
   api.post<DonNb>(`/nb/don/${huong}`, d);

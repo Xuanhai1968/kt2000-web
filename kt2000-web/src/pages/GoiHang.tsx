@@ -347,7 +347,7 @@ function ModalChiTiet({ goi, dangChay, onDong, onGhep, onIn, onChot, onXuat, onR
         pagination={false}
         locale={{ emptyText: <Empty description="Chưa ghép đơn nào" /> }}
         columns={[
-          { title: "Số đơn", dataIndex: "maHd", width: 80 },
+          { title: "Mã đơn", dataIndex: "maHd", width: 80 },
           { title: "Khách hàng", dataIndex: "tenKh", ellipsis: true },
           { title: "Địa chỉ", dataIndex: "diaChi", ellipsis: true },
           {
@@ -456,7 +456,7 @@ function ModalGhepDon({ mo, maGoi, onDong, onXong }: {
         }}
         locale={{ emptyText: <Empty description="Không còn đơn nào chưa vào gói" /> }}
         columns={[
-          { title: "Số đơn", dataIndex: "maHd", width: 80 },
+          { title: "Mã đơn", dataIndex: "maHd", width: 80 },
           {
             title: "Ngày", dataIndex: "ngay", width: 100,
             render: (v: string | null) => ngayVn(v) || "—",

@@ -57,11 +57,17 @@ namespace KT2000.Api.Controllers
         }
 
         // ============================ DANH MỤC HÀNG ============================
+        // boQua: số dòng bỏ qua từ đầu — combobox cuộn tới đáy thì gọi tiếp với
+        // boQua = số dòng đang có (cuộn vô tận).
         [HttpGet("hang")]
-        public async Task<IActionResult> TimHang([FromQuery] string? tu, [FromQuery] int gioiHan = 50)
+        public async Task<IActionResult> TimHang([FromQuery] string? tu,
+                                                 [FromQuery] int gioiHan = 50,
+                                                 [FromQuery] int boQua = 0)
+            // Truyền CurrentUser() để xếp mặt hàng người này hay dùng lên đầu (USER_HANG)
             => ChanNeuKhongPhaiNoiBo()
                ?? Ok(await _nb.SearchHang(TenantCode(), FiscalYear(), Rong(tu),
-                                          Math.Clamp(gioiHan, 1, 500)));
+                                          Math.Clamp(gioiHan, 1, 500), Math.Max(0, boQua),
+                                          CurrentUser()));
 
         [HttpPost("hang")]
         public async Task<IActionResult> LuuHang([FromBody] DmHangNbDto d)
@@ -78,12 +84,79 @@ namespace KT2000.Api.Controllers
         //   loaiDt=KH  -> combobox khách trên đơn
         //   loaiDt=NV  -> combobox NVKD/NVVC
         //   bỏ trống   -> màn hình danh mục, xem tất
+        // maNhan: lọc khách theo nhãn hàng họ bán (ô "Nhãn hàng" trên form đánh đơn).
+        // Bỏ trống = không lọc.
         [HttpGet("kh")]
         public async Task<IActionResult> TimKh([FromQuery] string? tu, [FromQuery] string? loaiDt,
-                                               [FromQuery] int gioiHan = 50)
+                                               [FromQuery] int gioiHan = 50,
+                                               [FromQuery] string? maNhan = null,
+                                               [FromQuery] int boQua = 0)
             => ChanNeuKhongPhaiNoiBo()
                ?? Ok(await _nb.SearchKh(TenantCode(), FiscalYear(), Rong(tu), Rong(loaiDt),
-                                        Math.Clamp(gioiHan, 1, 500)));
+                                        Math.Clamp(gioiHan, 1, 500), Rong(maNhan),
+                                        Math.Max(0, boQua)));
+
+        // ============================ DANH MỤC NHÃN HÀNG ============================
+        [HttpGet("nhan")]
+        public async Task<IActionResult> TimNhan([FromQuery] string? tu)
+            => ChanNeuKhongPhaiNoiBo()
+               ?? Ok(await _nb.SearchNhan(TenantCode(), FiscalYear(), Rong(tu)));
+
+        // ============================ DANH MỤC MÀU PHA ============================
+        // Nuôi ô "Mã màu" trên lưới đánh đơn (ngành sơn). ~1131 dòng nên phải chặn số
+        // dòng trả về và cho cuộn tiếp bằng boQua — cùng cơ chế với "hang"/"kh".
+        [HttpGet("mau")]
+        public async Task<IActionResult> TimMau([FromQuery] string? tu,
+                                                [FromQuery] int gioiHan = 50,
+                                                [FromQuery] int boQua = 0)
+            => ChanNeuKhongPhaiNoiBo()
+               ?? Ok(await _nb.SearchMau(TenantCode(), FiscalYear(), Rong(tu),
+                                         Math.Clamp(gioiHan, 1, 500), Math.Max(0, boQua)));
+
+        // ============================ KHUYẾN MÃI ============================
+        // chiConHieuLuc: form đánh đơn truyền true (chỉ KM đang chạy hôm nay), màn danh
+        // mục để mặc định false để còn thấy và sửa được KM đã hết hạn.
+        [HttpGet("km")]
+        public async Task<IActionResult> TimKm([FromQuery] string? tu,
+                                               [FromQuery] int gioiHan = 200,
+                                               [FromQuery] int boQua = 0,
+                                               [FromQuery] bool chiConHieuLuc = false)
+            => ChanNeuKhongPhaiNoiBo()
+               ?? Ok(await _nb.SearchKm(TenantCode(), FiscalYear(), Rong(tu),
+                                        Math.Clamp(gioiHan, 1, 500), Math.Max(0, boQua),
+                                        chiConHieuLuc));
+
+        [HttpPost("km")]
+        public async Task<IActionResult> LuuKm([FromBody] DmKmNbDto d)
+        {
+            var chan = ChanNeuKhongPhaiNoiBo();
+            if (chan != null) return chan;
+            // Chặn ngay ở cửa: thiếu mặt hàng hoặc quy cách thì KM không bao giờ khớp
+            // được dòng nào trên đơn — lưu vào chỉ làm rác danh mục.
+            if (string.IsNullOrWhiteSpace(d.MaHang))
+                return BadRequest(new { message = "Chưa chọn mặt hàng" });
+            if (string.IsNullOrWhiteSpace(d.MaDvt))
+                return BadRequest(new { message = "Chưa chọn quy cách phải mua" });
+            if (d.SlMua <= 0)
+                return BadRequest(new { message = "Số lượng mua phải lớn hơn 0" });
+            if (d.SlTang <= 0)
+                return BadRequest(new { message = "Số lượng tặng phải lớn hơn 0" });
+            // Khoảng ngày ngược thì KM không bao giờ có hiệu lực, mà màn hình lại hiện
+            // như bình thường -> người dùng ngồi đợi một KM chết.
+            if (d.TuNgay != null && d.DenNgay != null && d.DenNgay < d.TuNgay)
+                return BadRequest(new { message = "Ngày kết thúc phải sau ngày bắt đầu" });
+            return Ok(await _nb.LuuKm(TenantCode(), FiscalYear(), d, CurrentUser()));
+        }
+
+        [HttpDelete("km/{maKm}")]
+        public async Task<IActionResult> XoaKm(string maKm)
+        {
+            var chan = ChanNeuKhongPhaiNoiBo();
+            if (chan != null) return chan;
+            var xong = await _nb.XoaKm(TenantCode(), FiscalYear(), maKm);
+            return xong ? Ok(new { message = "Đã xóa" })
+                        : NotFound(new { message = "Không tìm thấy khuyến mãi" });
+        }
 
         [HttpPost("kh")]
         public async Task<IActionResult> LuuKh([FromBody] DmKhNbDto d)
@@ -132,6 +205,18 @@ namespace KT2000.Api.Controllers
             => ChanNeuKhongPhaiNoiBo()
                ?? Ok(await _nb.DanhSachDon(TenantCode(), FiscalYear(), ChuanHoaHuong(huong),
                                            thang, Rong(tu), Math.Clamp(gioiHan, 1, 500)));
+
+        [HttpGet("don/gan-nhat/{huong}")]
+        public async Task<IActionResult> DonGanNhat(string huong, [FromQuery] string maKh)
+        {
+            var chan = ChanNeuKhongPhaiNoiBo();
+            if (chan != null) return chan;
+            if (string.IsNullOrWhiteSpace(maKh))
+                return BadRequest(new { message = "Thiếu mã khách" });
+            var don = await _nb.DonGanNhatCuaKhach(TenantCode(), FiscalYear(),
+                                                   ChuanHoaHuong(huong), maKh.Trim());
+            return don == null ? NoContent() : Ok(don);
+        }
 
         [HttpGet("don/chi-tiet/{maHd}")]
         public async Task<IActionResult> ChiTiet(string maHd)

@@ -37,21 +37,54 @@ namespace KT2000.Api.Services
         }
 
         // ============================ DANH MỤC HÀNG ============================
-        public async Task<List<DmHangNbDto>> SearchHang(string code, int year, string? tu, int gioiHan)
+
+        // user: để xếp mặt hàng NGƯỜI NÀY hay dùng lên đầu (USER_HANG, script 018).
+        // Bỏ trống -> xếp theo tên như cũ. Tham số có mặc định để mọi chỗ gọi sẵn có
+        // không phải sửa.
+        public async Task<List<DmHangNbDto>> SearchHang(string code, int year, string? tu,
+                                                        int gioiHan, int boQua = 0,
+                                                        string? user = null)
         {
             using var conn = await OpenAsync(code, year);
-            var sql = @"SELECT TOP (@top) ma_hang, ten_hang, dvt, quy_cach, gia_ban, gia_mua,
-                               pt_vat, ma_ngan, ma_hang_thue, ghi_chu,
-                               ten_tat, ma_vach, nhom_hang, dvt_lon, he_so_lon, gia_ban_lon
-                        FROM DM_HANG_NB
-                        WHERE ngung_dung = 0
-                          AND (@tu IS NULL OR ten_hang LIKE @like OR ma_hang LIKE @like
-                               OR ten_tat LIKE @like OR ma_vach LIKE @like)
-                        ORDER BY ten_hang";
+
+            // Bảng USER_HANG chỉ có từ script 018. Đơn vị dựng trước đó vẫn tìm hàng
+            // bình thường, chỉ là không có xếp hạng theo thói quen.
+            var coBangXep = false;
+            if (!string.IsNullOrWhiteSpace(user))
+            {
+                using var kiemTra = new SqlCommand(
+                    "SELECT CASE WHEN OBJECT_ID('USER_HANG') IS NULL THEN 0 ELSE 1 END", conn);
+                coBangXep = (int)(await kiemTra.ExecuteScalarAsync() ?? 0) == 1;
+            }
+
+            // XẾP THEO THÓI QUEN rồi mới tới tên: người bán quen tay chỉ đánh đi đánh lại
+            // chục mặt hàng trong số 50, gõ một hai chữ là thứ hay dùng phải nhảy lên đầu.
+            // LEFT JOIN nên mặt hàng chưa dùng lần nào vẫn ra, chỉ xếp sau (so_lan = 0).
+            var xepTheo = coBangXep
+                ? @"ORDER BY ISNULL(u.so_lan, 0) DESC, u.lan_cuoi DESC, h.ten_hang, h.ma_hang"
+                : @"ORDER BY h.ten_hang, h.ma_hang";
+            var noiBang = coBangXep
+                ? "LEFT JOIN USER_HANG u ON u.ma_hang = h.ma_hang AND u.login_name = @user"
+                : "";
+
+            var sql = $@"SELECT h.ma_hang, h.ten_hang, h.dvt, h.quy_cach, h.gia_ban, h.gia_mua,
+                               h.pt_vat, h.ma_ngan, h.ma_hang_thue, h.ghi_chu,
+                               h.ten_tat, h.ma_vach, h.nhom_hang, h.dvt_lon, h.he_so_lon,
+                               h.gia_ban_lon, h.ten_hd
+                        FROM DM_HANG_NB h
+                        {noiBang}
+                        WHERE h.ngung_dung = 0
+                          AND (@tu IS NULL OR h.ten_hang LIKE @like OR h.ma_hang LIKE @like
+                               OR h.ten_tat LIKE @like OR h.ma_vach LIKE @like
+                               OR h.ten_hd LIKE @like)
+                        {xepTheo}
+                        OFFSET (@boqua) ROWS FETCH NEXT (@top) ROWS ONLY";
             using var cmd = new SqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("@top", gioiHan);
+            cmd.Parameters.AddWithValue("@boqua", boQua);
             cmd.Parameters.AddWithValue("@tu", (object?)tu ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@like", $"%{tu}%");
+            if (coBangXep) cmd.Parameters.AddWithValue("@user", user!);
             var ds = new List<DmHangNbDto>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -73,8 +106,65 @@ namespace KT2000.Api.Services
                     DvtLon = r.IsDBNull(13) ? null : r.GetString(13),
                     HeSoLon = r.IsDBNull(14) ? null : r.GetDecimal(14),
                     GiaBanLon = r.IsDBNull(15) ? null : r.GetDecimal(15),
+                    TenHd = r.IsDBNull(16) ? null : r.GetString(16),
                 });
+            r.Close();
+
+            // Nạp quy cách cho CẢ TRANG bằng MỘT câu, không lặp mỗi mặt hàng một lần:
+            // combobox trả 50 dòng thì lối kia thành 51 vòng gọi DB cho mỗi lần gõ phím.
+            await NapQuyCach(conn, ds);
             return ds;
+        }
+
+        // Gắn danh sách quy cách vào các mặt hàng đã đọc. Tách hàm vì cả SearchHang lẫn
+        // endpoint tra riêng một mặt hàng đều dùng.
+        //
+        // Bảng DM_QUY_CACH_NB chỉ có từ script 018 — đơn vị NB dựng trước đó chưa có.
+        // Không kiểm tra thì cả màn đánh đơn ngã vì thiếu một bảng danh mục phụ; thiếu
+        // thì đơn giản là không mặt hàng nào có quy cách, form lùi về ô ĐVT gõ tay.
+        private static async Task NapQuyCach(SqlConnection conn, List<DmHangNbDto> ds)
+        {
+            if (ds.Count == 0) return;
+
+            using (var kiemTra = new SqlCommand(
+                "SELECT CASE WHEN OBJECT_ID('DM_QUY_CACH_NB') IS NULL THEN 0 ELSE 1 END", conn))
+            {
+                if ((int)(await kiemTra.ExecuteScalarAsync() ?? 0) == 0) return;
+            }
+
+            // Truyền danh sách mã hàng bằng THAM SỐ từng cái (@h0, @h1...), không nối
+            // chuỗi giá trị vào SQL (luật #3 CLAUDE.md).
+            var thamSo = string.Join(",", ds.Select((_, i) => $"@h{i}"));
+            var sql = $@"SELECT q.ma_hang, q.ma_dvt, d.ten_dvt, d.ten_tat, d.he_so_qd, d.dvt_goc,
+                                q.la_dvt_goc, q.gia_ban, q.gia_mua, q.ma_vach
+                         FROM DM_QUY_CACH_NB q
+                         LEFT JOIN DM_DVT_NB d ON d.ma_dvt = q.ma_dvt
+                         WHERE q.ma_hang IN ({thamSo})
+                         ORDER BY q.ma_hang, q.la_dvt_goc DESC, d.he_so_qd DESC, q.ma_dvt";
+            using var cmd = new SqlCommand(sql, conn);
+            for (int i = 0; i < ds.Count; i++)
+                cmd.Parameters.AddWithValue($"@h{i}", ds[i].MaHang ?? "");
+
+            var theoMa = ds.Where(x => x.MaHang != null)
+                           .GroupBy(x => x.MaHang!)
+                           .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+            {
+                if (!theoMa.TryGetValue(r.GetString(0), out var h)) continue;
+                h.QuyCach2.Add(new QuyCachNbDto
+                {
+                    MaDvt    = r.GetString(1),
+                    TenDvt   = r.IsDBNull(2) ? null : r.GetString(2),
+                    TenTat   = r.IsDBNull(3) ? null : r.GetString(3),
+                    HeSoQd   = r.IsDBNull(4) ? null : r.GetDecimal(4),
+                    DvtGoc   = r.IsDBNull(5) ? null : r.GetString(5),
+                    LaDvtGoc = !r.IsDBNull(6) && r.GetBoolean(6),
+                    GiaBan   = r.IsDBNull(7) ? null : r.GetDecimal(7),
+                    GiaMua   = r.IsDBNull(8) ? null : r.GetDecimal(8),
+                    MaVach   = r.IsDBNull(9) ? null : r.GetString(9),
+                });
+            }
         }
 
         // Thêm nhanh mặt hàng ngay trên form (phím F2). Mã tự sinh nếu để trống.
@@ -93,14 +183,15 @@ namespace KT2000.Api.Services
                             gia_mua = @gm, pt_vat = @vat, ma_ngan = @ngan,
                             ma_hang_thue = @thue, ghi_chu = @gc, ten_tat = @tentat,
                             ma_vach = @mavach, nhom_hang = @nhom, dvt_lon = @dvtlon,
-                            he_so_lon = @hesolon, gia_ban_lon = @gbanlon,
+                            he_so_lon = @hesolon, gia_ban_lon = @gbanlon, ten_hd = @tenhd,
                             updated_by = @user, updated_at = SYSDATETIME()
                         WHEN NOT MATCHED THEN INSERT
                             (ma_hang, ten_hang, dvt, quy_cach, gia_ban, gia_mua, pt_vat,
                              ma_ngan, ma_hang_thue, ghi_chu, ten_tat, ma_vach, nhom_hang,
-                             dvt_lon, he_so_lon, gia_ban_lon, created_by)
+                             dvt_lon, he_so_lon, gia_ban_lon, ten_hd, created_by)
                             VALUES (@ma, @ten, @dvt, @qc, @gb, @gm, @vat, @ngan, @thue, @gc,
-                                    @tentat, @mavach, @nhom, @dvtlon, @hesolon, @gbanlon, @user);";
+                                    @tentat, @mavach, @nhom, @dvtlon, @hesolon, @gbanlon,
+                                    @tenhd, @user);";
             using var cmd = new SqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("@ma", ma);
             cmd.Parameters.AddWithValue("@ten", d.TenHang ?? "");
@@ -118,6 +209,10 @@ namespace KT2000.Api.Services
             cmd.Parameters.AddWithValue("@dvtlon", (object?)d.DvtLon ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@hesolon", (object?)d.HeSoLon ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@gbanlon", (object?)d.GiaBanLon ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@tenhd",
+                string.IsNullOrWhiteSpace(d.TenHd)
+                || d.TenHd.Trim() == (d.TenHang ?? "").Trim()
+                    ? DBNull.Value : d.TenHd.Trim());
             cmd.Parameters.AddWithValue("@user", user);
             await cmd.ExecuteNonQueryAsync();
             d.MaHang = ma;
@@ -129,25 +224,37 @@ namespace KT2000.Api.Services
         //   "KH" — combobox khách trên đơn hàng
         //   "NV" — combobox NVKD/NVVC
         //   null — không lọc (màn hình danh mục)
+        // maNhan != null -> chỉ lấy khách của nhãn đó. Danh mục 1600+ khách, gõ tên
+        // không nhớ thì lọc theo nhãn cho danh sách ngắn lại (ô Nhãn hàng trên form).
+        // boQua: xem ghi chú ở SearchHang — cùng cơ chế cuộn vô tận.
         public async Task<List<DmKhNbDto>> SearchKh(string code, int year, string? tu,
-                                                    string? loaiDt, int gioiHan)
+                                                    string? loaiDt, int gioiHan,
+                                                    string? maNhan = null, int boQua = 0)
         {
             using var conn = await OpenAsync(code, year);
-            var sql = @"SELECT TOP (@top) ma_kh, ten_kh, loai_dt, ten_giao_dich, mst, dia_chi,
-                               dien_thoai, nguoi_lien_he, ma_kh_hd, cong_no_dau, ghi_chu,
-                               ten_tat, dia_chi_giao
-                        FROM DM_KH_NB
-                        WHERE ngung_dung = 0
-                          AND (@tu IS NULL OR ten_kh LIKE @like OR ma_kh LIKE @like
-                               OR mst LIKE @like OR ten_giao_dich LIKE @like
-                               OR ten_tat LIKE @like)
-                          AND (@loai IS NULL OR loai_dt = @loai)
-                        ORDER BY ten_kh";
+            // LEFT JOIN chứ không INNER: khách chưa gắn nhãn (29 dòng) vẫn phải tìm được,
+            // INNER JOIN là họ biến mất khỏi combobox mà không ai hiểu vì sao.
+            var sql = @"SELECT k.ma_kh, k.ten_kh, k.loai_dt, k.ten_giao_dich,
+                               k.mst, k.dia_chi, k.dien_thoai, k.nguoi_lien_he, k.ma_kh_hd,
+                               k.cong_no_dau, k.ghi_chu, k.ten_tat, k.dia_chi_giao,
+                               k.ma_nhan, n.ten_nhan, k.ma_tinh
+                        FROM DM_KH_NB k
+                        LEFT JOIN DM_NHAN n ON n.ma_nhan = k.ma_nhan
+                        WHERE k.ngung_dung = 0
+                          AND (@tu IS NULL OR k.ten_kh LIKE @like OR k.ma_kh LIKE @like
+                               OR k.mst LIKE @like OR k.ten_giao_dich LIKE @like
+                               OR k.ten_tat LIKE @like OR k.dien_thoai LIKE @like)
+                          AND (@loai IS NULL OR k.loai_dt = @loai)
+                          AND (@nhan IS NULL OR k.ma_nhan = @nhan)
+                        ORDER BY k.ten_kh, k.ma_kh
+                        OFFSET (@boqua) ROWS FETCH NEXT (@top) ROWS ONLY";
             using var cmd = new SqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("@top", gioiHan);
+            cmd.Parameters.AddWithValue("@boqua", boQua);
             cmd.Parameters.AddWithValue("@tu", (object?)tu ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@like", $"%{tu}%");
             cmd.Parameters.AddWithValue("@loai", (object?)loaiDt ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@nhan", (object?)maNhan ?? DBNull.Value);
             var ds = new List<DmKhNbDto>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -166,8 +273,172 @@ namespace KT2000.Api.Services
                     GhiChu = r.IsDBNull(10) ? null : r.GetString(10),
                     TenTat = r.IsDBNull(11) ? null : r.GetString(11),
                     DiaChiGiao = r.IsDBNull(12) ? null : r.GetString(12),
+                    MaNhan = r.IsDBNull(13) ? null : r.GetString(13),
+                    TenNhan = r.IsDBNull(14) ? null : r.GetString(14),
+                    MaTinh = r.IsDBNull(15) ? null : r.GetString(15),
                 });
             return ds;
+        }
+
+        // Danh mục nhãn hàng — nuôi ô "Nhãn hàng" trên form đánh đơn (dùng để lọc khách).
+        // 43 dòng, trả hết một lượt, không phân trang.
+        public async Task<List<DmNhanDto>> SearchNhan(string code, int year, string? tu)
+        {
+            using var conn = await OpenAsync(code, year);
+            using var cmd = new SqlCommand(
+                @"SELECT ma_nhan, ten_nhan, ten_cty, mst, ten_tat
+                  FROM DM_NHAN
+                  WHERE ngung_dung = 0
+                    AND (@tu IS NULL OR ten_nhan LIKE @like OR ma_nhan LIKE @like
+                         OR ten_cty LIKE @like OR ten_tat LIKE @like)
+                  ORDER BY ten_nhan", conn);
+            cmd.Parameters.AddWithValue("@tu", (object?)tu ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@like", $"%{tu}%");
+            var ds = new List<DmNhanDto>();
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+                ds.Add(new DmNhanDto
+                {
+                    MaNhan = r.GetString(0),
+                    TenNhan = r.IsDBNull(1) ? "" : r.GetString(1),
+                    TenCty = r.IsDBNull(2) ? null : r.GetString(2),
+                    Mst = r.IsDBNull(3) ? null : r.GetString(3),
+                    TenTat = r.IsDBNull(4) ? null : r.GetString(4),
+                });
+            return ds;
+        }
+
+        public async Task<List<DmMauDto>> SearchMau(string code, int year, string? tu,
+                                                    int gioiHan, int boQua = 0)
+        {
+            using var conn = await OpenAsync(code, year);
+            using var cmd = new SqlCommand(
+                @"SELECT m.ma_mau,
+                         STRING_AGG(m.nhom_mau, N' / ')
+                             WITHIN GROUP (ORDER BY m.thu_tu, m.nhom_mau),
+                         MIN(m.ma_hex), MIN(m.thu_tu), MIN(m.ghi_chu)
+                  FROM DM_MAU m
+                  WHERE m.ngung_dung = 0
+                    AND (@tu IS NULL OR EXISTS (
+                          SELECT 1 FROM DM_MAU k
+                          WHERE k.ma_mau = m.ma_mau AND k.ngung_dung = 0
+                            AND (k.ma_mau LIKE @like OR k.nhom_mau LIKE @like
+                                 OR k.ghi_chu LIKE @like)))
+                  GROUP BY m.ma_mau
+                  ORDER BY CASE WHEN MIN(m.thu_tu) IS NULL THEN 1 ELSE 0 END,
+                           MIN(m.thu_tu), m.ma_mau
+                  OFFSET (@boqua) ROWS FETCH NEXT (@top) ROWS ONLY", conn);
+            cmd.Parameters.AddWithValue("@top", gioiHan);
+            cmd.Parameters.AddWithValue("@boqua", boQua);
+            cmd.Parameters.AddWithValue("@tu", (object?)tu ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@like", $"%{tu}%");
+            var ds = new List<DmMauDto>();
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+                ds.Add(new DmMauDto
+                {
+                    MaMau = r.GetString(0),
+                    NhomMau = r.IsDBNull(1) ? "" : r.GetString(1),
+                    MaHex = r.IsDBNull(2) ? null : r.GetString(2),
+                    ThuTu = r.IsDBNull(3) ? null : r.GetInt32(3),
+                    GhiChu = r.IsDBNull(4) ? null : r.GetString(4),
+                });
+            return ds;
+        }
+
+        public async Task<List<DmKmNbDto>> SearchKm(string code, int year, string? tu,
+                                                    int gioiHan, int boQua = 0,
+                                                    bool chiConHieuLuc = false)
+        {
+            using var conn = await OpenAsync(code, year);
+            var sql = @"SELECT k.ma_km, k.ten_km, k.ma_hang, k.ma_dvt, k.ma_dvt_tang,
+                               k.sl_mua, k.sl_tang, k.tu_ngay, k.den_ngay, k.ghi_chu,
+                               h.ten_hang, dm.ten_tat, dt.ten_tat
+                        FROM DM_KM_NB k
+                        LEFT JOIN DM_HANG_NB h  ON h.ma_hang = k.ma_hang
+                        LEFT JOIN DM_DVT_NB  dm ON dm.ma_dvt = k.ma_dvt
+                        LEFT JOIN DM_DVT_NB  dt ON dt.ma_dvt = k.ma_dvt_tang
+                        WHERE (@tu IS NULL OR k.ten_km LIKE @like OR k.ma_km LIKE @like
+                               OR k.ma_hang LIKE @like OR h.ten_hang LIKE @like)
+                          AND (@loc = 0 OR ((k.tu_ngay  IS NULL OR k.tu_ngay  <= CAST(SYSDATETIME() AS DATE))
+                                        AND (k.den_ngay IS NULL OR k.den_ngay >= CAST(SYSDATETIME() AS DATE))))
+                        ORDER BY k.ma_hang, k.sl_mua DESC, k.ma_km
+                        OFFSET (@boqua) ROWS FETCH NEXT (@top) ROWS ONLY";
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@top", gioiHan);
+            cmd.Parameters.AddWithValue("@boqua", boQua);
+            cmd.Parameters.AddWithValue("@tu", (object?)tu ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@like", $"%{tu}%");
+            cmd.Parameters.AddWithValue("@loc", chiConHieuLuc ? 1 : 0);
+
+            var ds = new List<DmKmNbDto>();
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+                ds.Add(new DmKmNbDto
+                {
+                    MaKm       = r.GetString(0),
+                    TenKm      = r.IsDBNull(1) ? "" : r.GetString(1),
+                    MaHang     = r.IsDBNull(2) ? "" : r.GetString(2),
+                    MaDvt      = r.IsDBNull(3) ? "" : r.GetString(3),
+                    MaDvtTang  = r.IsDBNull(4) ? "" : r.GetString(4),
+                    SlMua      = r.IsDBNull(5) ? 0 : r.GetDecimal(5),
+                    SlTang     = r.IsDBNull(6) ? 0 : r.GetDecimal(6),
+                    TuNgay     = r.IsDBNull(7) ? null : r.GetDateTime(7),
+                    DenNgay    = r.IsDBNull(8) ? null : r.GetDateTime(8),
+                    GhiChu     = r.IsDBNull(9) ? null : r.GetString(9),
+                    TenHang    = r.IsDBNull(10) ? null : r.GetString(10),
+                    TenDvt     = r.IsDBNull(11) ? null : r.GetString(11),
+                    TenDvtTang = r.IsDBNull(12) ? null : r.GetString(12),
+                });
+            return ds;
+        }
+
+        public async Task<DmKmNbDto> LuuKm(string code, int year, DmKmNbDto d, string user)
+        {
+            using var conn = await OpenAsync(code, year);
+            var ma = string.IsNullOrWhiteSpace(d.MaKm)
+                ? await SinhMaKm(conn)
+                : d.MaKm.Trim();
+
+            var dvtTang = string.IsNullOrWhiteSpace(d.MaDvtTang) ? d.MaDvt : d.MaDvtTang;
+
+            var sql = @"MERGE DM_KM_NB AS t
+                        USING (SELECT @ma AS ma_km) AS s ON t.ma_km = s.ma_km
+                        WHEN MATCHED THEN UPDATE SET
+                            ten_km = @ten, ma_hang = @mahang, ma_dvt = @dvt,
+                            ma_dvt_tang = @dvttang, sl_mua = @slmua, sl_tang = @sltang,
+                            tu_ngay = @tu, den_ngay = @den, ghi_chu = @gc,
+                            updated_by = @user, updated_at = SYSDATETIME()
+                        WHEN NOT MATCHED THEN INSERT
+                            (ma_km, ten_km, ma_hang, ma_dvt, ma_dvt_tang,
+                             sl_mua, sl_tang, tu_ngay, den_ngay, ghi_chu, created_by)
+                            VALUES (@ma, @ten, @mahang, @dvt, @dvttang,
+                                    @slmua, @sltang, @tu, @den, @gc, @user);";
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@ma", ma);
+            cmd.Parameters.AddWithValue("@ten", d.TenKm ?? "");
+            cmd.Parameters.AddWithValue("@mahang", d.MaHang ?? "");
+            cmd.Parameters.AddWithValue("@dvt", d.MaDvt ?? "");
+            cmd.Parameters.AddWithValue("@dvttang", dvtTang ?? "");
+            cmd.Parameters.AddWithValue("@slmua", d.SlMua);
+            cmd.Parameters.AddWithValue("@sltang", d.SlTang);
+            cmd.Parameters.AddWithValue("@tu", (object?)d.TuNgay ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@den", (object?)d.DenNgay ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@gc", (object?)d.GhiChu ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@user", user);
+            await cmd.ExecuteNonQueryAsync();
+
+            d.MaKm = ma;
+            d.MaDvtTang = dvtTang ?? "";
+            return d;
+        }
+
+        public async Task<bool> XoaKm(string code, int year, string maKm)
+        {
+            using var conn = await OpenAsync(code, year);
+            using var cmd = new SqlCommand("DELETE FROM DM_KM_NB WHERE ma_km = @ma", conn);
+            cmd.Parameters.AddWithValue("@ma", maKm);
+            return await cmd.ExecuteNonQueryAsync() > 0;
         }
 
         public async Task<DmKhNbDto> LuuKh(string code, int year, DmKhNbDto d, string user)
@@ -244,7 +515,8 @@ namespace KT2000.Api.Services
 
         private const string SqlTienHang =
             @"ISNULL((SELECT SUM(CASE WHEN l.la_hang_tang = 1 THEN 0
-                                      ELSE l.so_luong * l.don_gia END)
+                                      ELSE l.so_luong * l.don_gia
+                                           + ISNULL(l.tien_tinh_mau, 0) END)
                       FROM HOA_DON_LINE l WHERE l.ma_hd = d.ma_hd), 0)";
 
         public async Task<List<DonNbDto>> DanhSachDon(string code, int year, string? huong,
@@ -258,10 +530,12 @@ namespace KT2000.Api.Services
                                d.mst, d.dia_chi, d.ma_nvkd, d.ma_nvvc, d.ma_goi, d.ghi_chu,
                                d.tien_vat, d.tthai_hd,
                                kd.ten_kh AS ten_nvkd, vc.ten_kh AS ten_nvvc,
-                               {SqlTienHang} AS tien_hang, d.huong
+                               {SqlTienHang} AS tien_hang, d.huong, d.dia_chi_giao, nh.ten_nhan
                         FROM HOA_DON d
                         LEFT JOIN DM_KH_NB kd ON kd.ma_kh = d.ma_nvkd
                         LEFT JOIN DM_KH_NB vc ON vc.ma_kh = d.ma_nvvc
+                  LEFT JOIN DM_KH_NB kh ON kh.ma_kh = d.ma_kh
+                  LEFT JOIN DM_NHAN  nh ON nh.ma_nhan = kh.ma_nhan
                         WHERE {loc}
                           AND (@thang IS NULL OR d.thang = @thang)
                           AND (@tu IS NULL OR d.ma_hd LIKE @like OR d.ten_kh LIKE @like)
@@ -282,6 +556,31 @@ namespace KT2000.Api.Services
             return ds;
         }
 
+        public async Task<DonNbDto?> DonGanNhatCuaKhach(string code, int year,
+                                                        string huong, string maKh)
+        {
+            if (string.IsNullOrWhiteSpace(maKh)) return null;
+
+            string? maHd;
+            using (var conn = await OpenAsync(code, year))
+            using (var cmd = new SqlCommand(
+                @"SELECT TOP (1) d.ma_hd
+                  FROM HOA_DON d
+                  WHERE d.ma_kh = @makh
+                    AND d.huong = @huong
+                    AND d.ma_hd LIKE @prefix + N'[0-9]%'
+                  ORDER BY d.ngay DESC, d.ma_hd DESC", conn))
+            {
+                cmd.Parameters.AddWithValue("@makh", maKh);
+                cmd.Parameters.AddWithValue("@huong", huong);
+                cmd.Parameters.AddWithValue("@prefix", huong == "VAO" ? "V" : "R");
+                var o = await cmd.ExecuteScalarAsync();
+                maHd = o as string;
+            }
+
+            return maHd == null ? null : await LayDon(code, year, maHd);
+        }
+
         public async Task<DonNbDto?> LayDon(string code, int year, string maHd)
         {
             using var conn = await OpenAsync(code, year);
@@ -290,10 +589,12 @@ namespace KT2000.Api.Services
                 $@"SELECT d.ma_hd, d.ngay, d.ngay_nh, d.ma_kh, d.ten_kh, d.mst, d.dia_chi,
                          d.ma_nvkd, d.ma_nvvc, d.ma_goi, d.ghi_chu, d.tien_vat, d.tthai_hd,
                          kd.ten_kh AS ten_nvkd, vc.ten_kh AS ten_nvvc,
-                         {SqlTienHang} AS tien_hang, d.huong
+                         {SqlTienHang} AS tien_hang, d.huong, d.dia_chi_giao, nh.ten_nhan
                   FROM HOA_DON d
                   LEFT JOIN DM_KH_NB kd ON kd.ma_kh = d.ma_nvkd
                   LEFT JOIN DM_KH_NB vc ON vc.ma_kh = d.ma_nvvc
+                  LEFT JOIN DM_KH_NB kh ON kh.ma_kh = d.ma_kh
+                  LEFT JOIN DM_NHAN  nh ON nh.ma_nhan = kh.ma_nhan
                   WHERE d.ma_hd = @ma", conn))
             {
                 cmd.Parameters.AddWithValue("@ma", maHd);
@@ -303,10 +604,15 @@ namespace KT2000.Api.Services
             if (don == null) return null;
 
             using (var cmd = new SqlCommand(
-                @"SELECT stt_line, ma_hang, ten_hang_goc, dvt, so_luong, don_gia,
-                         pt_vat, tien_vat_l, ghi_chu, he_so_qd, sl_quy_doi,
-                         la_hang_tang, quy_cach, ngay_nh_l
-                  FROM HOA_DON_LINE WHERE ma_hd = @ma ORDER BY stt_line, auto_num", conn))
+                @"SELECT l.stt_line, l.ma_hang, l.ten_hang_goc, l.dvt, l.so_luong, l.don_gia,
+                         l.pt_vat, l.tien_vat_l, l.ghi_chu, l.he_so_qd, l.sl_quy_doi,
+                         l.la_hang_tang, l.quy_cach, l.ngay_nh_l,
+                         l.ma_mau, l.tien_tinh_mau, m.ma_hex, h.ten_hd
+                  FROM HOA_DON_LINE l
+                  OUTER APPLY (SELECT TOP 1 ma_hex FROM DM_MAU
+                               WHERE ma_mau = l.ma_mau) m
+                  LEFT JOIN DM_HANG_NB h ON h.ma_hang = l.ma_hang
+                  WHERE l.ma_hd = @ma ORDER BY l.stt_line, l.auto_num", conn))
             {
                 cmd.Parameters.AddWithValue("@ma", maHd);
                 using var r = await cmd.ExecuteReaderAsync();
@@ -315,6 +621,7 @@ namespace KT2000.Api.Services
                     var sl = r.IsDBNull(4) ? 0 : r.GetDecimal(4);
                     var dg = r.IsDBNull(5) ? 0 : r.GetDecimal(5);
                     var tang = !r.IsDBNull(11) && r.GetBoolean(11);
+                    var tinhMau = r.IsDBNull(15) ? 0 : r.GetDecimal(15);
                     don.Lines.Add(new DonNbLineDto
                     {
                         SttLine = r.IsDBNull(0) ? 0 : r.GetInt32(0),
@@ -323,8 +630,7 @@ namespace KT2000.Api.Services
                         Dvt = r.IsDBNull(3) ? null : r.GetString(3),
                         SoLuong = sl,
                         DonGia = dg,
-
-                        ThanhTien = tang ? 0 : decimal.Round(sl * dg, 2),
+                        ThanhTien = tang ? 0 : decimal.Round(sl * dg + tinhMau, 2),
                         PtVat = r.IsDBNull(6) ? 0 : r.GetDecimal(6),
                         TienVatL = r.IsDBNull(7) ? 0 : r.GetDecimal(7),
                         GhiChu = r.IsDBNull(8) ? null : r.GetString(8),
@@ -333,6 +639,10 @@ namespace KT2000.Api.Services
                         LaHangTang = tang,
                         QuyCach = r.IsDBNull(12) ? null : r.GetString(12),
                         NgayNhL = r.IsDBNull(13) ? null : r.GetDateTime(13),
+                        MaMau = r.IsDBNull(14) ? null : r.GetString(14),
+                        TienTinhMau = tang ? 0 : tinhMau,
+                        MaHex = r.IsDBNull(16) ? null : r.GetString(16),
+                        TenHd = r.IsDBNull(17) ? null : r.GetString(17),
                     });
                 }
             }
@@ -363,6 +673,8 @@ namespace KT2000.Api.Services
                 TienHang = tienHang,
                 TongTien = tienHang + tienVat,
                 Huong = r.IsDBNull(16) ? null : r.GetString(16),
+                DiaChiGiao = r.IsDBNull(17) ? null : r.GetString(17),
+                TenNhan = r.IsDBNull(18) ? null : r.GetString(18),
             };
         }
 
@@ -383,9 +695,12 @@ namespace KT2000.Api.Services
             {
                 var l = lines[i];
                 l.SttLine = i + 1;
-                l.ThanhTien = decimal.Round(l.SoLuong * l.DonGia, 2);
+                l.MaMau = string.IsNullOrWhiteSpace(l.MaMau) ? null : l.MaMau.Trim();
+                if (l.MaMau == null) l.TienTinhMau = 0;
+                if (l.TienTinhMau < 0) l.TienTinhMau = 0;
+                l.ThanhTien = decimal.Round(l.SoLuong * l.DonGia + l.TienTinhMau, 2);
                 l.TienVatL = decimal.Round(l.ThanhTien * l.PtVat / 100m, 2);
-                if (l.LaHangTang) { l.ThanhTien = 0; l.TienVatL = 0; }
+                if (l.LaHangTang) { l.ThanhTien = 0; l.TienVatL = 0; l.TienTinhMau = 0; }
                 var heSo = l.HeSoQd is > 0 ? l.HeSoQd.Value : 1m;
                 l.SlQuyDoi = decimal.Round(l.SoLuong * heSo, 3);
                 tienHang += l.ThanhTien;
@@ -410,13 +725,16 @@ namespace KT2000.Api.Services
                             WHEN MATCHED THEN UPDATE SET
                                 ngay = @ngay, thang = @thang, ngay_nh = @ngaynh,
                                 ma_kh = @makh, ten_kh = @tenkh, dia_chi = @dc,
+                                dia_chi_giao = @dcgiao,
                                 ma_nvkd = @nvkd, ma_nvvc = @nvvc,
                                 ghi_chu = @gc, tien_vat = @tv, tthai_hd = @tt,
                                 updated_by = @user, updated_at = SYSDATETIME()
                             WHEN NOT MATCHED THEN INSERT
                                 (ma_hd, ngay, thang, ngay_nh, ma_kh, ten_kh, dia_chi,
+                                 dia_chi_giao,
                                  ma_nvkd, ma_nvvc, ghi_chu, tien_vat, tthai_hd, created_by)
                                 VALUES (@ma, @ngay, @thang, @ngaynh, @makh, @tenkh, @dc,
+                                        @dcgiao,
                                         @nvkd, @nvvc, @gc, @tv, @tt, @user);";
                 using (var cmd = new SqlCommand(sql, conn, tran))
                 {
@@ -427,6 +745,12 @@ namespace KT2000.Api.Services
                     cmd.Parameters.AddWithValue("@makh", (object?)d.MaKh ?? DBNull.Value);
                     cmd.Parameters.AddWithValue("@tenkh", (object?)d.TenKh ?? DBNull.Value);
                     cmd.Parameters.AddWithValue("@dc", (object?)d.DiaChi ?? DBNull.Value);
+                    // Trùng địa chỉ cửa hàng -> lưu NULL, khỏi giữ bản sao thừa.
+                    // Trống nghĩa là "giao đúng địa chỉ cửa hàng".
+                    cmd.Parameters.AddWithValue("@dcgiao",
+                        string.IsNullOrWhiteSpace(d.DiaChiGiao)
+                        || d.DiaChiGiao.Trim() == (d.DiaChi ?? "").Trim()
+                            ? DBNull.Value : d.DiaChiGiao.Trim());
                     cmd.Parameters.AddWithValue("@nvkd", (object?)d.MaNvkd ?? DBNull.Value);
                     cmd.Parameters.AddWithValue("@nvvc", (object?)d.MaNvvc ?? DBNull.Value);
                     cmd.Parameters.AddWithValue("@gc", (object?)d.GhiChu ?? DBNull.Value);
@@ -449,10 +773,12 @@ namespace KT2000.Api.Services
                         @"INSERT INTO HOA_DON_LINE
                             (ma_hd, stt_line, ma_hang, ten_hang_goc, dvt, so_luong, don_gia,
                              pt_vat, tien_vat_l, ghi_chu,
-                             he_so_qd, sl_quy_doi, la_hang_tang, quy_cach, ngay_nh_l, created_by)
+                             he_so_qd, sl_quy_doi, la_hang_tang, quy_cach, ngay_nh_l,
+                             ma_mau, tien_tinh_mau, created_by)
                           VALUES (@ma, @stt, @mahang, @tenhang, @dvt, @sl, @dg,
                                   @vat, @tienvat, @gc,
-                                  @heso, @slqd, @tang, @quycach, @ngaynhl, @user)", conn, tran);
+                                  @heso, @slqd, @tang, @quycach, @ngaynhl,
+                                  @mamau, @tinhmau, @user)", conn, tran);
                     cmd.Parameters.AddWithValue("@ma", maHd);
                     cmd.Parameters.AddWithValue("@stt", l.SttLine);
                     cmd.Parameters.AddWithValue("@mahang", (object?)l.MaHang ?? DBNull.Value);
@@ -468,11 +794,19 @@ namespace KT2000.Api.Services
                     cmd.Parameters.AddWithValue("@tang", l.LaHangTang);
                     cmd.Parameters.AddWithValue("@quycach", (object?)l.QuyCach ?? DBNull.Value);
                     cmd.Parameters.AddWithValue("@ngaynhl", (object?)l.NgayNhL ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@mamau", (object?)l.MaMau ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@tinhmau", l.TienTinhMau);
                     cmd.Parameters.AddWithValue("@user", user);
                     await cmd.ExecuteNonQueryAsync();
                 }
 
                 tran.Commit();
+
+                // Đếm mặt hàng vừa dùng để lần sau ô gợi ý xếp nó lên đầu (USER_HANG).
+                // Đặt SAU Commit và nuốt mọi lỗi bên trong: đây là thống kê tiện dụng,
+                // hỏng nó không được phép làm hỏng việc lưu đơn — đơn đã ghi xong rồi.
+                await GhiVetHangDaDung(conn, user, lines);
+
                 d.MaHd = maHd;
                 d.Ngay = ngay;
                 d.TienHang = tienHang;
@@ -708,10 +1042,12 @@ namespace KT2000.Api.Services
                 $@"SELECT d.ma_hd, d.ngay, d.ngay_nh, d.ma_kh, d.ten_kh, d.mst, d.dia_chi,
                          d.ma_nvkd, d.ma_nvvc, d.ma_goi, d.ghi_chu, d.tien_vat, d.tthai_hd,
                          kd.ten_kh, vc.ten_kh,
-                         {SqlTienHang}, d.huong
+                         {SqlTienHang}, d.huong, d.dia_chi_giao, nh.ten_nhan
                   FROM HOA_DON d
                   LEFT JOIN DM_KH_NB kd ON kd.ma_kh = d.ma_nvkd
                   LEFT JOIN DM_KH_NB vc ON vc.ma_kh = d.ma_nvvc
+                  LEFT JOIN DM_KH_NB kh ON kh.ma_kh = d.ma_kh
+                  LEFT JOIN DM_NHAN  nh ON nh.ma_nhan = kh.ma_nhan
                   WHERE d.ma_goi = @ma ORDER BY d.ma_hd", conn))
             {
                 cmd.Parameters.AddWithValue("@ma", maGoi);
@@ -824,7 +1160,8 @@ namespace KT2000.Api.Services
                          l.ma_hang, MIN(l.ten_hang_goc), MIN(l.dvt),
                          SUM(l.so_luong), COUNT(DISTINCT l.ma_hd),
                          SUM(CASE WHEN l.la_hang_tang = 1 THEN 0
-                                  ELSE l.so_luong * l.don_gia END),
+                                  ELSE l.so_luong * l.don_gia
+                                       + ISNULL(l.tien_tinh_mau, 0) END),
                          @user
                   FROM HOA_DON_LINE l JOIN HOA_DON d ON d.ma_hd = l.ma_hd
                   WHERE d.ma_goi = @g
@@ -1020,6 +1357,67 @@ namespace KT2000.Api.Services
             var max = await cmd.ExecuteScalarAsync();
             var tiep = (max == null || max == DBNull.Value ? 0 : Convert.ToInt64(max)) + 1;
             return $"G{tiep}";
+        }
+
+        // Ghi vết "user này vừa dùng những mặt hàng nào" (USER_HANG) để ô gợi ý lần sau
+        // xếp hàng quen lên đầu. Bê từ USA_Meva (DeliveriesController.TrackProductUsage).
+        //
+        // NUỐT MỌI LỖI: gọi sau khi đơn đã Commit, nên hỏng ở đây mà ném ra ngoài thì
+        // người dùng thấy báo lỗi trong khi đơn ĐÃ LƯU THÀNH CÔNG — họ sẽ lưu lại lần
+        // nữa và sinh đơn trùng. Mất một lượt đếm không đáng gì so với chuyện đó.
+        //
+        // Bảng chỉ có từ script 018 nên phải kiểm tra tồn tại: đơn vị NB dựng trước đó
+        // vẫn lưu đơn bình thường, chỉ là chưa có xếp hạng.
+        private static async Task GhiVetHangDaDung(SqlConnection conn, string user,
+                                                   List<DonNbLineDto> lines)
+        {
+            try
+            {
+                // Mỗi mặt hàng đếm MỘT lần cho mỗi đơn, dù đơn có ba dòng cùng mặt hàng
+                // (khác màu pha chẳng hạn) — đang đo "hay chọn", không đo số dòng.
+                var cacMa = lines.Where(l => !string.IsNullOrWhiteSpace(l.MaHang))
+                                 .Select(l => l.MaHang!)
+                                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                                 .ToList();
+                if (cacMa.Count == 0) return;
+
+                using (var kiemTra = new SqlCommand(
+                    "SELECT CASE WHEN OBJECT_ID('USER_HANG') IS NULL THEN 0 ELSE 1 END", conn))
+                {
+                    if ((int)(await kiemTra.ExecuteScalarAsync() ?? 0) == 0) return;
+                }
+
+                // MERGE để chạy bao nhiêu lần cũng chỉ CỘNG DỒN, không vỡ khóa chính.
+                // Tham số hóa từng mã (@m0, @m1...) — không nối chuỗi (luật #3).
+                var thamSo = string.Join(",", cacMa.Select((_, i) => $"(@u, @m{i})"));
+                var sql = $@"MERGE USER_HANG AS t
+                             USING (VALUES {thamSo}) AS s (login_name, ma_hang)
+                                ON t.login_name = s.login_name AND t.ma_hang = s.ma_hang
+                             WHEN MATCHED THEN
+                                 UPDATE SET so_lan = t.so_lan + 1, lan_cuoi = SYSDATETIME()
+                             WHEN NOT MATCHED THEN
+                                 INSERT (login_name, ma_hang, so_lan, lan_cuoi)
+                                 VALUES (s.login_name, s.ma_hang, 1, SYSDATETIME());";
+                using var cmd = new SqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("@u", user);
+                for (int i = 0; i < cacMa.Count; i++)
+                    cmd.Parameters.AddWithValue($"@m{i}", cacMa[i]);
+                await cmd.ExecuteNonQueryAsync();
+            }
+            catch { /* thống kê là phụ — không làm hỏng việc lưu đơn */ }
+        }
+
+        // Mã KM theo đúng dạng dữ liệu gốc USA_Meva: "KM" + 4 chữ số (KM0001..KM0027).
+        // KHÔNG dùng lại SinhMa: hàm đó ép LEN = 6 với prefix MỘT ký tự (H + 5 số), còn
+        // "KM" dài hai ký tự — dùng nó sẽ ra KM00001 (7 ký tự), lệch hẳn bộ mã đang có.
+        private static async Task<string> SinhMaKm(SqlConnection conn)
+        {
+            using var cmd = new SqlCommand(
+                @"SELECT MAX(CAST(RIGHT(ma_km, 4) AS INT)) FROM DM_KM_NB
+                  WHERE ma_km LIKE N'KM[0-9][0-9][0-9][0-9]' AND LEN(ma_km) = 6", conn);
+            var max = await cmd.ExecuteScalarAsync();
+            var tiep = (max == null || max == DBNull.Value ? 0 : Convert.ToInt32(max)) + 1;
+            return $"KM{tiep:D4}";
         }
 
         private static async Task<string> SinhMa(SqlConnection conn, string bang,
