@@ -215,7 +215,7 @@ namespace KT2000.Api.Services
                         bool existed = UpsertMaster(conn, tx, r, M, huong, maHd, userName,
                                                     tenant.KhaiQuy, tienHangChuaThue);
                         ReplaceLines(conn, tx, maHd, lines, L, userName,
-                                     N2(r, M, "TIEN_VAT", "TVAT_HD_G"));
+                                     N2(r, M, "TIEN_VAT", "TVAT_HD_G"), tienHangChuaThue);
                         tx.Commit();
                         if (existed) updated++; else inserted++;
                         // Đếm song song theo hướng: chạy "cả vào cả ra" thì số tổng không
@@ -477,15 +477,20 @@ namespace KT2000.Api.Services
                       // ngay_nh dùng ISNULL — luật #5, xem giải thích ở UpsertMaster
                       ? @"UPDATE HOA_DON SET ngay=@ngay, thang=@thang,
                             ngay_nh=ISNULL(ngay_nh,@ngay_nh), vat=@vat,
+                            ghi_no=ISNULL(ghi_no,@ghi_no), ghi_co=ISNULL(ghi_co,@ghi_co),
+                            ghi_no_vat=ISNULL(ghi_no_vat,@ghi_no_vat),
+                            ghi_co_vat=ISNULL(ghi_co_vat,@ghi_co_vat),
                             khhd=@khhd, so_hd=@so_hd,
                             mst=@mst, ten_kh=@ten_kh, dia_chi=@dia_chi, tien_vat=@tien_vat,
                             tien_ck=@tien_ck, edit_vat=@edit_vat, edit_ck=@edit_ck,
                             updated_by=@user, updated_at=SYSDATETIME()
                           WHERE ma_hd=@id"
                       : @"INSERT INTO HOA_DON (ma_hd, ngay, thang, ngay_nh, vat,
+                            ghi_no, ghi_co, ghi_no_vat, ghi_co_vat,
                             khhd, so_hd, mst, ten_kh, dia_chi,
                             tien_vat, tien_ck, edit_vat, edit_ck, created_by)
                           VALUES (@id, @ngay, @thang, @ngay_nh, @vat,
+                            @ghi_no, @ghi_co, @ghi_no_vat, @ghi_co_vat,
                             @khhd, @so_hd, @mst, @ten_kh, @dia_chi,
                             @tien_vat, @tien_ck, @edit_vat, @edit_ck, @user)";
                     using (var cmd = new SqlCommand(sql, conn, tx))
@@ -506,6 +511,15 @@ namespace KT2000.Api.Services
                         p.AddWithValue("@dia_chi", (object?)Nz(req.DiaChi) ?? DBNull.Value);
                         p.AddWithValue("@tien_vat", req.TienVat);
                         p.AddWithValue("@tien_ck", req.TienCk);
+                        // Định khoản mồi — cùng quy tắc với đường nạp hàng loạt, không thì
+                        // hóa đơn nạp tay ra một kiểu, nạp cả job ra kiểu khác.
+                        var dkTay = DinhKhoanMacDinh(huongMa);
+                        p.AddWithValue("@ghi_no", dkTay.No);
+                        p.AddWithValue("@ghi_co", dkTay.Co);
+                        p.AddWithValue("@ghi_no_vat",
+                            req.TienVat != 0 ? dkTay.NoVat : (object)DBNull.Value);
+                        p.AddWithValue("@ghi_co_vat",
+                            req.TienVat != 0 ? dkTay.CoVat : (object)DBNull.Value);
                         // != 0 chứ KHÔNG phải > 0 (chốt Trường 11/08): hóa đơn điều
                         // chỉnh GIẢM có thuế ÂM, mà số âm đó cũng là số đã chốt từ hóa
                         // đơn gốc — dùng > 0 là tắt cờ khóa đúng nhóm cần khóa nhất.
@@ -652,6 +666,26 @@ namespace KT2000.Api.Services
         // Số thật dài hơn 7 (vd 12345678) thì GIỮ NGUYÊN, không cắt — cắt là mất dữ liệu.
         // Chuỗi có ký tự lạ cũng để nguyên: 1.500 hóa đơn thật của 3 đơn vị không có ca
         // nào như vậy, nhưng chừa đường vẫn hơn làm hỏng.
+        // Định khoản MẶC ĐỊNH theo hướng (chốt Trường 12/08):
+        //   VÀO: Nợ 156 / Có 331   ·  thuế: Nợ 1331 / Có 331
+        //   RA : Nợ 131 / Có 511   ·  thuế: Nợ 131  / Có 3331
+        //
+        // Luật #5 cấm hàm nguồn ĐÈ định khoản đã có, không cấm điền khi còn trống — nên
+        // mọi câu ghi đều dùng ISNULL, đúng khuôn "cập nhật có chừa" như ngay_nh/ghi_chu.
+        // Kế toán sửa lại lần nào là giữ nguyên lần đó, nạp lại bao nhiêu lần cũng vậy.
+        //
+        // Trong bốn tài khoản này chỉ 156 là chỗ SẼ ĐỔI (chốt Trường 12/08): nó là tài
+        // khoản đối ứng của tiền hàng, tùy hóa đơn mà thành 152/153/627/642… — hóa đơn
+        // điện nước viễn thông chẳng hạn không phải hàng hóa. Kế toán định khoản lại từng
+        // cái, ISNULL bên dưới giữ nguyên số họ sửa.
+        // Ba cái còn lại (331, 1331/331 và 131, 511, 3331) là bút toán cố định theo hướng,
+        // không có gì để đổi — đừng biến chúng thành tham số cấu hình cho "linh hoạt".
+        internal static (string No, string Co, string NoVat, string CoVat)
+            DinhKhoanMacDinh(string huong)
+            => huong.Equals("RA", StringComparison.OrdinalIgnoreCase)
+             ? ("131", "511", "131", "3331")
+             : ("156", "331", "1331", "331");
+
         internal const int DO_DAI_SO_HD = 7;
 
         internal static string ChuanSoHd(string tho)
@@ -726,6 +760,9 @@ namespace KT2000.Api.Services
             // kế toán đã tự nhập. Chỉ điền khi cột còn trống ("cập nhật có chừa").
               ? @"UPDATE HOA_DON SET ngay=@ngay, thang=@thang, ngay_nh=ISNULL(ngay_nh,@ngay_nh),
                     vat=@vat, ghi_chu=ISNULL(ghi_chu,@ghi_chu), khhd=@khhd, so_hd=@so_hd,
+                    ghi_no=ISNULL(ghi_no,@ghi_no), ghi_co=ISNULL(ghi_co,@ghi_co),
+                    ghi_no_vat=ISNULL(ghi_no_vat,@ghi_no_vat),
+                    ghi_co_vat=ISNULL(ghi_co_vat,@ghi_co_vat),
                     mst=@mst, ten_kh=@ten_kh, dia_chi=@dia_chi, nguoi_giao_dich=@ng_gd,
                     tien_vat=@tien_vat, tien_ck=@tien_ck, edit_vat=@edit_vat, edit_ck=@edit_ck,
                     tthai_hd=@tthai, tich_chat_hd_lienquan=@tc_lq, loai_hd_lienquan=@l_lq,
@@ -733,11 +770,13 @@ namespace KT2000.Api.Services
                     ngay_lienquan=@ngay_lq, updated_by=@user, updated_at=SYSDATETIME()
                   WHERE ma_hd=@id"
               : @"INSERT INTO HOA_DON (ma_hd, ngay, thang, ngay_nh, vat, ghi_chu, khhd, so_hd,
+                    ghi_no, ghi_co, ghi_no_vat, ghi_co_vat,
                     mst, ten_kh, dia_chi,
                     nguoi_giao_dich, tien_vat, tien_ck, edit_vat, edit_ck, tthai_hd,
                     tich_chat_hd_lienquan, loai_hd_lienquan, mau_so_hd_lienquan,
                     khhd_lienquan, sohd_lienquan, ngay_lienquan, created_by)
                   VALUES (@id, @ngay, @thang, @ngay_nh, @vat, @ghi_chu, @khhd, @so_hd,
+                    @ghi_no, @ghi_co, @ghi_no_vat, @ghi_co_vat,
                     @mst, @ten_kh, @dia_chi,
                     @ng_gd, @tien_vat, @tien_ck, @edit_vat, @edit_ck, @tthai,
                     @tc_lq, @l_lq, @ms_lq, @kh_lq, @so_lq, @ngay_lq, @user)";
@@ -760,6 +799,16 @@ namespace KT2000.Api.Services
             string ghiChu = S(r, M, "XML_PATH").Trim().Length == 0
                 ? ("NoXml" + (Nz(tenKh) == null ? "" : " - " + tenKh)) : "";
             p.AddWithValue("@ghi_chu", (object?)Nz(ghiChu) ?? DBNull.Value);
+
+            // Định khoản mồi. Cặp tài khoản THUẾ chỉ điền khi hóa đơn CÓ thuế — hóa đơn
+            // không chịu thuế mà vẫn gắn 1331/3331 là mời kế toán hạch toán một khoản
+            // thuế không tồn tại.
+            var dk = DinhKhoanMacDinh(huong);
+            p.AddWithValue("@ghi_no", dk.No);
+            p.AddWithValue("@ghi_co", dk.Co);
+            p.AddWithValue("@ghi_no_vat", tienVat != 0 ? dk.NoVat : (object)DBNull.Value);
+            p.AddWithValue("@ghi_co_vat", tienVat != 0 ? dk.CoVat : (object)DBNull.Value);
+
             p.AddWithValue("@khhd", khhd);
             p.AddWithValue("@so_hd", soHd);
             p.AddWithValue("@mst", (object?)Nz(mst) ?? DBNull.Value);
@@ -788,13 +837,14 @@ namespace KT2000.Api.Services
             return existed;
         }
 
-        // masterTienVat: tiền thuế ghi ở mức HÓA ĐƠN. Chỉ dùng để vá ca hóa đơn KHÔNG CÓ
-        // XML — cổng không khai thuế suất ở tầng dòng, mà loại này luôn đúng MỘT dòng nên
-        // toàn bộ thuế của hóa đơn chính là thuế của dòng đó. Đo thật trên HOA_SANG T1:
-        // 27/27 hóa đơn thuộc nhóm này, không vá thì tien_vat_l trống hết.
+        // masterTienVat / masterTienHang: tiền thuế và tiền hàng ghi ở mức HÓA ĐƠN. Chỉ
+        // dùng để vá ca hóa đơn KHÔNG CÓ XML — cổng không khai gì ở tầng dòng cho loại
+        // này, mà nó luôn đúng MỘT dòng nên cả tiền thuế lẫn thuế suất đều là của dòng
+        // đó. Đo thật trên HOA_SANG T1: 27/27 hóa đơn thuộc nhóm này, không vá thì cả
+        // tien_vat_l lẫn pt_vat đều trống.
         private void ReplaceLines(SqlConnection c, SqlTransaction tx, string maHd,
                                   List<IXLRow> lines, Dictionary<string,int> L, string user,
-                                  decimal masterTienVat = 0m)
+                                  decimal masterTienVat = 0m, decimal masterTienHang = 0m)
         {
             using (var del = new SqlCommand("DELETE FROM HOA_DON_LINE WHERE ma_hd=@id", c, tx))
             { del.Parameters.AddWithValue("@id", maHd); del.ExecuteNonQuery(); }
@@ -824,6 +874,25 @@ namespace KT2000.Api.Services
                 // Dùng S2 (lấy chuỗi) chứ không N2 (lấy số) để có giá trị thô mà lọc.
                 // (biến ptVat khai ngay dưới, dùng lại cho tien_vat_l)
                 decimal ptVat = DocPhanTram(S2(r, L, "PT_VAT", "PT_VAT_L"));
+
+                // Hóa đơn KHÔNG CÓ XML không có thuế suất ở tầng dòng — suy từ chính hóa
+                // đơn: tiền thuế / tiền hàng (chốt Trường 12/08).
+                //
+                // Nhận diện bằng NGUON_DL, KHÔNG bằng "hóa đơn chỉ có một dòng" (chốt
+                // Trường 12/08). Một dòng là HỆ QUẢ của việc thiếu file chi tiết, không
+                // phải bản chất — mà hệ quả đó không độc quyền: đo trên HOA_SANG T2 có
+                // 29 hóa đơn CÓ XML mà vẫn chỉ một dòng. Bắt theo hệ quả là vơ cả nhóm
+                // đó vào, rồi đắp số bình quân của hóa đơn lên dòng vốn đã có số thật.
+                //
+                // Làm tròn về số nguyên cho khớp cột `vat` ở HOA_DON (kiểu INT) — hai chỗ
+                // ra hai số khác nhau thì người đọc không biết tin cái nào.
+                bool khongCoXml = S(r, L, "NGUON_DL")
+                    .Equals("EXCEL_NO_XML", StringComparison.OrdinalIgnoreCase);
+
+                if (ptVat == 0 && khongCoXml && masterTienVat != 0 && masterTienHang > 0)
+                    ptVat = Math.Round(masterTienVat * 100m / masterTienHang, 0,
+                                       MidpointRounding.AwayFromZero);
+
                 p.AddWithValue("@pt_vat", ptVat);
                 decimal tienCk = N(r, L, "CK_LINE_G");
                 p.AddWithValue("@ck", tienCk);
@@ -834,15 +903,24 @@ namespace KT2000.Api.Services
                 // SUY RA từ những gì có. Suy được thì ghi, không thì để NULL — đừng ghi 0,
                 // vì 0 đọc như "chiết khấu 0%" trong khi sự thật là "không biết".
                 decimal thanhTien = N2(r, L, "THANH_TIEN", "TTIEN_LINE");
-                object tienVatL =
-                    thanhTien != 0 && ptVat != 0
-                        ? Math.Round(thanhTien * ptVat / 100m, 2)
-                    // Hóa đơn KHÔNG CÓ XML: cổng chỉ trả tiền thuế ở mức hóa đơn, không có
-                    // thuế suất của dòng. Loại này luôn đúng MỘT dòng nên cả cục thuế là
-                    // của nó — lấy thẳng, chính xác hơn mọi cách suy ngược.
-                    : lines.Count == 1 && masterTienVat != 0
-                        ? masterTienVat
-                        : (object)DBNull.Value;
+                object tienVatL;
+                if (khongCoXml)
+                {
+                    // Nhánh này phải xét TRƯỚC. THANH_TIEN của dòng không-có-XML là tiền
+                    // ĐÃ GỒM VAT (spec 1.3.4), khác hẳn dòng đọc từ XML vốn là tiền chưa
+                    // thuế. Nhân thuế suất vào nó là tính thừa: ca thật 51.228 × 10% =
+                    // 5.122 trong khi thuế thật của hóa đơn là 4.657.
+                    //
+                    // Lấy thẳng tiền thuế của hóa đơn, không chặn gì thêm: dòng này do
+                    // build_rows_from_excel_without_xml của script tự sinh, mỗi hóa đơn
+                    // đúng một dòng — không phải cổng trả về nên không có chuyện nhiều dòng.
+                    tienVatL = masterTienVat != 0 ? masterTienVat : (object)DBNull.Value;
+                }
+                else
+                {
+                    tienVatL = thanhTien != 0 && ptVat != 0
+                        ? Math.Round(thanhTien * ptVat / 100m, 2) : (object)DBNull.Value;
+                }
                 p.AddWithValue("@tien_vat_l", tienVatL);
 
                 // pt_ck (% chiết khấu) CỐ Ý để trống (chốt Trường 12/08). Cổng có trường
