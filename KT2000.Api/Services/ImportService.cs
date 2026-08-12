@@ -214,7 +214,8 @@ namespace KT2000.Api.Services
                         }
                         bool existed = UpsertMaster(conn, tx, r, M, huong, maHd, userName,
                                                     tenant.KhaiQuy, tienHangChuaThue);
-                        ReplaceLines(conn, tx, maHd, lines, L, userName);
+                        ReplaceLines(conn, tx, maHd, lines, L, userName,
+                                     N2(r, M, "TIEN_VAT", "TVAT_HD_G"));
                         tx.Commit();
                         if (existed) updated++; else inserted++;
                         // Đếm song song theo hướng: chạy "cả vào cả ra" thì số tổng không
@@ -787,8 +788,13 @@ namespace KT2000.Api.Services
             return existed;
         }
 
+        // masterTienVat: tiền thuế ghi ở mức HÓA ĐƠN. Chỉ dùng để vá ca hóa đơn KHÔNG CÓ
+        // XML — cổng không khai thuế suất ở tầng dòng, mà loại này luôn đúng MỘT dòng nên
+        // toàn bộ thuế của hóa đơn chính là thuế của dòng đó. Đo thật trên HOA_SANG T1:
+        // 27/27 hóa đơn thuộc nhóm này, không vá thì tien_vat_l trống hết.
         private void ReplaceLines(SqlConnection c, SqlTransaction tx, string maHd,
-                                  List<IXLRow> lines, Dictionary<string,int> L, string user)
+                                  List<IXLRow> lines, Dictionary<string,int> L, string user,
+                                  decimal masterTienVat = 0m)
         {
             using (var del = new SqlCommand("DELETE FROM HOA_DON_LINE WHERE ma_hd=@id", c, tx))
             { del.Parameters.AddWithValue("@id", maHd); del.ExecuteNonQuery(); }
@@ -797,17 +803,53 @@ namespace KT2000.Api.Services
             {
                 using var cmd = new SqlCommand(@"
                     INSERT INTO HOA_DON_LINE (ma_hd, stt_line, ten_hang_goc, dvt, so_luong,
-                        don_gia, pt_vat, tien_ck, ma_ngan, tinh_chat, created_by)
-                    VALUES (@id, @stt, @ten_goc, @dvt, @sl, @dg, @pt_vat, @ck, @ma_ngan, @tc, @user)", c, tx);
+                        don_gia, pt_vat, tien_ck, tien_vat_l, ma_ngan, tinh_chat, created_by)
+                    VALUES (@id, @stt, @ten_goc, @dvt, @sl, @dg, @pt_vat, @ck,
+                        @tien_vat_l, @ma_ngan, @tc, @user)", c, tx);
                 var p = cmd.Parameters;
                 p.AddWithValue("@id", maHd);
                 p.AddWithValue("@stt", I2(r, L, "LINE_NO", "STT_LINE_G"));
-                p.AddWithValue("@ten_goc", (object?)Nz(S(r, L, "TEN_HANG_G")) ?? DBNull.Value);
-                p.AddWithValue("@dvt",     (object?)Nz(S(r, L, "DVT_G")) ?? DBNull.Value);
+                // Dự phòng sang cột CHUẨN HÓA, giống hệt so_luong/don_gia ngay dưới. Dòng
+                // hóa đơn KHÔNG CÓ XML (điện, nước, ngân hàng) chỉ điền TEN_HANG/DVT và
+                // để trống cặp _G — chỉ đọc _G thì số lượng, đơn giá vào được còn tên hàng
+                // với đơn vị tính mất trắng. Đo thật: 22/22 dòng thiếu tên đều là NOXML.
+                p.AddWithValue("@ten_goc", (object?)Nz(S2(r, L, "TEN_HANG", "TEN_HANG_G")) ?? DBNull.Value);
+                p.AddWithValue("@dvt",     (object?)Nz(S2(r, L, "DVT", "DVT_G")) ?? DBNull.Value);
                 p.AddWithValue("@sl", N2(r, L, "SO_LUONG", "SO_LUONG_G"));
                 p.AddWithValue("@dg", N2(r, L, "DON_GIA", "DON_GIA_G"));
-                p.AddWithValue("@pt_vat", N2(r, L, "PT_VAT", "PT_VAT_L"));
-                p.AddWithValue("@ck", N(r, L, "CK_LINE_G"));
+                // Thuế suất trong Excel là CHUỖI có dấu phần trăm ("10%"), không phải số.
+                // N2 gọi DocSo — bộ đọc TIỀN — và decimal.TryParse chết ngay ở ký tự '%',
+                // trả về 0 mà không báo gì: toàn bộ pt_vat trong DB bằng 0.
+                // DocPhanTram lọc bỏ mọi ký tự không phải chữ số trước khi đọc, đúng việc.
+                // Dùng S2 (lấy chuỗi) chứ không N2 (lấy số) để có giá trị thô mà lọc.
+                // (biến ptVat khai ngay dưới, dùng lại cho tien_vat_l)
+                decimal ptVat = DocPhanTram(S2(r, L, "PT_VAT", "PT_VAT_L"));
+                p.AddWithValue("@pt_vat", ptVat);
+                decimal tienCk = N(r, L, "CK_LINE_G");
+                p.AddWithValue("@ck", tienCk);
+
+                // pt_ck và tien_vat_l trước KHÔNG nằm trong câu INSERT — chưa bao giờ được
+                // ghi, 461/461 dòng NULL. Cổng TCT không trả sẵn hai số này ở tầng dòng
+                // (XML_MAP chỉ map 10 trường, không có TLCKhau lẫn tiền thuế của dòng), nên
+                // SUY RA từ những gì có. Suy được thì ghi, không thì để NULL — đừng ghi 0,
+                // vì 0 đọc như "chiết khấu 0%" trong khi sự thật là "không biết".
+                decimal thanhTien = N2(r, L, "THANH_TIEN", "TTIEN_LINE");
+                object tienVatL =
+                    thanhTien != 0 && ptVat != 0
+                        ? Math.Round(thanhTien * ptVat / 100m, 2)
+                    // Hóa đơn KHÔNG CÓ XML: cổng chỉ trả tiền thuế ở mức hóa đơn, không có
+                    // thuế suất của dòng. Loại này luôn đúng MỘT dòng nên cả cục thuế là
+                    // của nó — lấy thẳng, chính xác hơn mọi cách suy ngược.
+                    : lines.Count == 1 && masterTienVat != 0
+                        ? masterTienVat
+                        : (object)DBNull.Value;
+                p.AddWithValue("@tien_vat_l", tienVatL);
+
+                // pt_ck (% chiết khấu) CỐ Ý để trống (chốt Trường 12/08). Cổng có trường
+                // TLCKhau nhưng XML_MAP không map, nên chỉ suy ngược được từ tiền chiết
+                // khấu chia SL×ĐG — mà số suy ra không phải số người bán khai. Số tiền
+                // chiết khấu đã nằm ở tien_ck, đủ dùng. Cần % thật thì thêm TLCKhau vào
+                // XML_MAP rồi tải lại, ĐỪNG tính lại ở đây.
                 p.AddWithValue("@ma_ngan", (object?)Nz(S(r, L, "MA_NGAN_G")) ?? DBNull.Value);
                 p.AddWithValue("@tc", I(r, L, "LOAI_HH"));
                 p.AddWithValue("@user", user);
