@@ -1,0 +1,569 @@
+/* Giao diện đánh đơn bê từ USA_Meva — tiền tố .umv- để không đụng .pxn- của
+   PhieuXuatNhap.tsx và .orderTable- của bản gốc. Hai bộ chạy song song được.
+
+   Bảng màu giữ theo bản gốc (slate/blue của USA_Meva) chứ không đổi sang tông antd:
+   đây là bản BÊ NGUYÊN, đối chiếu với bản cũ mới thấy được khác nhau chỗ nào. */
+
+/* ============================ KHUNG TRANG ============================ */
+/* AppShell đặt Layout height:100vh + overflow:hidden -> cả trang không trôi.
+   Trang này cao đúng bằng chỗ được cấp, chỉ LƯỚI HÀNG tự cuộn bên trong (BR-NB-05:
+   thanh tiêu đề và thanh tổng cộng luôn đứng yên, mắt không phải đuổi theo). */
+.umv {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.umv__info { flex-shrink: 0; }
+
+/* Nhãn nhỏ phía trên mỗi ô nhập */
+.umv__nhan {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  /* Nhãn dài ("ĐỊA CHỈ CỬA HÀNG") trong cột hẹp thì cắt bớt bằng "…" thay vì tràn ra
+     ngoài hay xuống dòng — xuống dòng là ô bên cạnh bị đẩy thấp hơn, hàng thành bậc thang.
+     Chiều cao cố định để mọi nhãn chiếm đúng một dòng, dù chữ dài ngắn khác nhau. */
+  height: 15px;
+  line-height: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.umv__gach {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 8px 0;
+}
+
+/* Thu gọn khối đầu. Hai đường kích hoạt:
+   - cuộn xuống trên điện thoại (useThuGonKhiCuon.ts)
+   - lưới vượt 8 dòng, ở mọi cỡ màn (PhieuDanhDonUsa.tsx — bê từ PurchaseOrderPage)
+   Bấm vào tiêu đề luôn mở lại được, nên thu nhầm cũng không kẹt. */
+.umv--thu-gon .umv__info-than { display: none; }
+.umv__info-tieu-de { cursor: pointer; user-select: none; }
+
+/* ============================ LƯỚI HÀNG ============================ */
+.umv__luoi-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.umv__luoi-card > .ant-card-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.umv__luoi-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.umv__bang {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+/* Dòng tiêu đề DÍNH khi cuộn: lưới dài 40 dòng mà mất tiêu đề thì không biết
+   cột nào là cột nào nữa. */
+.umv__bang thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-left: none;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.umv__bang thead th:first-child { border-left: 1px solid #e2e8f0; }
+
+.umv__bang td {
+  height: 28px;
+  padding: 0;
+  border: 1px solid #eef0f2;
+  border-left: none;
+  vertical-align: middle;
+}
+.umv__bang td:first-child { border-left: 1px solid #eef0f2; }
+.umv__bang tbody tr:hover td { background: #f8fbff; }
+
+.umv__c { text-align: center; }
+
+/* Dòng kẻ sẵn cho kín khung — lưới VFP không bao giờ để mảng trắng hẫng phía dưới.
+   Chỉ là ô vẽ ra cho đẹp, bấm vào thì thêm dòng nhập thật. */
+.umv__dong-ke { cursor: text; }
+.umv__dong-ke td { color: #c9ced6; }
+.umv__dong-ke:hover td { background: #f4f8ff; }
+
+/* Dòng hàng tặng (khuyến mãi) — nền xanh cho nổi hẳn khỏi dòng bán thường */
+.umv__dong--tang td { background: #dcfce7; }
+.umv__dong--tang:hover td { background: #d0f5e0; }
+
+/* Ô nhập trong lưới: không viền, không nền — gõ vào ô nào thì ô đó sáng lên.
+   Lưới dày đặc kiểu VFP, mỗi ô một cái khung sẽ rối mắt. */
+.umv__o {
+  width: 100%;
+  height: 26px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #0f172a;
+  outline: none;
+}
+.umv__o:focus {
+  border-color: #60a5fa;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+}
+
+.umv__o--so,
+.umv__so-tt {
+  text-align: right;
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.umv__so-tt {
+  padding: 0 8px;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+/* ============================ Ô GỢI Ý ============================ */
+.umv-ac { position: relative; width: 100%; }
+
+.umv-ac__o {
+  width: 100%;
+  height: 26px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #0f172a;
+  outline: none;
+}
+.umv-ac__o:focus {
+  border-color: #60a5fa;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+}
+
+/* Ô gợi ý nằm ở KHỐI ĐẦU (không phải trong lưới) thì có viền như ô antd bình thường.
+   CAO 24px khớp ĐÚNG antd Input size="small" — hai loại ô đứng cạnh nhau trên cùng
+   một hàng, lệch vài pixel là nhìn thấy ngay bậc thang.
+   font-size 14px cũng theo antd small, không thì chữ trong hai ô to nhỏ khác nhau. */
+.umv__info .umv-ac__o {
+  height: 24px;
+  border-color: #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 14px;
+  padding: 0 7px;
+}
+
+/* Chấm màu bên trái ô (danh mục có màu) */
+.umv-ac--co-mau .umv-ac__o { padding-left: 22px; }
+.umv-ac__cham {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+}
+
+/* Danh sách xổ xuống — vẽ bằng portal ra body nên KHÔNG kế thừa font của lưới */
+.umv-drop {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14);
+  font-size: 13px;
+  font-family: inherit;
+  color: #1e293b;
+}
+
+.umv-drop--rong {
+  padding: 10px 12px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.umv-drop__dong {
+  padding: 5px 10px;
+  cursor: pointer;
+  line-height: 1.35;
+}
+.umv-drop__dong--chon { background: #e6f4ff; }
+.umv-drop__dong--dang-chon { font-weight: 600; }
+.umv-drop__dong--dam { font-weight: 700; }
+
+/* LƯỚI CỘT CỐ ĐỊNH, không phải flex co giãn.
+   Dùng flex thì mỗi dòng tự chia chỗ theo nội dung của riêng nó -> số điện thoại và
+   địa chỉ nhảy chỗ lung tung giữa các dòng, mắt phải dò lại từng dòng một.
+   Grid với cột khai sẵn thì cột nào ra cột nấy, thẳng hàng từ trên xuống. */
+.umv-drop__hang {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  /* Mặc định 2 cột (tên + một cột phụ). Số cột thật do lớp --n<số> bên dưới quyết định. */
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/* Có chấm màu thì chèn thêm một cột hẹp ở đầu */
+.umv-drop__hang--co-cham { grid-template-columns: 14px minmax(0, 1fr) auto; }
+
+/* Ô HÀNG HÓA: tên hàng | ĐVT | giá.
+   ĐVT và giá rộng CỐ ĐỊNH để thẳng cột; tên hàng nuốt phần còn lại. */
+.umv-drop__hang--n3 { grid-template-columns: minmax(0, 1fr) 56px 92px; }
+.umv-drop__hang--co-cham.umv-drop__hang--n3 {
+  grid-template-columns: 14px minmax(0, 1fr) 56px 92px;
+}
+
+/* Ô HÀNG HÓA 4 cột: tên đánh đơn | tên hóa đơn | ĐVT | giá.
+   Tên hóa đơn chỉ hiện khi khác tên đánh đơn, để hẹp hơn vì là thông tin phụ. */
+.umv-drop__hang--n4 { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 78px 92px; }
+.umv-drop__hang--co-cham.umv-drop__hang--n4 {
+  grid-template-columns: 14px minmax(0, 1.2fr) minmax(0, 1fr) 78px 92px;
+}
+/* Cột tên hóa đơn: chữ nghiêng nhạt cho khỏi lẫn với tên chính */
+.umv-drop__hang--n4 .umv-drop__cot--1 { font-style: italic; color: #94a3b8; }
+
+/* Ô HÀNG HÓA 3 cột (bản BỎ CỘT GIÁ): tên đánh đơn | tên hóa đơn | ĐVT.
+   KHÔNG dùng được --n3 mặc định: cột giữa của nó rộng cố định 56px (dành cho ĐVT),
+   trong khi cột giữa ở đây là TÊN HÓA ĐƠN — chuỗi dài, nhét vào 56px là cụt sạch.
+   Khai SAU --n3 để đè lại (cùng một lớp, luật đứng sau thắng).
+   ĐVT lùi về cuối, rộng cố định 78px cho thẳng cột giữa các dòng. */
+.umv-drop__hang--hh3 { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 78px; }
+.umv-drop__hang--co-cham.umv-drop__hang--hh3 {
+  grid-template-columns: 14px minmax(0, 1.3fr) minmax(0, 1fr) 78px;
+}
+/* Tên hóa đơn: nghiêng nhạt như bản 4 cột, cho khỏi lẫn với tên chính */
+.umv-drop__hang--hh3 .umv-drop__cot--1 { font-style: italic; color: #94a3b8; }
+/* ĐVT (cột 2) căn giữa — cột hẹp, căn trái nhìn lệch so với tên dài bên cạnh */
+.umv-drop__hang--hh3 .umv-drop__cot--2 { text-align: center; }
+/* Cột giá (cột 3) căn phải, chữ số đều bề ngang để so giá bằng mắt */
+.umv-drop__hang--n4 .umv-drop__cot--3 {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Ô KHÁCH/NHÂN VIÊN: tên | điện thoại | địa chỉ.
+   Địa chỉ để rộng nhất vì nó dài nhất; điện thoại cố định 96px cho thẳng dãy số. */
+.umv-drop__hang--kh { grid-template-columns: minmax(0, 1.1fr) 96px minmax(0, 1.4fr); }
+
+
+.umv-drop__cham {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+/* Cột 0 = tên (thứ người dùng đọc để chọn), các cột sau = phụ, chữ nhạt hơn */
+.umv-drop__cot {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.umv-drop__cot--1,
+.umv-drop__cot--2,
+.umv-drop__cot--3 {
+  color: #64748b;
+  font-size: 12px;
+}
+/* Số căn PHẢI + chữ số đều bề ngang: giá tiền so nhanh bằng mắt.
+   Riêng cột địa chỉ (cột 2 của ô khách) là chữ nên phải căn trái lại. */
+.umv-drop__hang--n3 .umv-drop__cot--2 {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.umv-drop__hang--kh .umv-drop__cot--1 { font-variant-numeric: tabular-nums; }
+
+/* ---------- Ô MÃ MÀU: mã | nhóm màu ----------
+   Khai SAU --n2/--n3 vì cùng độ ưu tiên (một lớp) -> luật đứng sau thắng. Phải đè
+   được --n3: cột giữa của --n3 rộng CỐ ĐỊNH 56px (vừa cho "Lon"/"Thùng"), trong khi
+   tên nhóm ở đây là chuỗi GHÉP nhiều ngăn — "Xanh dương / Pastel" dài gấp bốn, bị cắt
+   cụt thành "Xanh d...". Cho nhóm hẳn 1.1fr để hiện đủ chữ.
+   Cột ghi chú (cột 2) gần như luôn trống nên gộp luôn vào phần dư, không chừa riêng. */
+.umv-drop__hang--mau { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); }
+.umv-drop__hang--co-cham.umv-drop__hang--mau {
+  grid-template-columns: 14px minmax(0, 0.9fr) minmax(0, 1.1fr);
+}
+/* Tên nhóm là thứ người bán nhận dạng màu (nhớ "vàng" hơn nhớ mã) nên KHÔNG làm nhạt
+   như cột phụ khác, và cho XUỐNG DÒNG thay vì cắt cụt — thà dòng cao thêm một nhịp
+   còn hơn giấu mất nửa cái tên. Đè lại .umv-drop__cot (nowrap + ellipsis) ở trên. */
+.umv-drop__hang--mau .umv-drop__cot--1 {
+  color: #475569;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.25;
+}
+/* Ghi chú màu (nếu có) vẫn là cột phụ, để nhạt và cho phép cắt cụt như cũ. */
+.umv-drop__hang--mau .umv-drop__cot--2 { color: #94a3b8; }
+
+/* Chân danh sách khi cuộn vô tận: "Đang tải thêm…" / "hết danh sách".
+   Không bấm được, chỉ để báo trạng thái. */
+.umv-drop__chan {
+  padding: 6px 10px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 11px;
+  font-style: italic;
+  cursor: default;
+  user-select: none;
+}
+
+/* Khúc chữ trùng với từ đang gõ */
+.umv-drop__to {
+  background: #fde68a;
+  color: inherit;
+  padding: 0;
+  border-radius: 2px;
+}
+
+/* ============================ CHÚ GIẢI PHÍM TẮT ============================ */
+/* Một nhãn duy nhất trên thanh tiêu đề — rê chuột hiện, bấm thì ghim lại */
+.umv-phim-nhan {
+  cursor: pointer;
+  user-select: none;
+  margin: 0;
+}
+.umv-phim-nhan:hover {
+  border-color: #60a5fa;
+  color: #1d4ed8;
+}
+
+/* Bảng phím tắt bên trong tooltip */
+.umv-phim-bang {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 2px 0;
+}
+
+.umv-phim-bang__dong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Phím vẽ như nút bàn phím thật: viền dưới dày hơn cho có chiều sâu.
+   Nằm trong tooltip nền tối nên phải tự tô nền sáng, không thì chìm mất. */
+.umv-phim__kbd {
+  display: inline-block;
+  flex: 0 0 auto;
+  min-width: 46px;
+  padding: 1px 6px;
+  border: 1px solid #cbd5e1;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #f8fafc;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #334155;
+  text-align: center;
+}
+
+/* ============================ THANH TỔNG CỘNG ============================ */
+.umv__tong { flex-shrink: 0; }
+
+.umv__tong-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.umv__tong-phai {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.umv__tong-o {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+}
+
+.umv__tong-nhan {
+  font-size: 11px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.umv__tong-so {
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+}
+
+.umv__tong-so--lon {
+  font-size: 21px;
+  font-weight: 700;
+}
+
+/* ============================ MÀN HẸP ============================ */
+@media (max-width: 768px) {
+  .umv__bang { table-layout: auto; min-width: 960px; }
+
+  .umv__bang {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .umv__bang thead th { border-left: 1px solid #e2e8f0; }
+  .umv__bang td { border-left: 1px solid #eef0f2; }
+
+  .umv__cot-stt {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: #fff;
+    box-shadow: inset -1px 0 0 #cbd5e1;
+  }
+  .umv__cot-xoa {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: #fff;
+    box-shadow: inset 1px 0 0 #cbd5e1;
+  }
+
+  .umv__bang thead th.umv__cot-stt,
+  .umv__bang thead th.umv__cot-xoa {
+    z-index: 3;
+    background: #f1f5f9;
+  }
+
+  .umv__dong--tang .umv__cot-stt,
+  .umv__dong--tang .umv__cot-xoa { background: #dcfce7; }
+  .umv__dong-ke .umv__cot-stt,
+  .umv__dong-ke .umv__cot-xoa { background: #fff; }
+  .umv__bang td { height: 40px; }
+  .umv__o,
+  .umv-ac__o {
+    height: 36px;
+    font-size: 16px;
+    padding: 0 8px;
+  }
+  .umv__so-tt { font-size: 15px; }
+
+  .umv__info .umv-ac__o {
+    height: 34px;
+    font-size: 16px;
+  }
+  .umv__info .ant-input,
+  .umv__info .ant-input-affix-wrapper,
+  .umv__info .ant-select-selector {
+    min-height: 34px;
+    font-size: 16px;
+  }
+
+  .umv__nut-xoa {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    font-size: 15px;
+  }
+
+  .umv-drop {
+    max-width: calc(100vw - 16px);
+    font-size: 15px;
+  }
+  .umv-drop__dong { padding: 9px 10px; }
+
+  .umv__nhan { font-size: 12px; }
+
+  .umv__tong-wrap {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .umv__doc-tien { display: none; }
+
+  .umv__tong-phai {
+    margin-left: 0;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: nowrap;
+  }
+  .umv__tong-o {
+    align-items: flex-start;
+    min-width: 0;
+  }
+  .umv__tong-so { font-size: 14px; }
+  .umv__tong-so--lon { font-size: 18px; }
+
+  .umv__tong-nut {
+    width: 100%;
+    display: flex;
+  }
+  .umv__tong-nut > .ant-space-item {
+    flex: 1;
+  }
+  .umv__tong-nut .ant-btn {
+    width: 100%;
+    height: 40px;
+  }
+}
+
+/* ============================ MÃ MÀU TRÊN LƯỚI DANH SÁCH ============================ */
+/* Ô "Mã màu" ở bảng chi tiết (Danh sách phiếu): chấm màu + mã, để đối chiếu nhanh với
+   tờ phiếu đã in. Dùng lại kích thước chấm của .umv-drop__cham cho đồng bộ. */
+.umv__mau-o {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.umv__mau-cham {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}

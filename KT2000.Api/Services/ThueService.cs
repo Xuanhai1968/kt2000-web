@@ -60,7 +60,15 @@ namespace KT2000.Api.Services
                    h.khhd_lienquan, h.sohd_lienquan, h.ngay_lienquan,
                    -- Cột cuối của khối HĐ liên quan, trước đây chưa trả về nên lưới
                    -- không có gì để hiện ở cột TT HĐLQ.
-                   h.trang_thai_hd_lien_quan
+                   h.trang_thai_hd_lien_quan,
+                   -- %VAT của cả hóa đơn. HAI ĐƠN VỊ GHI HAI CHỖ KHÁC NHAU — đã đối
+                   -- chiếu dữ liệu thật 12/08/2026:
+                   --   THAI_TUAN_2026 : h.vat có 60/65,  line.pt_vat rỗng  0/104
+                   --   HOA_SANG_2026  : h.vat có 134/170, line.pt_vat rỗng 0/461
+                   --   TUAN_NGA_2025  : h.vat RỖNG 0/60,  line.pt_vat có   187/196
+                   -- Nên phải trả cả hai và để FE ưu tiên header rồi lùi về dòng; chỉ
+                   -- đọc một chỗ thì luôn có đơn vị bị trắng ô Thuế suất.
+                   h.vat
               FROM HOA_DON h
               OUTER APPLY (
                     SELECT SUM(ISNULL(x.so_luong, 0) * ISNULL(x.don_gia, 0)) AS tien_hang,
@@ -102,6 +110,7 @@ namespace KT2000.Api.Services
             SohdLienquan       = r.IsDBNull(28) ? null : r.GetString(28),
             NgayLienquan       = r.IsDBNull(29) ? null : r.GetDateTime(29),
             TrangThaiHdLienQuan = r.IsDBNull(30) ? null : r.GetString(30),
+            Vat                = r.IsDBNull(31) ? null : r.GetInt32(31),
         };
 
         /// <summary>
@@ -226,6 +235,94 @@ namespace KT2000.Api.Services
                 ds.Add(DocLine(r));
             }
             return ket;
+        }
+
+        /// <summary>
+        /// Ghi lại TOÀN BỘ dòng hàng của một hóa đơn: xóa hết rồi chèn lại theo danh
+        /// sách gửi lên. Trả số dòng đã ghi, hoặc null nếu không có hóa đơn đó.
+        /// </summary>
+        /// <remarks>
+        /// XÓA-RỒI-CHÈN chứ không UPDATE từng dòng: người dùng sửa được cả thêm/bớt
+        /// dòng, mà HOA_DON_LINE không có khóa chính ổn định (stt_line người dùng
+        /// đánh lại được). Đối chiếu từng dòng để biết cái nào thêm/sửa/xóa sẽ phức
+        /// tạp hơn nhiều mà không được gì — một hóa đơn chỉ vài chục dòng.
+        ///
+        /// Bọc TRANSACTION: xóa xong mà chèn hỏng giữa chừng thì hóa đơn mất sạch
+        /// dòng hàng. Có transaction thì hoặc ăn cả, hoặc về nguyên trạng.
+        ///
+        /// KHÔNG đụng bảng HOA_DON: cột định khoản của header thuộc quyền màn khác
+        /// (luật 5 — hàm nạp không được ghi đè ghi_no/ghi_co/ma_ct_*).
+        /// </remarks>
+        public async Task<int?> LuuLines(
+            string code, int year, string maHd, IReadOnlyList<HoaDonLineDto> lines,
+            string nguoiSua)
+        {
+            using var conn = await OpenAsync(code, year);
+
+            // Hóa đơn phải có thật — tránh tạo dòng mồ côi khi client gửi mã sai
+            using (var kt = new SqlCommand(
+                "SELECT COUNT(*) FROM HOA_DON WHERE ma_hd = @id", conn))
+            {
+                kt.Parameters.AddWithValue("@id", maHd);
+                if ((int)(await kt.ExecuteScalarAsync() ?? 0) == 0) return null;
+            }
+
+            using var tran = conn.BeginTransaction();
+            try
+            {
+                using (var xoa = new SqlCommand(
+                    "DELETE FROM HOA_DON_LINE WHERE ma_hd = @id", conn, tran))
+                {
+                    xoa.Parameters.AddWithValue("@id", maHd);
+                    await xoa.ExecuteNonQueryAsync();
+                }
+
+                int stt = 0;
+                foreach (var d in lines)
+                {
+                    stt++;
+                    using var them = new SqlCommand(@"
+                        INSERT INTO HOA_DON_LINE
+                            (ma_hd, stt_line, ma_hang, ten_hang_goc, dvt,
+                             so_luong, don_gia, pt_vat, tien_ck,
+                             ghi_no, ghi_co, ma_ngan, tinh_chat, ghi_chu,
+                             created_by, created_at, updated_by, updated_at)
+                        VALUES
+                            (@ma_hd, @stt, @ma_hang, @ten_hang, @dvt,
+                             @so_luong, @don_gia, @pt_vat, @tien_ck,
+                             @ghi_no, @ghi_co, @ma_ngan, @tinh_chat, @ghi_chu,
+                             @nguoi, SYSDATETIME(), @nguoi, SYSDATETIME());",
+                        conn, tran);
+
+                    them.Parameters.AddWithValue("@ma_hd", maHd);
+                    // stt_line đánh lại 1..n theo thứ tự gửi lên — client xóa dòng
+                    // giữa chừng thì số vẫn liền, không thủng.
+                    them.Parameters.AddWithValue("@stt", stt);
+                    them.Parameters.AddWithValue("@ma_hang", (object?)d.MaHang ?? DBNull.Value);
+                    them.Parameters.AddWithValue("@ten_hang", (object?)d.TenHang ?? DBNull.Value);
+                    them.Parameters.AddWithValue("@dvt", (object?)d.Dvt ?? DBNull.Value);
+                    them.Parameters.AddWithValue("@so_luong", d.SoLuong);
+                    them.Parameters.AddWithValue("@don_gia", d.DonGia);
+                    them.Parameters.AddWithValue("@pt_vat", d.PtVat);
+                    them.Parameters.AddWithValue("@tien_ck", d.TienCk);
+                    them.Parameters.AddWithValue("@ghi_no", (object?)d.GhiNo ?? DBNull.Value);
+                    them.Parameters.AddWithValue("@ghi_co", (object?)d.GhiCo ?? DBNull.Value);
+                    them.Parameters.AddWithValue("@ma_ngan", (object?)d.MaNgan ?? DBNull.Value);
+                    them.Parameters.AddWithValue("@tinh_chat", (object?)d.TinhChat ?? DBNull.Value);
+                    them.Parameters.AddWithValue("@ghi_chu", (object?)d.GhiChu ?? DBNull.Value);
+                    them.Parameters.AddWithValue("@nguoi", nguoiSua);
+
+                    await them.ExecuteNonQueryAsync();
+                }
+
+                tran.Commit();
+                return stt;
+            }
+            catch
+            {
+                tran.Rollback();
+                throw;
+            }
         }
 
         public async Task<(string? Html, string? TenFile)> LayHtmlGoc(

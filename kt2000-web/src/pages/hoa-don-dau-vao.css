@@ -11,10 +11,25 @@
    ghi đè về sau: muốn sửa chỗ nào chỉ cần một selector cụ thể hơn, thay vì phải
    leo thang !important lẫn nhau. */
 
+/* Nền + viền + màu tiêu đề đổi theo CHIỀU hóa đơn (NT-11): VÀO = đỏ, RA = xanh.
+   Khai bằng biến để ba chỗ (nền form, viền, khung tiêu đề) chỉ sửa một nơi.
+   Giá trị mặc định ở đây là tông ĐỎ — đúng cho màn đầu vào; .huong-ra ghi đè
+   sang tông xanh. Xem mau-huong.css để biết quy ước chung. */
 .phieu-nhap {
-  background: #ffe8ef;               /* nền hồng của form VFP gốc */
-  border: 1px solid #d9a8b8;
+  --hd-nen: #ffe8ef;                 /* nền hồng của form VFP gốc */
+  --hd-vien: #d9a8b8;
+  --hd-dam: #cf1322;                 /* màu chữ + viền khung tiêu đề */
+
+  background: var(--hd-nen);
+  border: 1px solid var(--hd-vien);
   padding: 8px 10px 10px;
+}
+
+/* Màn ĐẦU RA: cùng bố cục, đổi sang tông xanh cho khỏi ngồi nhầm màn */
+.huong-ra .phieu-nhap {
+  --hd-nen: #e8f2ff;
+  --hd-vien: #a8c4e0;
+  --hd-dam: #0958d9;
 }
 
 /* ----- Hàng nhãn + ô ----- */
@@ -27,7 +42,7 @@
 }
 
 .phieu-nhap .nhan {
-  font-size: 13px;
+  font-size: 14px;
   color: #0000cd;                    /* nhãn xanh dương như bản gốc */
   white-space: nowrap;
   text-align: left;
@@ -46,7 +61,7 @@
   height: 22px;
   min-height: 22px;
   padding: 0 4px;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 20px;
   border-radius: 2px;
 }
@@ -54,13 +69,13 @@
 .phieu-nhap.phieu-nhap .ant-select-single .ant-select-selector .ant-select-selection-item,
 .phieu-nhap.phieu-nhap .ant-select-single .ant-select-selector .ant-select-selection-placeholder {
   line-height: 20px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .phieu-nhap .ant-input-number-handler-wrap { display: none; }
 
 .phieu-nhap .ant-checkbox-wrapper {
-  font-size: 13px;
+  font-size: 14px;
   white-space: nowrap;
 }
 
@@ -74,11 +89,11 @@
 
 /* ----- Tiêu đề PHIẾU NHẬP HÀNG (khung đỏ bo tròn giữa form) ----- */
 .phieu-nhap .tieu-de-phieu {
-  border: 2px solid #cf1322;
+  border: 2px solid var(--hd-dam);
   border-radius: 14px;
-  color: #cf1322;
+  color: var(--hd-dam);
   font-weight: 700;
-  font-size: 15px;
+  font-size: 18px;
   text-align: center;
   padding: 3px 14px;
   background: #fff;
@@ -86,23 +101,33 @@
 }
 
 .phieu-nhap .hang-tieu-de {
-  justify-content: center;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
   margin-bottom: 10px;
 }
 
-/* ----- Khối HĐ Liên quan: nhãn phải, ô trái, nền trắng ----- */
-.phieu-nhap .khoi-lquan .hang { justify-content: flex-end; }
+.phieu-nhap .hang-tieu-de::before { content: ""; }
+
+/* Cụm nút nằm cột phải, dồn sát mép */
+.phieu-nhap .hang-tieu-de > .ant-space {
+  justify-self: end;
+}
+
+
+.phieu-nhap .khoi-lquan .hang { justify-content: flex-start; }
 .phieu-nhap .khoi-lquan .nhan { width: 150px; text-align: right; }
 
-/* ----- Khối cộng tiền dưới lưới ----- */
-.phieu-nhap .khoi-cong .nhan { width: 140px; text-align: right; }
 
-/* Cụm "Thuế suất [8] % Tiền VAT" đứng đúng chỗ cột nhãn 140px của các hàng khác,
-   để ô Tiền VAT thẳng cột với ba ô tiền còn lại. Căn phải cho mép trong sát ô số.
-   Hai nhãn bên trong tự co theo chữ — KHÔNG ép hẹp hơn chữ, vì .nhan có
-   white-space: nowrap nên chữ sẽ tràn ra đè lên ô số bên cạnh. */
+.phieu-nhap .khoi-cong .nhan { width: 190px; text-align: right; }
+
+.phieu-nhap.phieu-nhap .khoi-cong .ant-input-number-input,
+.phieu-nhap.phieu-nhap .khoi-cong .ant-input-number-disabled .ant-input-number-input {
+  text-align: right;
+}
+
 .phieu-nhap .khoi-cong .cum-thue-suat {
-  width: 140px;
+  width: 190px;
   flex: none;
   display: flex;
   align-items: center;
@@ -110,7 +135,11 @@
   gap: 4px;
 }
 
-/* Nhãn trong cụm thoát khỏi luật width 140px của .khoi-cong .nhan ở trên */
+.phieu-nhap.phieu-nhap .khoi-cong .cum-thue-suat .ant-input-number-input {
+  text-align: center;
+}
+
+/* Nhãn trong cụm thoát khỏi luật width 190px của .khoi-cong .nhan ở trên */
 .phieu-nhap.phieu-nhap .khoi-cong .cum-thue-suat .nhan {
   width: auto;
   text-align: left;
@@ -131,9 +160,10 @@
   outline: none;
 }
 
+
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-body {
-  height: 210px;
-  max-height: 210px !important;
+  height: 230px;
+  max-height: 230px !important;
   overflow-x: auto !important;
   overflow-y: auto !important;
 }
@@ -142,11 +172,13 @@
   border-bottom: none;
 }
 
+/* line-height nới theo cỡ chữ: 14px mà giữ 19px thì phần dưới chữ (g, y, ơ) bị
+   cắt cụt trong ô có overflow. */
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-thead > tr > th,
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr > td {
   padding: 1px 5px;
-  font-size: 13px;
-  line-height: 19px;
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .phieu-nhap .luoi-hang .ant-table-thead > tr > th {
@@ -158,15 +190,18 @@
 
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon > td,
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon:hover > td {
-  background: #4a90d9;
-  color: #fff;
+  background: #eaf3fc;
+}
+
+.phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon > td:first-child {
+  box-shadow: inset 3px 0 0 #4a90d9;
 }
 
 .phieu-nhap.phieu-nhap .luoi-hang .ant-input,
 .phieu-nhap.phieu-nhap .luoi-hang .ant-input-number .ant-input-number-input {
-  height: 19px;
-  min-height: 19px;
-  line-height: 17px;
+  height: 21px;
+  min-height: 21px;
+  line-height: 19px;
 }
 
 .phieu-nhap.phieu-nhap .nut-vang  { background: #ffe08a; border-color: #d4b106; }

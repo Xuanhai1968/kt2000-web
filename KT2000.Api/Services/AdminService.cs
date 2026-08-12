@@ -74,7 +74,7 @@ namespace KT2000.Api.Services
             { UserId = currentUserId, TenantId = tenant.Id, Role = "admin" });
             await _db.SaveChangesAsync();
 
-            CreateTenantDatabase(code, req.FirstYear);
+            CreateTenantDatabase(code, req.FirstYear, laNoiBo: loai == "noibo");
             await GhiNhatKy(nguoiDung, tenant.Id, req.FirstYear, "TAO_DON_VI",
                 $"Tạo đơn vị {code} ({loai}) — mở năm đầu {req.FirstYear}");
             return new { tenant.Id, tenant.Code, dbCreated = _resolver.BuildDbName(code, req.FirstYear) };
@@ -97,7 +97,8 @@ namespace KT2000.Api.Services
                         _db.FiscalYears.Add(new FiscalYear { TenantId = tenant.Id, Year = req.Year });
                         await _db.SaveChangesAsync();
                     }
-                    bool created = CreateTenantDatabase(tenant.Code, req.Year);
+                    bool created = CreateTenantDatabase(
+                        tenant.Code, req.Year, laNoiBo: tenant.TenantType == "noibo");
 
                     // Ghi cả ba nhánh, kể cả "không làm gì". Nhật ký phải trả lời được
                     // câu "ai đã bấm mở năm lúc nào", chứ không chỉ "lúc nào có DB mới".
@@ -191,7 +192,14 @@ namespace KT2000.Api.Services
         // Trước 01/08: chỉ dựng SCHEMA_VERSION rỗng, 6 bảng nghiệp vụ phải chạy tay
         // 004/005/007/009 từng database — quên là Importer chết "Invalid object name
         // 'HOA_DON'". Nay dựng đủ khuôn ngay, từ 010_tenant_template_v6.sql nhúng trong .dll.
-        private bool CreateTenantDatabase(string code, int year)
+        //
+        // laNoiBo QUYẾT ĐỊNH có dựng khuôn NB hay không (luật 9 — ranh giới hai sổ).
+        // Trước đây hàm này gọi ApplyNbTables() cho MỌI đơn vị: đơn vị THUẾ thuần cũng
+        // mọc ra GOI_HD / GOI_HD_LINE / DM_*_NB và 7 cột NB trên HOA_DON(_LINE). Hậu quả
+        // thấy rõ ở màn hóa đơn: SELECT cột NB thì DB thuế cũ (chưa chạy 015) ném
+        // "Invalid object name", còn DB mới thì bảng thuế phình thêm cột chẳng ai ghi.
+        // Sổ thuế và sổ nội bộ là HAI khuôn khác nhau, dựng nhầm là lẫn ranh giới.
+        private bool CreateTenantDatabase(string code, int year, bool laNoiBo)
         {
             var dbName = _resolver.BuildDbName(code, year);   // đã qua BR-DB-01
             using var conn = new SqlConnection(_resolver.GetMasterConnection());
@@ -210,7 +218,7 @@ namespace KT2000.Api.Services
                 using var probe = new SqlCommand($"SELECT OBJECT_ID('[{dbName}]..HOA_DON')", conn);
                 if (probe.ExecuteScalar() != DBNull.Value)
                 {
-                    ApplyNbTables(conn, dbName);
+                    if (laNoiBo) ApplyNbTables(conn, dbName);
                     return false;
                 }
             }
@@ -221,7 +229,7 @@ namespace KT2000.Api.Services
             }
 
             ApplyTenantTemplate(conn, dbName);
-            ApplyNbTables(conn, dbName);
+            if (laNoiBo) ApplyNbTables(conn, dbName);
             return !existed;   // true = vừa tạo mới database
         }
 
@@ -237,23 +245,22 @@ namespace KT2000.Api.Services
             }
         }
 
-        // Bộ bảng nội bộ (013/014/015). Tách khỏi ApplyTenantTemplate vì còn phải gọi
-        // riêng cho các database dựng trước khi có script này.
+        // Khuôn NỘI BỘ — CHỈ gọi cho đơn vị 'noibo' (xem CreateTenantDatabase).
+        // Tách khỏi ApplyTenantTemplate vì còn phải gọi riêng cho các database dựng
+        // trước khi có script này.
+        //
+        // Trước đây đọc BỐN file rời và thứ tự chạy nằm ở chính mảng này — đọc file SQL
+        // không thấy được, xếp nhầm thì lỗi câm. Nay gộp hết vào 015_tenant_nb.sql:
+        // danh mục _NB -> cột bổ sung -> vá khuôn HOA_DON -> GOI_HD/GOI_HD_LINE ->
+        // dọn di sản DON_HANG của bản cũ, thứ tự nằm ngay trong file.
         private static void ApplyNbTables(SqlConnection conn, string dbName)
         {
-            // 013 dựng danh mục _NB, 014 thêm cột bổ sung, 015 vá khuôn HOA_DON
-            // (ma_nvkd/ma_nvvc/ma_goi + cột tính huong) và dựng GOI_HD/GOI_HD_LINE.
-            // PHẢI chạy đúng thứ tự này: 015 dọn di sản DON_HANG của bản 013 cũ.
-            foreach (var file in new[] { "KT2000.Api.tenant_nb.sql",
-                                         "KT2000.Api.tenant_nb_bosung.sql",
-                                         "KT2000.Api.tenant_nb_hoadon_goi.sql",
-                                         "KT2000.Api.tenant_nb_tri_gia.sql" })
-                foreach (var batch in SplitSqlBatches(ReadEmbedded(file)))
-                {
-                    using var cmd = new SqlCommand($"USE [{dbName}];\n{batch}", conn);
-                    cmd.CommandTimeout = 120;
-                    cmd.ExecuteNonQuery();
-                }
+            foreach (var batch in SplitSqlBatches(ReadEmbedded("KT2000.Api.tenant_nb.sql")))
+            {
+                using var cmd = new SqlCommand($"USE [{dbName}];\n{batch}", conn);
+                cmd.CommandTimeout = 120;
+                cmd.ExecuteNonQuery();
+            }
         }
 
         private static string ReadTenantTemplate() => ReadEmbedded("KT2000.Api.tenant_template.sql");

@@ -23,6 +23,8 @@ namespace KT2000.Api.Controllers
             User.FindFirst("tenant_code")?.Value
             ?? throw new UnauthorizedAccessException("Token không có thông tin đơn vị");
 
+        private string CurrentUser() => User.FindFirst("login_name")?.Value ?? "?";
+
         private int FiscalYear() =>
             int.TryParse(User.FindFirst("fiscal_year")?.Value, out var y)
                 ? y
@@ -97,6 +99,33 @@ namespace KT2000.Api.Controllers
                      .ToList();
 
             return Ok(await _thue.LayLinesNhieu(TenantCode(), FiscalYear(), ds));
+        }
+
+        /// <summary>
+        /// PUT api/thue/hoa-don/{maHd}/lines — ghi lại toàn bộ dòng hàng của hóa đơn.
+        /// Gửi lên danh sách dòng hiện tại; server xóa hết rồi chèn lại trong một
+        /// transaction. KHÔNG đụng bảng HOA_DON.
+        /// </summary>
+        [HttpPut("hoa-don/{maHd}/lines")]
+        public async Task<IActionResult> LuuLines(
+            string maHd, [FromBody] List<Models.HoaDonLineDto>? lines)
+        {
+            var chan = ChanNeuLaNoiBo();
+            if (chan != null) return chan;
+
+            if (string.IsNullOrWhiteSpace(maHd))
+                return BadRequest(new { message = "Thiếu mã hóa đơn" });
+
+            var ds = lines ?? new List<Models.HoaDonLineDto>();
+            // Chặn payload phi lý — hóa đơn thật nhiều nhất vài trăm dòng
+            if (ds.Count > 1000)
+                return BadRequest(new { message = "Hóa đơn không thể có quá 1000 dòng hàng" });
+
+            var soDong = await _thue.LuuLines(TenantCode(), FiscalYear(),
+                                              maHd.Trim(), ds, CurrentUser());
+            return soDong == null
+                ? NotFound(new { message = $"Không tìm thấy hóa đơn {maHd}" })
+                : Ok(new { message = $"Đã lưu {soDong} dòng hàng", soDong });
         }
 
         /// <summary>

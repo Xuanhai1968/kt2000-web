@@ -260,6 +260,20 @@ namespace KT2000.Api.Controllers
             var loiMk = KiemTraMatKhau(req.MatKhau);
             if (loiMk != null) return BadRequest(new { message = loiMk });
 
+            // Gán đơn vị thì đơn vị đó phải có thật và vai trò phải nằm trong bộ đã biết.
+            // Không kiểm ở đây thì UserTenantAccess ôm một TenantId trỏ vào hư không —
+            // user đăng nhập được nhưng combobox chọn đơn vị rỗng, rất khó lần ra vì sao.
+            string vaiTro = "accountant";
+            if (req.TenantId != null)
+            {
+                var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == req.TenantId.Value);
+                if (tenant == null)
+                    return BadRequest(new { message = "Không tìm thấy đơn vị để gán quyền" });
+                var v = ChuanHoaVaiTro(req.Role);
+                if (v == null) return BadRequest(new { message = LoiVaiTro(req.Role) });
+                vaiTro = v;
+            }
+
             var u = new User
             {
                 Id = Guid.NewGuid(), LoginName = ten, RealName = req.RealName?.Trim(),
@@ -272,7 +286,7 @@ namespace KT2000.Api.Controllers
             _db.Users.Add(u);
             if (req.TenantId != null)
                 _db.UserTenantAccess.Add(new UserTenantAccess
-                { UserId = u.Id, TenantId = req.TenantId.Value, Role = req.Role });
+                { UserId = u.Id, TenantId = req.TenantId.Value, Role = vaiTro });
             await _db.SaveChangesAsync();
             await GhiNhatKy("TAO_USER", $"Tạo user {ten}"
                 + (req.IsAdmin ? " (quản trị viên)" : ""), req.TenantId);
@@ -431,13 +445,18 @@ namespace KT2000.Api.Controllers
                 return Ok(new { message = $"Đã gỡ quyền của {u.LoginName} khỏi {t.Code}" });
             }
 
+            // Chuỗi tự do đi thẳng vào claim `role` của JWT — phải chặn ở đây (xem
+            // ghi chú ở ChuanHoaVaiTro). Role rỗng đã được xử lý phía trên = gỡ quyền.
+            var vaiTro = ChuanHoaVaiTro(req.Role);
+            if (vaiTro == null) return BadRequest(new { message = LoiVaiTro(req.Role) });
+
             if (q == null)
                 _db.UserTenantAccess.Add(new UserTenantAccess
-                { UserId = req.UserId, TenantId = req.TenantId, Role = req.Role.Trim() });
-            else q.Role = req.Role.Trim();
+                { UserId = req.UserId, TenantId = req.TenantId, Role = vaiTro });
+            else q.Role = vaiTro;
             await _db.SaveChangesAsync();
-            await GhiNhatKy("CAP_QUYEN", $"Cấp quyền '{req.Role}' cho {u.LoginName} tại {t.Code}", t.Id);
-            return Ok(new { message = $"Đã cấp quyền '{req.Role}' cho {u.LoginName} tại {t.Code}" });
+            await GhiNhatKy("CAP_QUYEN", $"Cấp quyền '{vaiTro}' cho {u.LoginName} tại {t.Code}", t.Id);
+            return Ok(new { message = $"Đã cấp quyền '{vaiTro}' cho {u.LoginName} tại {t.Code}" });
         }
 
         // Câu hỏi mở 8.1 của spec: tạm chốt ≥8 ký tự và phải có số — đủ dùng,
@@ -449,6 +468,23 @@ namespace KT2000.Api.Controllers
             if (!mk.Any(char.IsDigit)) return "Mật khẩu phải có ít nhất một chữ số";
             return null;
         }
+
+        // Vai trò trong một đơn vị. Giá trị này đi thẳng vào claim `role` của JWT
+        // (AuthService) rồi được dùng để phân quyền, nên KHÔNG được nhận chuỗi tự do:
+        // gõ nhầm "acountant" sẽ tạo ra tài khoản mang vai trò không khớp bất kỳ luật
+        // nào — không lỗi, không cảnh báo, chỉ lặng lẽ không có quyền gì.
+        // Bộ giá trị lấy theo 001_create_master.sql (admin | accountant | viewer).
+        private static readonly string[] VaiTroHopLe = { "admin", "accountant", "viewer" };
+
+        // Trả về vai trò đã chuẩn hóa, hoặc null nếu không hợp lệ
+        private static string? ChuanHoaVaiTro(string? role)
+        {
+            var r = (role ?? "").Trim().ToLowerInvariant();
+            return VaiTroHopLe.Contains(r) ? r : null;
+        }
+
+        private static string LoiVaiTro(string? role) =>
+            $"Vai trò không hợp lệ: '{role}'. Chỉ nhận {string.Join(" | ", VaiTroHopLe)}";
 
         // ========== BƯỚC 1: tài khoản cổng TCT + chạy bộ tải ==========
 
