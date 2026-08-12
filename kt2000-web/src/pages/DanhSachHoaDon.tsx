@@ -33,6 +33,9 @@ interface Props {
   laDauRa: boolean;
   onChon: (maHd: string, bucTaiLai?: boolean) => void;
   onXemHtml: (maHd: string) => void;
+  // Nạp lại sổ từ server — màn cha giữ hàm này vì nó sở hữu dsHd.
+  onLamMoi?: () => void | Promise<void>;
+  dangTai?: boolean;
 }
 
 // Nút chưa nối nghiệp vụ: giữ nguyên màu và vị trí như bản gốc nhưng để disabled,
@@ -48,9 +51,17 @@ function NutCho({ nhan, lop = "" }: { nhan: string; lop?: string }) {
 
 export default function DanhSachHoaDon({
   mo, onDong, dsHd, namLamViec, tenDonVi, laDauRa, onChon, onXemHtml,
+  onLamMoi, dangTai = false,
 }: Props) {
   const [thang, setThang] = useState<number | "all">("all");
   const [thangKT, setThangKT] = useState<number | "all">("all");
+  // Lọc theo khoảng ngày — chỉ áp dụng khi bật, để nút "Theo ngày" bấm mới ăn
+  const [locNgay, setLocNgay] = useState(false);
+  const [tuNgay, setTuNgay] = useState("");
+  const [denNgay, setDenNgay] = useState("");
+  // Vùng công cụ mặc định THU GỌN: phần lớn thời gian người dùng chỉ tra cứu và
+  // chọn hóa đơn, mở sẵn cả rừng nút chỉ tổ ăn mất chiều cao của hai lưới.
+  const [moCongCu, setMoCongCu] = useState(false);
   const [oTuKhoa, setOTuKhoa] = useState("");
   const [tuKhoa, setTuKhoa] = useState("");
   const timNgay = () => setTuKhoa(oTuKhoa);
@@ -70,15 +81,31 @@ export default function DanhSachHoaDon({
   });
   const datCb = (k: string, v: boolean) => setCb((m) => ({ ...m, [k]: v }));
 
+  // Tháng hạch toán suy từ ngay_nh (ngày nhập hàng), khác thang của tờ khai:
+  // một HĐ tháng 6 vẫn có thể được hạch toán sang tháng 7.
+  const thangHachToan = (x: HoaDonThue) => {
+    const s = (x.ngayNh ?? "").slice(0, 10);
+    const m = Number(s.split("-")[1]);
+    return Number.isFinite(m) && m > 0 ? m : null;
+  };
+
   const dsLoc = useMemo(() => {
     const k = tuKhoa.trim().toLowerCase();
     return dsHd.filter((x) => {
       if (thang !== "all" && x.thang !== thang) return false;
+      if (thangKT !== "all" && thangHachToan(x) !== thangKT) return false;
+      // Khoảng ngày so sánh trên chuỗi ISO yyyy-MM-dd nên không cần parse Date
+      if (locNgay) {
+        const d = (x.ngay ?? "").slice(0, 10);
+        if (!d) return false;
+        if (tuNgay && d < tuNgay) return false;
+        if (denNgay && d > denNgay) return false;
+      }
       if (!k) return true;
       return [x.soHd, x.khhd, x.mst, x.tenKh, x.maHd]
         .some((v) => (v ?? "").toLowerCase().includes(k));
     });
-  }, [dsHd, thang, tuKhoa]);
+  }, [dsHd, thang, thangKT, tuKhoa, locNgay, tuNgay, denNgay]);
 
   // Hóa đơn đang chọn ở bảng trên — nguồn của bảng dòng hàng bên dưới
   const hdDangChon = useMemo(
@@ -162,13 +189,39 @@ export default function DanhSachHoaDon({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dsLoc, inGhiDe]);
 
+  // ===== Kiểm tra thứ tự HĐ ra =====
+  // HĐ đầu ra phải liên tục theo từng ký hiệu: thủng số là dấu hiệu mất hóa đơn
+  // hoặc quên nạp. Gom theo khhd rồi dò chỗ đứt trong dãy số đã sắp tăng dần.
+  // Chỉ so phần SỐ của so_hd, bỏ qua số 0 đệm đầu ("00003846" -> 3846).
+  const thungSo = useMemo(() => {
+    if (!cb.kiemTraThuTu) return [] as string[];
+    const theoKh = new Map<string, number[]>();
+    for (const x of dsLoc) {
+      const so = Number((x.soHd ?? "").replace(/\D/g, ""));
+      if (!Number.isFinite(so) || so <= 0) continue;
+      const kh = x.khhd ?? "(không ký hiệu)";
+      const ds = theoKh.get(kh);
+      if (ds) ds.push(so); else theoKh.set(kh, [so]);
+    }
+    const bao: string[] = [];
+    for (const [kh, ds] of theoKh) {
+      const sap = [...new Set(ds)].sort((a, b) => a - b);
+      for (let i = 1; i < sap.length; i++) {
+        const truoc = sap[i - 1], sau = sap[i];
+        if (sau - truoc > 1) {
+          bao.push(sau - truoc === 2
+            ? `${kh}: thiếu số ${truoc + 1}`
+            : `${kh}: thiếu ${truoc + 1}–${sau - 1} (${sau - truoc - 1} số)`);
+        }
+      }
+    }
+    return bao;
+  }, [cb.kiemTraThuTu, dsLoc]);
+
   // Cầu nối cho cell renderer của cột In: xem chú thích tại colId "in".
   const luoiTrenRef = useRef<AgGridReact<HoaDonThue> | null>(null);
   const hamRef = useRef({ laDanhDauIn, datIn });
 
-  // Làm mới cầu nối rồi bảo AG Grid vẽ lại cột In. Nó không tự biết state React
-  // đã đổi vì mảng cột cố tình không phụ thuộc state. Chạy theo cả dsLoc: tải
-  // lại danh sách hay sửa chiết khấu thì dấu tự tính lại cho đúng.
   useEffect(() => {
     hamRef.current = { laDanhDauIn, datIn };
     luoiTrenRef.current?.api?.refreshCells({ columns: ["in"], force: true });
@@ -186,13 +239,14 @@ export default function DanhSachHoaDon({
       pinned: "left", tooltipField: "maHd" },
     { colId: "ngay", headerName: "Ngày", width: 74,
       valueGetter: (p) => ngayNgan(p.data?.ngay ?? null) },
+    { colId: "thang", headerName: "Tháng", field: "thang", width: 56,
+      type: "numericColumn" },
     { colId: "ngayNh", headerName: "Ngày NH", width: 74,
       valueGetter: (p) => ngayNgan(p.data?.ngayNh ?? p.data?.ngay ?? null) },
     { colId: "soHd", headerName: "Số HĐ", field: "soHd", width: 82 },
     { colId: "nhanSu", headerName: "Nhân sự", width: 330,
       valueGetter: (p) => `${p.data?.tenKh ?? ""}_${p.data?.mst ?? ""}`,
       tooltipValueGetter: (p) => String(p.value ?? "") },
-    // Định khoản: dòng nào chưa hạch toán thì để trống như bản gốc
     { colId: "ghiNo", headerName: "Nợ", field: "ghiNo", width: 44 },
     { colId: "ghiCo", headerName: "Có", field: "ghiCo", width: 44 },
     { colId: "ptVat", headerName: "%VAT", width: 50,
@@ -209,20 +263,10 @@ export default function DanhSachHoaDon({
     { colId: "maTv", headerName: "Thương vụ", field: "maTv", width: 90 },
     { colId: "ghiChu", headerName: "Ghi chú", field: "ghiChu", width: 130,
       tooltipField: "ghiChu" },
-    // Ô tích TỰ BẬT cho hóa đơn có chiết khấu + điều chỉnh/thay thế, nhưng vẫn
-    // bấm được. checkbox thuần thay vì antd Checkbox: ô lưới cao 22px và cell
-    // renderer dựng lại liên tục khi cuộn — component nặng ở đây không đáng.
-    //
-    // Đọc qua hamRef chứ không gọi thẳng laDanhDauIn/datIn: mảng cột này để deps
-    // rỗng cho AG Grid giữ nguyên tham chiếu (nhoDoRongCot cần thế), nên closure
-    // ở đây bắt mất bản đầu tiên của hai hàm và ô tích sẽ đứng im khi bấm.
     { colId: "in", headerName: "In", width: 46,
       headerTooltip: "Tự đánh dấu: HĐ có chiết khấu và là HĐ điều chỉnh/thay thế",
       valueGetter: (p) => (p.data ? hamRef.current.laDanhDauIn(p.data) : false),
       cellStyle: { backgroundColor: "#f5f5f5", textAlign: "center" },
-      // onClick chặn nổi bọt: bấm ô tích không được kéo theo "chọn dòng" của
-      // lưới — hai hành động khác nhau, gộp lại thì tích một cái là đổi luôn
-      // hóa đơn đang xem ở bảng dưới.
       cellRenderer: (p: { data?: HoaDonThue }) => p.data ? (
         <input type="checkbox"
                checked={hamRef.current.laDanhDauIn(p.data)}
@@ -240,6 +284,12 @@ export default function DanhSachHoaDon({
       field: "tichChatHdLienquan", width: 110 },
     { colId: "loaiHdLienquan", headerName: "Loại HĐ", field: "loaiHdLienquan", width: 80 },
     { colId: "mauSoHdLienquan", headerName: "Mã Số HĐ", field: "mauSoHdLienquan", width: 90 },
+    { colId: "khhdLienquan", headerName: "KH HĐLQ", field: "khhdLienquan", width: 90 },
+    { colId: "ngayLienquan", headerName: "Ngày HĐLQ", width: 84,
+      valueGetter: (p) => ngayNgan(p.data?.ngayLienquan ?? null) },
+    { colId: "trangThaiHdLienQuan", headerName: "TT HĐLQ",
+      field: "trangThaiHdLienQuan", width: 100,
+      tooltipField: "trangThaiHdLienQuan" },
     { colId: "khhd", headerName: "Ký hiệu HĐ", field: "khhd", width: 100 },
     { colId: "tthaiHd", headerName: "Trạng thái", field: "tthaiHd", width: 100 },
     { colId: "ghiChu2", headerName: "Ghi chú", field: "ghiChu", width: 120,
@@ -262,9 +312,9 @@ export default function DanhSachHoaDon({
       valueGetter: (p) => dinhDangPhanTramVat(p.data?.ptVat) },
     // Chưa định khoản thì hiện giá trị quy ước 156/331 như bản gốc
     { colId: "ghiNo", headerName: "Nợ", width: 50,
-      valueGetter: (p) => p.data?.ghiNo || "156" },
+      valueGetter: (p) => p.data?.ghiNo || "" },
     { colId: "ghiCo", headerName: "Có", width: 50,
-      valueGetter: (p) => p.data?.ghiCo || "331" },
+      valueGetter: (p) => p.data?.ghiCo || "" },
     { colId: "tienCk", headerName: "C.Khấu", field: "tienCk", width: 80,
       type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
     { colId: "ghiChu", headerName: "Ghi chú", width: 200,
@@ -286,9 +336,9 @@ export default function DanhSachHoaDon({
       style={{ top: 0, paddingBottom: 0, maxWidth: "100vw" }}
       styles={{
         body: {
-          height: "calc(100vh - 96px)",
-          overflow: "auto",
-          padding: 6,
+          height: "calc(100vh - 88px)",
+          overflow: "hidden",
+          padding: 4,
         },
       }}
     >
@@ -299,8 +349,28 @@ export default function DanhSachHoaDon({
           <Select size="small" style={{ width: 150 }} value={thang}
                   onChange={(v) => setThang(v)} options={optThang} />
           <span className="nhan">Năm {namLamViec}</span>
-          <Button size="small" className="nut-xanhdg">Refresh</Button>
-          <NutCho nhan="Theo ngày" lop="nut-xanhdg" />
+          <Button size="small" className="nut-xanhdg" loading={dangTai}
+                  disabled={!onLamMoi}
+                  onClick={() => void onLamMoi?.()}
+                  title={onLamMoi ? "Đọc lại sổ hóa đơn từ server"
+                                  : "Màn cha chưa cấp hàm nạp lại"}>
+            Refresh
+          </Button>
+          {/* Bật/tắt lọc theo khoảng ngày. Tắt thì hai ô ngày mờ đi cho khỏi
+              tưởng là đang lọc mà không thấy tác dụng. */}
+          <Button size="small"
+                  className={locNgay ? "nut-xanhla" : "nut-xanhdg"}
+                  onClick={() => setLocNgay((v) => !v)}
+                  title="Lọc danh sách theo khoảng ngày hóa đơn">
+            Theo ngày{locNgay ? " ✓" : ""}
+          </Button>
+          <Input size="small" type="date" style={{ width: 130 }}
+                 disabled={!locNgay} value={tuNgay}
+                 onChange={(e) => setTuNgay(e.target.value)} />
+          <span className="nhan">→</span>
+          <Input size="small" type="date" style={{ width: 130 }}
+                 disabled={!locNgay} value={denNgay}
+                 onChange={(e) => setDenNgay(e.target.value)} />
           <span className="nhan">Tháng KT:</span>
           <Select size="small" style={{ width: 130 }} value={thangKT}
                   onChange={(v) => setThangKT(v)} options={optThang} />
@@ -313,11 +383,17 @@ export default function DanhSachHoaDon({
           <NutCho nhan="Cập nhật TV" lop="nut-hong" />
           <NutCho nhan="Xoá HĐ đánh dấu" />
           <NutCho nhan="Xem tờ khai gốc" />
-
-          <span style={{ flex: 1 }} />
-          <NutCho nhan="Chuyển VAT Vào Giá trị" lop="nut-xanhdam" />
-          <NutCho nhan="Chuyển Chi phí hoặc Thu nhập khác" lop="nut-hong" />
         </div>
+
+        {/* Kết quả dò thứ tự — chỉ hiện khi đã tích ô kiểm tra */}
+        {cb.kiemTraThuTu && (
+          <div className={`bang-thung-so ${thungSo.length ? "co-loi" : "khong-loi"}`}>
+            {thungSo.length === 0
+              ? <>✓ Số hóa đơn liên tục, không có số nào bị thiếu
+                  {" "}({dsLoc.length} HĐ đang xét)</>
+              : <>⚠ Thủng số hóa đơn: {thungSo.join(" · ")}</>}
+          </div>
+        )}
 
         <div className="thanh-loc">
           <span className="nhan nhan-xanh">Tìm nhanh</span>
@@ -353,7 +429,7 @@ export default function DanhSachHoaDon({
           </Button>
         </div>
 
-        <div style={{ height: 260 }}>
+        <div className="vung-luoi">
         <AgGridReact<HoaDonThue>
           ref={luoiTrenRef}
           theme={themeVfp}
@@ -388,155 +464,8 @@ export default function DanhSachHoaDon({
         />
         </div>
 
-        {/* ===== TẦNG CÔNG CỤ 1: đổi hàng KM · tổng tiền · đánh dấu ===== */}
-        <div className="tang-cong-cu">
-          <Input.TextArea rows={3} style={{ width: 250 }} />
-
-          <div className="cot-cong-cu">
-            <div className="hang-cong-cu">
-              <NutCho nhan="Đổi hàng KM" lop="nut-xanhdg" />
-              <div className="o-tong">{soVn(tongTienHang)}</div>
-              <div className="o-tong">{soVn(tongThanhToan)}</div>
-              <div className="o-tong" style={{ minWidth: 70 }}>{soVn(0)}</div>
-              <NutCho nhan="Đánh dấu HĐ có VAT" lop="nut-xanhla" />
-            </div>
-            <div className="hang-cong-cu">
-              <Radio.Group size="small" value={nhomDoi}
-                           onChange={(e) => setNhomDoi(e.target.value)}>
-                <Radio value="ten_kh">Đổi tên KH</Radio>
-                <Radio value="ghi_no">Đổi Ghi nợ</Radio>
-                <Radio value="ghi_co">Đổi ghi có</Radio>
-                <Radio value="thuong_vu">Thương vụ</Radio>
-              </Radio.Group>
-              <NutCho nhan="Đánh dấu HĐ có CK" lop="nut-cam" />
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Lấy XML 2015" lop="nut-xanhdg" />
-              <NutCho nhan="Đổi thông tin HĐ" lop="nut-xanhdg" />
-              <Select size="small" style={{ width: 300 }} placeholder=" " />
-            </div>
-          </div>
-
-          <div className="cot-cong-cu" style={{ marginLeft: "auto" }}>
-            <Checkbox checked={cb.chuyenSangGhiChuG}
-                      onChange={(e) => datCb("chuyenSangGhiChuG", e.target.checked)}>
-              Chuyển sang GHI_CHU
-            </Checkbox>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Sửa ghi chú" lop="nut-vang" />
-              <NutCho nhan="Copy File ảnh" lop="nut-vang" />
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Thêm ghi chú" lop="nut-vang" />
-              <NutCho nhan="Thêm KM theo DM hàng có sẵn" lop="nut-vang" />
-            </div>
-            <Checkbox checked={cb.chuyenTenHangSangGhiChu}
-                      onChange={(e) => datCb("chuyenTenHangSangGhiChu", e.target.checked)}>
-              Chuyển Tên hàng sang ghi chú bổ trống
-            </Checkbox>
-          </div>
-        </div>
-
-        {/* ===== TẦNG CÔNG CỤ 2: đồng bộ · kiểm tra định khoản ===== */}
-        <Typography.Text style={{ fontSize: 12, color: "#0000cd", display: "block",
-                                  marginTop: 4 }}>
-          Bấm chuột phải vào ô Mã hoá đơn (F3) của HĐ tương ứng để Sửa phiếu này
-        </Typography.Text>
-
-        <div className="tang-cong-cu">
-          <div className="cot-cong-cu">
-            <Checkbox checked={cb.chiLayDanhDau}
-                      onChange={(e) => datCb("chiLayDanhDau", e.target.checked)}>
-              Chỉ lấy các HĐ đánh dấu
-            </Checkbox>
-            <div className="hang-cong-cu">
-              <Checkbox checked={cb.tatCa}
-                        onChange={(e) => datCb("tatCa", e.target.checked)}>
-                Tất Cả
-              </Checkbox>
-              <Checkbox checked={cb.ghiNho}
-                        onChange={(e) => datCb("ghiNho", e.target.checked)}>
-                Ghi nhớ
-              </Checkbox>
-            </div>
-          </div>
-
-          <div className="cot-cong-cu">
-            <NutCho nhan="Đồng bộ Khách hàng" lop="nut-xanhdg" />
-            <div className="hang-cong-cu">
-              <NutCho nhan="Đồng bộ Hàng hóa" lop="nut-xanhdg" />
-              <Checkbox checked={cb.tongHopKhiDongBo}
-                        onChange={(e) => datCb("tongHopKhiDongBo", e.target.checked)}>
-                Tổng hợp khi đồng bộ
-              </Checkbox>
-            </div>
-          </div>
-
-          <div className="cot-cong-cu">
-            <NutCho nhan="Các HĐ trên 20T" lop="nut-xanhdg" />
-            <NutCho nhan="Kiểm tra định khoản" lop="nut-xanhdg" />
-          </div>
-
-          <div className="cot-cong-cu">
-            <Checkbox checked={cb.themVaoDanhMuc}
-                      onChange={(e) => datCb("themVaoDanhMuc", e.target.checked)}>
-              Thêm vào danh mục KH khi không có MST
-            </Checkbox>
-            <div className="hang-cong-cu">
-              <Checkbox checked={cb.nhomTheoTenHang}
-                        onChange={(e) => datCb("nhomTheoTenHang", e.target.checked)}>
-                Nhóm theo Tên hàng khi in chi tiết
-              </Checkbox>
-              <Checkbox checked={cb.nhapHangTraLai}
-                        onChange={(e) => datCb("nhapHangTraLai", e.target.checked)}>
-                Nhập hàng trả lại
-              </Checkbox>
-            </div>
-            <div className="hang-cong-cu">
-              <Checkbox checked={cb.theoNgayNhapHang}
-                        onChange={(e) => datCb("theoNgayNhapHang", e.target.checked)}>
-                Theo ngày nhập hàng
-              </Checkbox>
-              <Checkbox checked={cb.layDuLieuTheoDuongDan}
-                        onChange={(e) => datCb("layDuLieuTheoDuongDan", e.target.checked)}>
-                Lấy dữ liệu theo đường dẫn gốc
-              </Checkbox>
-            </div>
-          </div>
-
-          <div className="cot-cong-cu">
-            <Checkbox checked={cb.themMoiCaKhiDaCo}
-                      onChange={(e) => datCb("themMoiCaKhiDaCo", e.target.checked)}>
-              Thêm mới cả khi đã có HĐ
-            </Checkbox>
-            <div className="hang-cong-cu">
-              <Checkbox checked={cb.dongBoBoQuaDuoi}
-                        onChange={(e) => datCb("dongBoBoQuaDuoi", e.target.checked)}>
-                Đồng bộ bỏ qua đuôi '_AD
-              </Checkbox>
-              <div className="o-tong" style={{ minWidth: 60 }}>{soVn(0)}</div>
-              <NutCho nhan="Cập nhật % VAT" lop="nut-xanhdg" />
-            </div>
-            <div className="hang-cong-cu">
-              <Checkbox checked={cb.duongDanKhac}
-                        onChange={(e) => datCb("duongDanKhac", e.target.checked)}>
-                Đường dẫn khác
-              </Checkbox>
-              <NutCho nhan="Mark All Line" lop="nut-xanhdg" />
-              <NutCho nhan="Chuyển C.Khấu" lop="nut-cam" />
-            </div>
-            <div className="hang-cong-cu">
-              <Checkbox checked={cb.xoaDuLieuTruocKhiLay}
-                        onChange={(e) => datCb("xoaDuLieuTruocKhiLay", e.target.checked)}>
-                Xóa dữ liệu trước khi lấy
-              </Checkbox>
-              <NutCho nhan="Xử lý HĐ TT-ĐC-XB" lop="nut-vang" />
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 5 }}>
-          <div className="hang-cong-cu" style={{ marginBottom: 2 }}>
+        <div className="vung-luoi-phu khoi-luoi-phu">
+          <div className="hang-cong-cu">
             <Typography.Text strong style={{ fontSize: 12 }}>
               Chi tiết hàng hoá dịch vụ
             </Typography.Text>
@@ -561,7 +490,7 @@ export default function DanhSachHoaDon({
               </b>
             </Typography.Text>
           </div>
-          <div className="khung-phu" style={{ height: 170 }}>
+          <div className="khung-phu">
             <AgGridReact<HoaDonLine>
               theme={themeVfp}
               {...luoiVfpProps}
@@ -577,12 +506,241 @@ export default function DanhSachHoaDon({
           </div>
         </div>
 
-        {/* ===== TẦNG CÔNG CỤ 3: in ấn · công cụ ===== */}
-        <div className="tang-cong-cu">
-          <div className="cot-cong-cu">
+        {/* ===== VÙNG CÔNG CỤ: 4 CỘT THEO CHỨC NĂNG =====
+            Bản VFP gốc dàn nút theo thứ tự lịch sử, ai thêm gì thì nhét vào chỗ
+            trống — nhìn không ra nhóm. Ở đây gom lại thành 4 nhóm nghiệp vụ, mỗi
+            nhóm một cột có tiêu đề, để tìm nút theo VIỆC muốn làm chứ không phải
+            quét cả vùng. Nội dung nút giữ nguyên, chỉ đổi chỗ ngồi.
+
+            Cả vùng THU GỌN được và mặc định đóng — nhường hết chiều cao cho hai
+            lưới, mở ra khi cần thao tác. */}
+        <button type="button" className="thanh-thu-gon"
+                aria-expanded={moCongCu}
+                onClick={() => setMoCongCu((v) => !v)}
+                title={moCongCu ? "Thu gọn vùng công cụ" : "Mở vùng công cụ"}>
+          <span className={`mui-ten ${moCongCu ? "mo" : ""}`}>▶</span>
+          <span>Công cụ nghiệp vụ</span>
+          <span className="ghi-chu-thu-gon">
+            Nạp dữ liệu · Định khoản · Hàng KM · Ghi chú &amp; In
+          </span>
+        </button>
+
+        {moCongCu && (
+        <div className="luoi-cong-cu">
+
+          {/* --- CỘT 1: NẠP DỮ LIỆU & ĐỒNG BỘ --- */}
+          <section className="nhom-cc">
+            <h4>Nạp dữ liệu &amp; Đồng bộ</h4>
             <div className="hang-cong-cu">
-              <NutCho nhan="Công cụ" />
+              <NutCho nhan="Đọc HĐ PDF" lop="nut-xanhla" />
+              <NutCho nhan="Đọc HĐ PDF cùng XML" lop="nut-xanhla" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Đọc tờ khai Hải quan" lop="nut-xanhla" />
+              <NutCho nhan="Đọc HĐ Hủy" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Lấy XML 2015" lop="nut-xanhdg" />
+              <NutCho nhan="Xóa HĐ lấy từ Excel" lop="nut-cam" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Đồng bộ Khách hàng" lop="nut-xanhdg" />
+              <NutCho nhan="Đồng bộ Hàng hóa" lop="nut-xanhdg" />
+            </div>
+            <Checkbox checked={cb.tongHopKhiDongBo}
+                      onChange={(e) => datCb("tongHopKhiDongBo", e.target.checked)}>
+              Tổng hợp khi đồng bộ
+            </Checkbox>
+            <Checkbox checked={cb.themVaoDanhMuc}
+                      onChange={(e) => datCb("themVaoDanhMuc", e.target.checked)}>
+              Thêm vào danh mục KH khi không có MST
+            </Checkbox>
+            <Checkbox checked={cb.dongBoBoQuaDuoi}
+                      onChange={(e) => datCb("dongBoBoQuaDuoi", e.target.checked)}>
+              Đồng bộ bỏ qua đuôi '_AD
+            </Checkbox>
+            <Checkbox checked={cb.themMoiCaKhiDaCo}
+                      onChange={(e) => datCb("themMoiCaKhiDaCo", e.target.checked)}>
+              Thêm mới cả khi đã có HĐ
+            </Checkbox>
+            <Checkbox checked={cb.xoaDuLieuTruocKhiLay}
+                      onChange={(e) => datCb("xoaDuLieuTruocKhiLay", e.target.checked)}>
+              Xóa dữ liệu trước khi lấy
+            </Checkbox>
+            <Checkbox checked={cb.duongDanKhac}
+                      onChange={(e) => datCb("duongDanKhac", e.target.checked)}>
+              Đường dẫn khác
+            </Checkbox>
+            <Checkbox checked={cb.layDuLieuTheoDuongDan}
+                      onChange={(e) => datCb("layDuLieuTheoDuongDan", e.target.checked)}>
+              Lấy dữ liệu theo đường dẫn gốc
+            </Checkbox>
+          </section>
+
+          {/* --- CỘT 2: ĐỊNH KHOẢN & KIỂM TRA --- */}
+          <section className="nhom-cc">
+            <h4>Định khoản &amp; Kiểm tra</h4>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Định khoản lại" lop="nut-xanhdg" />
+              <NutCho nhan="Kiểm tra định khoản" lop="nut-xanhdg" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Đổi ĐK theo TK kho" lop="nut-xanhdg" />
+              <NutCho nhan="HĐ SX Tồn kho" lop="nut-xanhdg" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Loại bỏ hạch 154" lop="nut-tim" />
+              <NutCho nhan="Chuyển HĐ 154 sang H.Hóa" lop="nut-xanhdg" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Các HĐ trên 20T" lop="nut-xanhdg" />
+              <NutCho nhan="Kiểm tra tên trùng" lop="nut-xanhdg" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Xử lý HĐ TT-ĐC-XB" lop="nut-vang" />
+              <NutCho nhan="Đổi thông tin HĐ" lop="nut-xanhdg" />
+            </div>
+            <div className="hang-cong-cu">
+              <div className="o-tong" style={{ minWidth: 74 }}>{soVn(0)}</div>
+              <NutCho nhan="Cập nhật % VAT" lop="nut-xanhdg" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Đánh dấu HĐ có VAT" lop="nut-xanhla" />
+              <NutCho nhan="Đánh dấu HĐ có CK" lop="nut-cam" />
+            </div>
+            {/* Nhóm "đổi hàng loạt": radio chọn cột, nút Đổi... áp cho HĐ đã lọc */}
+            <Radio.Group size="small" value={nhomDoi}
+                         onChange={(e) => setNhomDoi(e.target.value)}>
+              <Radio value="ten_kh">Đổi tên KH</Radio>
+              <Radio value="ghi_no">Đổi Ghi nợ</Radio>
+              <Radio value="ghi_co">Đổi ghi có</Radio>
+              <Radio value="thuong_vu">Thương vụ</Radio>
+            </Radio.Group>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Đổi hàng loạt" lop="nut-hong" />
+              <Select size="small" style={{ flex: 1, minWidth: 120 }} placeholder=" " />
+            </div>
+            <div className="hang-cong-cu">
+              <Checkbox checked={cb.chiLayDanhDau}
+                        onChange={(e) => datCb("chiLayDanhDau", e.target.checked)}>
+                Chỉ lấy HĐ đánh dấu
+              </Checkbox>
+              <Checkbox checked={cb.tatCa}
+                        onChange={(e) => datCb("tatCa", e.target.checked)}>
+                Tất Cả
+              </Checkbox>
+              <Checkbox checked={cb.ghiNho}
+                        onChange={(e) => datCb("ghiNho", e.target.checked)}>
+                Ghi nhớ
+              </Checkbox>
+            </div>
+          </section>
+
+          {/* --- CỘT 3: HÀNG KM & CHIẾT KHẤU --- */}
+          <section className="nhom-cc">
+            <h4>Hàng KM &amp; Chiết khấu</h4>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Thêm hàng KM" lop="nut-xanhdg" />
+              <NutCho nhan="Thêm hàng KM nhiều HĐ" lop="nut-xanhdg" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Đổi hàng KM" lop="nut-xanhdg" />
+              <NutCho nhan="Thêm KM cho HĐ Ra" lop="nut-xanhla" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Tách hàng KM sang HĐ" lop="nut-xanhdg" />
+              <NutCho nhan="Tách dòng hàng KM" lop="nut-xanhdg" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Thêm KM theo DM hàng có sẵn" lop="nut-vang" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Thêm C.Khấu" lop="nut-tim" />
+              <div className="o-tong" style={{ minWidth: 74 }}>{soVn(0)}</div>
+              <NutCho nhan="Chuyển C.Khấu" lop="nut-cam" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Mark All Line" lop="nut-xanhdg" />
+              <NutCho nhan="Mark 10 Line" lop="nut-xanhdg" />
+              <Input size="small" style={{ width: 44 }} value="1" readOnly />
+            </div>
+            {/* Lỗ lãi: cần giá vốn nên xếp cùng nhóm giá, không nằm ở nhóm in */}
+            <div className="hang-cong-cu">
+              <NutCho nhan="Tính giá trị lãi lỗ" lop="nut-xanhla" />
+              <NutCho nhan="Tìm Hàng lỗ theo HĐ" lop="nut-hong" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Thay đổi ĐG theo GV" lop="nut-vang" />
+              <div className="o-tong" style={{ minWidth: 74 }}>{soVn(0)}</div>
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Tạo HĐ tự tính" lop="nut-xanhla" />
+              <NutCho nhan="Tạo HĐ từ TK" lop="nut-xanhla" />
+              <NutCho nhan="Tạo HĐ từ TK New" lop="nut-cam" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Thêm GT cho HĐ lẻ" />
+              <Checkbox checked={cb.giaDaCoThue}
+                        onChange={(e) => datCb("giaDaCoThue", e.target.checked)}>
+                Giá đã có thuế
+              </Checkbox>
+            </div>
+            <div className="hang-cong-cu">
+              <Checkbox checked={cb.lapRapCB1}
+                        onChange={(e) => datCb("lapRapCB1", e.target.checked)}>
+                Lắp ráp CB 1 (1521)
+              </Checkbox>
+              <Checkbox checked={cb.chiLayFileExcelSP}
+                        onChange={(e) => datCb("chiLayFileExcelSP", e.target.checked)}>
+                Chỉ lấy Excel SP Lỗ lãi
+              </Checkbox>
+            </div>
+            <Radio.Group size="small" value={nhomDoi2}
+                         onChange={(e) => setNhomDoi2(e.target.value)}>
+              <Radio value="ten_hang">Đổi tên hàng</Radio>
+              <Radio value="ghi_no">Đổi Ghi nợ</Radio>
+              <Radio value="ghi_co">Đổi ghi có</Radio>
+              <Radio value="tv">Đổi TV</Radio>
+            </Radio.Group>
+            <div className="hang-cong-cu">
+              <NutCho nhan="Đổi..." lop="nut-vang" />
+              <Select size="small" style={{ flex: 1, minWidth: 120 }} placeholder="Tên" />
+            </div>
+            <Checkbox checked={cb.nhapHangTraLai}
+                      onChange={(e) => datCb("nhapHangTraLai", e.target.checked)}>
+              Nhập hàng trả lại
+            </Checkbox>
+          </section>
+
+          {/* --- CỘT 4: GHI CHÚ & IN ẤN --- */}
+          <section className="nhom-cc">
+            <h4>Ghi chú &amp; In ấn</h4>
+            <Input.TextArea rows={2} placeholder="Nội dung ghi chú áp cho HĐ đã chọn" />
+            <div className="hang-cong-cu">
+              <NutCho nhan="Sửa ghi chú" lop="nut-vang" />
+              <NutCho nhan="Thêm ghi chú" lop="nut-vang" />
+              <NutCho nhan="Copy File ảnh" lop="nut-vang" />
+            </div>
+            <Checkbox checked={cb.chuyenSangGhiChuG}
+                      onChange={(e) => datCb("chuyenSangGhiChuG", e.target.checked)}>
+              Chuyển sang GHI_CHU
+            </Checkbox>
+            <Checkbox checked={cb.chuyenTenHangSangGhiChu}
+                      onChange={(e) => datCb("chuyenTenHangSangGhiChu", e.target.checked)}>
+              Chuyển Tên hàng sang ghi chú bỏ trống
+            </Checkbox>
+
+            <div className="vach-nhom" />
+
+            <div className="hang-cong-cu">
               <NutCho nhan="In phiếu TC" lop="nut-vang" />
+              <NutCho nhan="In Phiếu xuất kho" lop="nut-xanhla" />
+            </div>
+            <div className="hang-cong-cu">
+              <NutCho nhan="In P.Xuất kèm File PDF" lop="nut-xanhla" />
+              <NutCho nhan="Công cụ" />
+            </div>
+            <div className="hang-cong-cu">
               <Checkbox checked={cb.printPreview}
                         onChange={(e) => datCb("printPreview", e.target.checked)}>
                 Print Preview
@@ -596,113 +754,31 @@ export default function DanhSachHoaDon({
                 Ngân hàng
               </Checkbox>
             </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Xóa HĐ lấy từ Excel" lop="nut-cam" />
-              <NutCho nhan="Định khoản lại" lop="nut-xanhdg" />
-              <NutCho nhan="Đổi ĐK theo TK kho" lop="nut-xanhdg" />
-              <NutCho nhan="HĐ SX Tồn kho" lop="nut-xanhdg" />
-            </div>
-            <div className="hang-cong-cu">
-              <Checkbox checked={cb.khongInHangKM}
-                        onChange={(e) => datCb("khongInHangKM", e.target.checked)}>
-                Không in hàng KM khi in Bảng kê bán lẻ
-              </Checkbox>
-              <NutCho nhan="Kiểm tra tên trùng" lop="nut-xanhdg" />
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Thêm C.Khấu" lop="nut-tim" />
-              <div className="o-tong" style={{ minWidth: 90 }}>{soVn(0)}</div>
-              <NutCho nhan="Đọc HĐ PDF" lop="nut-xanhla" />
-              <NutCho nhan="Đọc HĐ PDF cùng XML" lop="nut-xanhla" />
-              <NutCho nhan="Đọc tờ khai Hải quan" lop="nut-xanhla" />
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Đọc HĐ Hủy" />
-              <NutCho nhan="In P.Xuất kèm File PDF" lop="nut-xanhla" />
-              <NutCho nhan="In Phiếu xuất kho" lop="nut-xanhla" />
-            </div>
-          </div>
-
-          {/* Cột giữa: hạch toán 154 / hàng KM */}
-          <div className="cot-cong-cu">
-            <div className="hang-cong-cu">
-              <NutCho nhan="Loại bỏ hạch 154" lop="nut-tim" />
-              <NutCho nhan="Thêm KM cho HĐ Ra" lop="nut-xanhla" />
-              <div className="o-tong" style={{ minWidth: 70 }}>{soVn(0)}</div>
-            </div>
-            <div className="hang-cong-cu">
-              <Checkbox checked={cb.lapRapCB1}
-                        onChange={(e) => datCb("lapRapCB1", e.target.checked)}>
-                Lắp ráp CB 1 (1521)
-              </Checkbox>
-              <Radio.Group size="small" value={nhomDoi2}
-                           onChange={(e) => setNhomDoi2(e.target.value)}>
-                <Radio value="ten_hang">Đổi tên hàng</Radio>
-                <Radio value="ghi_no">Đổi Ghi nợ</Radio>
-                <Radio value="ghi_co">Đổi ghi có</Radio>
-                <Radio value="tv">Đổi TV</Radio>
-              </Radio.Group>
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Đổi..." lop="nut-vang" />
-              <span className="nhan">Tên</span>
-              <Select size="small" style={{ width: 300 }} placeholder=" " />
-            </div>
-            <div className="hang-cong-cu">
-              <Checkbox checked={cb.chiLayFileExcelSP}
-                        onChange={(e) => datCb("chiLayFileExcelSP", e.target.checked)}>
-                Chỉ lấy File Excel các SP Lỗ lãi
-              </Checkbox>
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Tính giá trị lãi lỗ" lop="nut-xanhla" />
-              <NutCho nhan="Tìm Hàng lỗ theo HĐ" lop="nut-hong" />
-            </div>
-            <div className="hang-cong-cu">
-              <div className="o-tong" style={{ minWidth: 90 }}>{soVn(0)}</div>
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Thay đổi ĐG theo GV" lop="nut-vang" />
-              <NutCho nhan="Tạo HĐ tự tính" lop="nut-xanhla" />
-              <NutCho nhan="Tạo HĐ từ TK" lop="nut-xanhla" />
-              <NutCho nhan="Tạo HĐ từ TK New" lop="nut-cam" />
-            </div>
-          </div>
-
-          {/* Cột phải: giá / mark line / thêm hàng KM */}
-          <div className="cot-cong-cu">
-            <div className="hang-cong-cu">
-              <Checkbox checked={cb.giaDaCoThue}
-                        onChange={(e) => datCb("giaDaCoThue", e.target.checked)}>
-                Giá đã có thuế
-              </Checkbox>
-              <NutCho nhan="Mark 10 Line" lop="nut-xanhdg" />
-              <Input size="small" style={{ width: 130 }} value="1" readOnly />
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Thêm GT cho HĐ lẻ" />
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Thêm hàng KM" lop="nut-xanhdg" />
-              <NutCho nhan="Thêm hàng KM nhiều HĐ" lop="nut-xanhdg" />
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Tách hàng KM sang HĐ" lop="nut-xanhdg" />
-            </div>
-            <div className="hang-cong-cu">
-              <NutCho nhan="Tách dòng hàng KM" lop="nut-xanhdg" />
-              <NutCho nhan="Chuyển HĐ 154 sang H.Hóa" lop="nut-xanhdg" />
-            </div>
-          </div>
+            <Checkbox checked={cb.khongInHangKM}
+                      onChange={(e) => datCb("khongInHangKM", e.target.checked)}>
+              Không in hàng KM khi in Bảng kê bán lẻ
+            </Checkbox>
+            <Checkbox checked={cb.nhomTheoTenHang}
+                      onChange={(e) => datCb("nhomTheoTenHang", e.target.checked)}>
+              Nhóm theo Tên hàng khi in chi tiết
+            </Checkbox>
+            <Checkbox checked={cb.theoNgayNhapHang}
+                      onChange={(e) => datCb("theoNgayNhapHang", e.target.checked)}>
+              Theo ngày nhập hàng
+            </Checkbox>
+          </section>
         </div>
+        )}
 
-        <Space style={{ marginTop: 6 }} size={12}>
+        <Typography.Text style={{ fontSize: 11, color: "#0000cd", display: "block",
+                                  lineHeight: "14px" }}>
+          Bấm chuột phải vào ô Mã hoá đơn (F3) của HĐ tương ứng để Sửa phiếu này
+        </Typography.Text>
+
+        <Space size={12}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             Tổng Tiền HĐ <b>{soVn(tongTienHang)}</b> · Σ VAT <b>{soVn(tongTienVat)}</b> ·
             Tổng Thanh toán <b>{soVn(tongThanhToan)}</b>
-          </Typography.Text>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Bấm đúp một dòng để mở hóa đơn đó. Các nút mờ là nghiệp vụ chưa xử lý
           </Typography.Text>
         </Space>
       </div>

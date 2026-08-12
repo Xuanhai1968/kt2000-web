@@ -677,6 +677,7 @@ export interface HoaDonThue {
   khhdLienquan: string | null;
   sohdLienquan: string | null;
   ngayLienquan: string | null;
+  trangThaiHdLienQuan: string | null;
   lines: HoaDonLine[];
 }
 

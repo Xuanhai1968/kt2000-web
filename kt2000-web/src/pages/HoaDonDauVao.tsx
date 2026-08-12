@@ -1083,6 +1083,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
       ghiChu: "", tthaiHd: null,
       tichChatHdLienquan: null, loaiHdLienquan: null, mauSoHdLienquan: null,
       khhdLienquan: null, sohdLienquan: null, ngayLienquan: null,
+      trangThaiHdLienQuan: null,
       lines: [],
     };
     setDsHd((ds) => [hdMoi, ...ds]);
@@ -1453,12 +1454,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             rowKey="sttLine" size="small" pagination={false}
             dataSource={hd?.lines ?? []}
             loading={tai}
-            // x = ĐÚNG tổng width của 11 cột bên dưới (46+230+74+92+120+140+260
-            // +56+56+74+80). Khai thiếu thì antd co bảng lại vừa khung và cột cuối
-            // (C.Khấu) bị cắt cụt mà KHÔNG sinh thanh cuộn ngang — thêm/bớt cột
-            // sau này phải cộng lại con số này.
-            // y phải khớp height của .luoi-hang .ant-table-body trong CSS — bên đó
-            // ép chiều cao cứng để khung không co theo số dòng.
             scroll={{ x: 1228, y: 210 }}
             locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
                                         description="Hóa đơn không có dòng hàng" /> }}
@@ -1479,8 +1474,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
               { title: "Đơn giá", dataIndex: "donGia", width: 120, align: "right",
                 render: (v: number) => v.toLocaleString("vi-VN",
                   { minimumFractionDigits: 4, maximumFractionDigits: 4 }) },
-              // ThanhTien do SQL nhân SL × ĐG nên không thể lệch — bỏ phép kiểm lệch
-              // vốn dành cho số đọc thẳng từ XML.
               { title: "Thành tiền", dataIndex: "thanhTien", width: 140, align: "right",
                 render: (v: number) => (
                   <b>{v.toLocaleString("vi-VN",
@@ -1495,8 +1488,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                 render: (v: string | null) => v || dk.ghiNo },
               { title: "Có", dataIndex: "ghiCo", width: 56, align: "center",
                 render: (v: string | null) => v || dk.ghiCo },
-              // Hiện 10 chứ không phải 0,10 — xem chú thích đơn vị pt_vat ở
-              // dinhDangPhanTramVat (theme/luoiVfp.ts)
+
               { title: "% VAT", dataIndex: "ptVat", width: 74, align: "right",
                 render: (v: number) => dinhDangPhanTramVat(v) },
               { title: "C.Khấu", dataIndex: "tienCk", width: 80, align: "right",
@@ -1588,14 +1580,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             {nutChuaNoi("Lấy HĐ lỗi")}
           </div>
         </div>
-
-        <Typography.Text type="secondary"
-                         style={{ display: "block", marginTop: 6, fontSize: 12 }}>
-          Đang xem hóa đơn mới nhất trong <code>raw\</code> ({dsHd.length} hóa đơn cả năm).
-          Ô định khoản (GHI NỢ/CÓ, TK VAT, Mã CT, Thương vụ, HĐ Liên quan) nhập được
-          nhưng <b>chưa có API lưu</b> — số gõ vào chỉ giữ trong phiên làm việc.
-          Các nút mờ là nghiệp vụ chưa nối backend.
-        </Typography.Text>
       </Card>
 
       <DanhSachHoaDon
@@ -1607,6 +1591,8 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
         laDauRa={laDauRa}
         onChon={chonHoaDon}
         onXemHtml={xemHtml}
+        onLamMoi={() => napHoaDon(true)}
+        dangTai={tai}
       />
 
       <XemHtmlHoaDon

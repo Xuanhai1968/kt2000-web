@@ -35,6 +35,15 @@ namespace KT2000.Api.Services
             return conn;
         }
 
+        // ===================== CHỈ ĐỌC CỘT CỦA SỔ THUẾ =====================
+        // HOA_DON "chuẩn" của sổ thuế kết thúc ở cột huong (41 cột). Các cột ma_nvkd /
+        // ma_nvvc / ma_goi trên HOA_DON và he_so_qd / sl_quy_doi / la_hang_tang / ngay_nh_l
+        // trên HOA_DON_LINE là của NỘI BỘ, do script 015 gắn thêm vào bảng dùng chung.
+        //
+        // Màn này là màn THUẾ nên KHÔNG đọc mấy cột đó: vừa sai ranh giới hai sổ, vừa nổ
+        // "Invalid column name" trên DB thuần thuế (TUAN_NGA_2025, HUY_THANH_2025/2026 chưa
+        // chạy 015). Giữ SELECT trong phạm vi cột chuẩn thì mọi DB đơn vị đều chạy được.
+
         // Tiền hàng và số dòng KHÔNG có cột sẵn trên HOA_DON — gộp từ HOA_DON_LINE.
         // Gom bằng subquery thay vì JOIN + GROUP BY để không phải nhóm lại toàn bộ
         // ~40 cột của HOA_DON chỉ để cộng hai con số.
@@ -48,7 +57,10 @@ namespace KT2000.Api.Services
                    ISNULL(l.so_dong, 0)    AS so_dong,
                    h.ghi_no, h.ghi_co, h.ma_ct_no, h.ma_ct_co, h.ghi_chu, h.tthai_hd,
                    h.tich_chat_hd_lienquan, h.loai_hd_lienquan, h.mau_so_hd_lienquan,
-                   h.khhd_lienquan, h.sohd_lienquan, h.ngay_lienquan
+                   h.khhd_lienquan, h.sohd_lienquan, h.ngay_lienquan,
+                   -- Cột cuối của khối HĐ liên quan, trước đây chưa trả về nên lưới
+                   -- không có gì để hiện ở cột TT HĐLQ.
+                   h.trang_thai_hd_lien_quan
               FROM HOA_DON h
               OUTER APPLY (
                     SELECT SUM(ISNULL(x.so_luong, 0) * ISNULL(x.don_gia, 0)) AS tien_hang,
@@ -89,6 +101,7 @@ namespace KT2000.Api.Services
             KhhdLienquan       = r.IsDBNull(27) ? null : r.GetString(27),
             SohdLienquan       = r.IsDBNull(28) ? null : r.GetString(28),
             NgayLienquan       = r.IsDBNull(29) ? null : r.GetDateTime(29),
+            TrangThaiHdLienQuan = r.IsDBNull(30) ? null : r.GetString(30),
         };
 
         /// <summary>
