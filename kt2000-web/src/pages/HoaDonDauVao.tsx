@@ -41,15 +41,22 @@ interface Props { huongMacDinh: "vao" | "ra" }
 //   chênh 8.390.648 = 2 × 4.195.324 (đúng số TTCKTMai).
 const laDongChietKhau = (m: MatHang) => m.tinhChat === "3";
 
-const sumLine = (hd: HoaDonConLai) =>
-  hd.matHangs.reduce((s, m) => s + (laDongChietKhau(m) ? -m.thanhTien : m.thanhTien), 0);
-
 // Hóa đơn CHỈ có dòng chiết khấu, không có dòng hàng hóa nào (chốt 12/08). Khi đó số
 // tiền của dòng chính LÀ khoản chiết khấu chứ không phải giá trị hàng bán — để ở cột
 // Thành tiền thì đọc như đang bán được ngần ấy, ngược hẳn bản chất.
 // Hóa đơn vừa có hàng vừa có chiết khấu thì KHÔNG đụng: dòng TC=3 vẫn hiện thành tiền
 // như cũ, vì ở đó nó là một dòng trong bảng kê chứ không phải toàn bộ hóa đơn.
 const toanChietKhau = (mh: MatHang[]) => mh.length > 0 && mh.every(laDongChietKhau);
+
+const sumLine = (hd: HoaDonConLai) =>
+  // Hóa đơn CHIẾT KHẤU THƯƠNG MẠI đứng riêng: người bán khai tiền hàng là số DƯƠNG nên
+  // Σ cũng phải dương mới khớp. Đảo dấu ở đây là báo lệch gấp đôi và tô đỏ một hóa đơn
+  // mà backend đã nhận — khớp đúng ngoại lệ toanChietKhau bên ImportJob.
+  // Thành tiền của mấy dòng này đã được chuanHoaMatHang dời sang cột Chiết khấu, nên
+  // phải cộng chietKhau chứ không phải thanhTien (thanhTien nay bằng 0).
+  toanChietKhau(hd.matHangs)
+    ? hd.matHangs.reduce((s, m) => s + (m.chietKhau || 0), 0)
+    : hd.matHangs.reduce((s, m) => s + (laDongChietKhau(m) ? -m.thanhTien : m.thanhTien), 0);
 
 // Dời số tiền sang cột Chiết khấu ngay lúc nhận dữ liệu, KHÔNG làm ở tầng hiển thị:
 // lưới sửa thẳng vào mảng này, có hai cách đọc song song là chỗ nào cũng phải nhớ

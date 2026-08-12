@@ -150,8 +150,20 @@ namespace KT2000.Api.Services
                     //   6200068486 bị đá ra raw\ vì lý do này.
                     // Chốt với Trường 11/08: CHỈ sửa phép so sánh, KHÔNG đổi dấu dòng
                     // chiết khấu khi ghi vào HOA_DON_LINE — kế toán không nhận số âm.
+                    // NGOẠI LỆ — hóa đơn CHIẾT KHẤU THƯƠNG MẠI đứng riêng: cả hóa đơn chỉ
+                    // toàn dòng TC=3, người bán phát hành để trả lại khoản chiết khấu chứ
+                    // không bán gì. Master khai số DƯƠNG, nên đảo dấu như dòng chiết khấu
+                    // nằm lẫn trong hóa đơn hàng hóa là sai gấp đôi và hóa đơn bị đá ra.
+                    //   Ca thật HOA_SANG T4: VAO_4600285900_C26TMN_14708 — một dòng TC=3
+                    //   9.482.503, master 9.482.503, phép kiểm cũ báo chênh 18.965.006.
+                    // Hóa đơn TC hỗn hợp (vừa hàng vừa chiết khấu) vẫn đảo dấu như cũ —
+                    // ca C26TMN_14134 và _17159 cùng đơn vị đó chạy đúng, đừng đụng vào.
+                    bool toanChietKhau = lines.Count > 0
+                        && lines.All(x => S(x, L, "LOAI_HH").Trim() == "3");
+
                     decimal Cong(string cot) => lines.Sum(x =>
-                        (S(x, L, "LOAI_HH").Trim() == "3" ? -1m : 1m) * N(x, L, cot));
+                        (!toanChietKhau && S(x, L, "LOAI_HH").Trim() == "3" ? -1m : 1m)
+                        * N(x, L, cot));
 
                     decimal mNorm = N(r, M, "TIEN_HANG");
                     decimal sNorm = Cong("THANH_TIEN");
