@@ -253,7 +253,7 @@ export default function DanhSachHoaDon({
     { colId: "ghiNo", headerName: "Nợ", field: "ghiNo", width: 44 },
     { colId: "ghiCo", headerName: "Có", field: "ghiCo", width: 44 },
     { colId: "ptVat", headerName: "%VAT", width: 56, type: "numericColumn",
-      valueGetter: (p) => p.data?.vat != null ? `${p.data.vat}%` : "" },
+      valueGetter: (p) => p.data?.vat != null ? String(p.data.vat) : "" },
     { colId: "noVat", headerName: "Nợ VAT", width: 50, valueGetter: () => "" },
     { colId: "coVat", headerName: "Có VAT", width: 46, valueGetter: () => "" },
     // KT = tháng KÊ KHAI (cột thang của HOA_DON) — chính là cột mà ô lọc "Tháng KT"
@@ -315,7 +315,7 @@ export default function DanhSachHoaDon({
     { colId: "thanhTien", headerName: "Thành tiền", field: "thanhTien", width: 130,
       type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0),
       cellStyle: { backgroundColor: "#f5f5f5", fontWeight: 600 } },
-    { colId: "ptVat", headerName: "% VAT", width: 66,
+    { colId: "ptVat", headerName: "% VAT", width: 66, type: "numericColumn",
       valueGetter: (p) => dinhDangPhanTramVat(p.data?.ptVat) },
     { colId: "ghiNo", headerName: "Nợ", width: 50,
       valueGetter: (p) => p.data?.ghiNo || "" },
