@@ -26,6 +26,20 @@ namespace KT2000.Api.Services
         public string GetMasterConnection() =>
             _config.GetConnectionString("DefaultConnection")!;
 
+        // Database DANH MỤC dùng chung của khối khai thuế: DM_KH, DM_HANG, DM_TK…
+        // Dùng chung là CỐ Ý (chốt Trường 13/08) — danh mục này để mọi đơn vị khai thuế
+        // tham khảo. Đơn vị nào cần danh mục riêng thì đã tách hẳn sang bản NB (mã kết
+        // thúc bằng _NB), có bộ DM_KH_NB / DM_HANG_NB riêng trong database đơn vị.
+        //
+        // Tên database nằm ở ĐÂY, không rải trong service (luật #1: mọi tên database chỉ
+        // được sinh qua resolver).
+        public string GetBaseConnection()
+        {
+            var b = new SqlConnectionStringBuilder(GetMasterConnection())
+            { InitialCatalog = "KT2000_Base" };
+            return b.ConnectionString;
+        }
+
         // Connection đến database của (đơn vị, năm) — dựng từ connection Master,
         // chỉ thay tên database
         public string GetTenantConnection(string code, int year)
