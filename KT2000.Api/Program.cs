@@ -20,6 +20,7 @@ builder.Services.AddSingleton<TenantDbResolver>();
 // sạch rồi hỏi lại database, mất đúng cái đường nhanh khiến nó gọi được ở nhiều lối vào.
 builder.Services.AddSingleton<VaCauTrucService>();
 builder.Services.AddScoped<AdminService>();
+builder.Services.AddScoped<DanhMucService>();  // DM_KH / DM_HANG trong KT2000_Base
 builder.Services.AddScoped<ImportService>();
 builder.Services.AddScoped<NoiBoService>();   // phần nội bộ: danh mục + phiếu xuất/nhập
 builder.Services.AddScoped<ThueService>();    // sổ thuế: đọc HOA_DON của đơn vị đang đăng nhập

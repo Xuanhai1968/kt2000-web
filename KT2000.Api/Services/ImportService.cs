@@ -39,9 +39,10 @@ namespace KT2000.Api.Services
         private readonly TenantDbResolver _resolver;
         private readonly IConfiguration _config;
         private readonly VaCauTrucService _va;
+        private readonly DanhMucService _dm;
         public ImportService(AppDbContext db, TenantDbResolver resolver, IConfiguration config,
-                             VaCauTrucService va)
-        { _db = db; _resolver = resolver; _config = config; _va = va; }
+                             VaCauTrucService va, DanhMucService dm)
+        { _db = db; _resolver = resolver; _config = config; _va = va; _dm = dm; }
 
         public async Task<KetQuaNapJob> ImportJob(ImportJobRequest req, string userName)
         {
@@ -88,6 +89,13 @@ namespace KT2000.Api.Services
             // Dò MỘT LẦN cho cả job: database chưa chạy 017 thì bỏ cột loai_thue ra khỏi
             // câu ghi thay vì để cả mẻ nạp chết.
             bool coLoaiThue = CoCot(conn, "HOA_DON_LINE", "loai_thue");
+
+            // Danh mục nằm ở KT2000_Base — DATABASE KHÁC, nên phải mở kết nối riêng và
+            // giữ suốt lượt nạp. Cố ý KHÔNG nằm trong transaction của việc ghi hóa đơn:
+            // mã khách vừa cấp phải giữ lại kể cả khi một hóa đơn bị rollback, không thì
+            // lần sau cấp trùng số cho cùng một khách.
+            using var connBase = _dm.MoKetNoi();
+            _dm.BaoDamDongHung(connBase);
 
             // Theo đúng lựa chọn trên màn hình: "Chỉ đầu vào" thì đừng đụng tới file RA
             var cacHuongNap = CacHuong(req.Huong);
@@ -236,7 +244,7 @@ namespace KT2000.Api.Services
                             { d2.Parameters.AddWithValue("@id", maHd); d2.ExecuteNonQuery(); }
                         }
                         bool existed = UpsertMaster(conn, tx, r, M, huong, maHd, userName,
-                                                    tenant.KhaiQuy, tienHangChuaThue);
+                                                    tenant.KhaiQuy, tienHangChuaThue, connBase);
                         ReplaceLines(conn, tx, maHd, lines, L, userName,
                                      N2(r, M, "TIEN_VAT", "TVAT_HD_G"), tienHangChuaThue,
                                      coLoaiThue);
@@ -716,11 +724,29 @@ namespace KT2000.Api.Services
         // cái, ISNULL bên dưới giữ nguyên số họ sửa.
         // Ba cái còn lại (331, 1331/331 và 131, 511, 3331) là bút toán cố định theo hướng,
         // không có gì để đổi — đừng biến chúng thành tham số cấu hình cho "linh hoạt".
-        internal static (string No, string Co, string NoVat, string CoVat)
-            DinhKhoanMacDinh(string huong)
+        // Bộ định khoản đầy đủ của MỘT hóa đơn. MaCt* nhận mã khách rồi trả về đúng chỗ:
+        // bên nào là khách thì bên đó mang ma_kh, bên kia để chuỗi RỖNG (không phải NULL —
+        // giữ nếp VFP, kế toán quen ô trống chứ không quen ô null).
+        internal readonly record struct BoDinhKhoan(
+            string No, string Co, string NoVat, string CoVat, string NoCk, string CoCk,
+            bool KhachBenNo, bool KhachBenNoCk)
+        {
+            public string MaCtNo(string maKh)  => KhachBenNo ? maKh : "";
+            public string MaCtCo(string maKh)  => KhachBenNo ? "" : maKh;
+            public string MaCtNck(string maKh) => KhachBenNoCk ? maKh : "";
+            public string MaCtCck(string maKh) => KhachBenNoCk ? "" : maKh;
+        }
+
+        internal static BoDinhKhoan DinhKhoanMacDinh(string huong)
             => huong.Equals("RA", StringComparison.OrdinalIgnoreCase)
-             ? ("131", "511", "131", "3331")
-             : ("156", "331", "1331", "331");
+             // BÁN: Nợ 131 phải thu / Có 511 doanh thu · thuế Nợ 131 / Có 3331 phải nộp
+             //      chiết khấu Nợ 5211 / Có 131 — khách nằm bên NỢ, bên CÓ của chiết khấu
+             ? new("131", "511", "131", "3331", "5211", "131",
+                   KhachBenNo: true,  KhachBenNoCk: false)
+             // MUA: Nợ 156 hàng hóa / Có 331 phải trả · thuế Nợ 1331 khấu trừ / Có 331
+             //      chiết khấu Nợ 331 / Có 711 thu nhập khác — khách bên CÓ, bên NỢ của CK
+             : new("156", "331", "1331", "331", "331", "711",
+                   KhachBenNo: false, KhachBenNoCk: true);
 
         internal const int DO_DAI_SO_HD = 7;
 
@@ -774,9 +800,13 @@ namespace KT2000.Api.Services
              ? DBNull.Value
              : (int)Math.Round(tienVat * 100m / tienHang, MidpointRounding.AwayFromZero);
 
+        // cBase: kết nối tới KT2000_Base để tra/cấp mã khách. Truyền kết nối chứ không
+        // truyền sẵn ma_kh vì chính hàm này mới biết MST của đối tác là bên bán hay bên
+        // mua — tùy hướng hóa đơn.
         private bool UpsertMaster(SqlConnection c, SqlTransaction tx, IXLRow r,
                                   Dictionary<string,int> M, string huong, string maHd,
-                                  string user, bool khaiQuy, decimal tienHang)
+                                  string user, bool khaiQuy, decimal tienHang,
+                                  SqlConnection cBase)
         {
             // Dọn bản cũ khác cách đệm TRƯỚC khi kiểm tồn tại — nếu không, bản 8 chữ số
             // của lần nạp trước vẫn nằm đó và ta chèn thêm bản 7 chữ số bên cạnh.
@@ -795,14 +825,24 @@ namespace KT2000.Api.Services
             decimal tienVat = N2(r, M, "TIEN_VAT", "TVAT_HD_G");
             decimal tienCk  = N2(r, M, "TIEN_CK",  "TIEN_CK_G");
 
+            // Mã khách: tra DM_KH theo MST của ĐỐI TÁC. Chưa có thì cấp KH01, KH02…;
+            // hóa đơn bán lẻ không có MST thì gom vào KH0.
+            string maKh = _dm.LayMaKh(cBase, mst, tenKh, diaChi);
+
             string sql = existed
             // ngay_nh dùng ISNULL: luật #5 — hàm nguồn KHÔNG được đè ngày hạch toán
             // kế toán đã tự nhập. Chỉ điền khi cột còn trống ("cập nhật có chừa").
               ? @"UPDATE HOA_DON SET ngay=@ngay, thang=@thang, ngay_nh=ISNULL(ngay_nh,@ngay_nh),
                     vat=@vat, ghi_chu=ISNULL(ghi_chu,@ghi_chu), khhd=@khhd, so_hd=@so_hd,
+                    ma_kh=ISNULL(ma_kh,@ma_kh),
                     ghi_no=ISNULL(ghi_no,@ghi_no), ghi_co=ISNULL(ghi_co,@ghi_co),
+                    ma_ct_no=ISNULL(ma_ct_no,@ma_ct_no), ma_ct_co=ISNULL(ma_ct_co,@ma_ct_co),
                     ghi_no_vat=ISNULL(ghi_no_vat,@ghi_no_vat),
                     ghi_co_vat=ISNULL(ghi_co_vat,@ghi_co_vat),
+                    ghi_no_ck=ISNULL(ghi_no_ck,@ghi_no_ck),
+                    ghi_co_ck=ISNULL(ghi_co_ck,@ghi_co_ck),
+                    ma_ct_nck=ISNULL(ma_ct_nck,@ma_ct_nck),
+                    ma_ct_cck=ISNULL(ma_ct_cck,@ma_ct_cck),
                     mst=@mst, ten_kh=@ten_kh, dia_chi=@dia_chi, nguoi_giao_dich=@ng_gd,
                     tien_vat=@tien_vat, tien_ck=@tien_ck, edit_vat=@edit_vat, edit_ck=@edit_ck,
                     tthai_hd=@tthai, tich_chat_hd_lienquan=@tc_lq, loai_hd_lienquan=@l_lq,
@@ -810,13 +850,15 @@ namespace KT2000.Api.Services
                     ngay_lienquan=@ngay_lq, updated_by=@user, updated_at=SYSDATETIME()
                   WHERE ma_hd=@id"
               : @"INSERT INTO HOA_DON (ma_hd, ngay, thang, ngay_nh, vat, ghi_chu, khhd, so_hd,
-                    ghi_no, ghi_co, ghi_no_vat, ghi_co_vat,
+                    ma_kh, ghi_no, ghi_co, ma_ct_no, ma_ct_co,
+                    ghi_no_vat, ghi_co_vat, ghi_no_ck, ghi_co_ck, ma_ct_nck, ma_ct_cck,
                     mst, ten_kh, dia_chi,
                     nguoi_giao_dich, tien_vat, tien_ck, edit_vat, edit_ck, tthai_hd,
                     tich_chat_hd_lienquan, loai_hd_lienquan, mau_so_hd_lienquan,
                     khhd_lienquan, sohd_lienquan, ngay_lienquan, created_by)
                   VALUES (@id, @ngay, @thang, @ngay_nh, @vat, @ghi_chu, @khhd, @so_hd,
-                    @ghi_no, @ghi_co, @ghi_no_vat, @ghi_co_vat,
+                    @ma_kh, @ghi_no, @ghi_co, @ma_ct_no, @ma_ct_co,
+                    @ghi_no_vat, @ghi_co_vat, @ghi_no_ck, @ghi_co_ck, @ma_ct_nck, @ma_ct_cck,
                     @mst, @ten_kh, @dia_chi,
                     @ng_gd, @tien_vat, @tien_ck, @edit_vat, @edit_ck, @tthai,
                     @tc_lq, @l_lq, @ms_lq, @kh_lq, @so_lq, @ngay_lq, @user)";
@@ -840,14 +882,23 @@ namespace KT2000.Api.Services
                 ? ("NoXml" + (Nz(tenKh) == null ? "" : " - " + tenKh)) : "";
             p.AddWithValue("@ghi_chu", (object?)Nz(ghiChu) ?? DBNull.Value);
 
-            // Định khoản mồi. Cặp tài khoản THUẾ chỉ điền khi hóa đơn CÓ thuế — hóa đơn
-            // không chịu thuế mà vẫn gắn 1331/3331 là mời kế toán hạch toán một khoản
-            // thuế không tồn tại.
+            // Định khoản mồi. Cặp THUẾ chỉ điền khi hóa đơn CÓ thuế, cặp CHIẾT KHẤU chỉ
+            // khi có chiết khấu — gắn 1331/3331 vào hóa đơn không chịu thuế là mời kế toán
+            // hạch toán một khoản thuế không tồn tại.
+            // Điều kiện != 0 chứ không > 0 (chốt Trường 13/08): hóa đơn điều chỉnh GIẢM
+            // mang số ÂM, mà nó vẫn cần bút toán — bỏ qua là mất hẳn.
             var dk = DinhKhoanMacDinh(huong);
+            p.AddWithValue("@ma_kh", maKh);
             p.AddWithValue("@ghi_no", dk.No);
             p.AddWithValue("@ghi_co", dk.Co);
+            p.AddWithValue("@ma_ct_no", dk.MaCtNo(maKh));
+            p.AddWithValue("@ma_ct_co", dk.MaCtCo(maKh));
             p.AddWithValue("@ghi_no_vat", tienVat != 0 ? dk.NoVat : (object)DBNull.Value);
             p.AddWithValue("@ghi_co_vat", tienVat != 0 ? dk.CoVat : (object)DBNull.Value);
+            p.AddWithValue("@ghi_no_ck", tienCk != 0 ? dk.NoCk : (object)DBNull.Value);
+            p.AddWithValue("@ghi_co_ck", tienCk != 0 ? dk.CoCk : (object)DBNull.Value);
+            p.AddWithValue("@ma_ct_nck", tienCk != 0 ? dk.MaCtNck(maKh) : (object)DBNull.Value);
+            p.AddWithValue("@ma_ct_cck", tienCk != 0 ? dk.MaCtCck(maKh) : (object)DBNull.Value);
 
             p.AddWithValue("@khhd", khhd);
             p.AddWithValue("@so_hd", soHd);
@@ -948,10 +999,12 @@ namespace KT2000.Api.Services
             {
                 using var cmd = new SqlCommand($@"
                     INSERT INTO HOA_DON_LINE (ma_hd, stt_line, ten_hang_goc, dvt, so_luong,
-                        don_gia, pt_vat, tien_ck, tien_vat_l, ma_ngan, tinh_chat, created_by
+                        don_gia, pt_vat, tien_ck, tien_vat_l, ma_ngan, tinh_chat, created_by,
+                        ma_hang, ghi_no, ghi_co, ma_ct_no, ma_ct_co
                         {(coLoaiThue ? ", loai_thue" : "")})
                     VALUES (@id, @stt, @ten_goc, @dvt, @sl, @dg, @pt_vat, @ck,
-                        @tien_vat_l, @ma_ngan, @tc, @user
+                        @tien_vat_l, @ma_ngan, @tc, @user,
+                        @ma_hang, @l_ghi_no, @l_ghi_co, @l_ma_ct_no, @l_ma_ct_co
                         {(coLoaiThue ? ", @loai_thue" : "")})", c, tx);
                 var p = cmd.Parameters;
                 p.AddWithValue("@id", maHd);
@@ -1062,6 +1115,23 @@ namespace KT2000.Api.Services
                 }
                 p.AddWithValue("@sl", sl);
                 p.AddWithValue("@dg", dg);
+
+                // Định khoản tầng DÒNG (chốt Trường 13/08):
+                //   VÀO  Nợ 156 / Có 331   ma_ct_no = ma_hang, ma_ct_co = ""
+                //   RA   Nợ 632 / Có 156   ma_ct_no = "",      ma_ct_co = ma_hang
+                // Đầu ra là bút toán GIÁ VỐN (632/156) chứ không phải doanh thu — doanh
+                // thu đã nằm ở tầng hóa đơn (131/511), ghi lại lần nữa ở đây là kê hai lần.
+                //
+                // ma_hang = H0 cho MỌI dòng: hàng thật chưa vào DM_HANG lúc nạp, chờ kế
+                // toán định khoản mới lưu. Tên hàng gốc vẫn nằm ở ten_hang_goc.
+                // Hướng lấy từ chính dòng hàng (sheet line có sẵn cột HUONG) chứ không
+                // truyền thêm tham số — ít chỗ sai hơn, và dòng nào cũng tự mang hướng của nó.
+                bool laRa = S(r, L, "HUONG").Equals("RA", StringComparison.OrdinalIgnoreCase);
+                p.AddWithValue("@ma_hang", DanhMucService.MA_HANG_TAM);
+                p.AddWithValue("@l_ghi_no", laRa ? "632" : "156");
+                p.AddWithValue("@l_ghi_co", laRa ? "156" : "331");
+                p.AddWithValue("@l_ma_ct_no", laRa ? "" : DanhMucService.MA_HANG_TAM);
+                p.AddWithValue("@l_ma_ct_co", laRa ? DanhMucService.MA_HANG_TAM : "");
 
                 p.AddWithValue("@ma_ngan", (object?)Nz(S(r, L, "MA_NGAN_G")) ?? DBNull.Value);
                 p.AddWithValue("@tc", I(r, L, "LOAI_HH"));

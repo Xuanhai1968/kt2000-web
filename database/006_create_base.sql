@@ -259,17 +259,22 @@ GO
 CREATE TABLE DM_HANG (
     ma_hang        NVARCHAR(50) NOT NULL PRIMARY KEY,
     ma_ngan        NVARCHAR(20),
-    ten_hang       NVARCHAR(100),
+    -- Tên hàng thật từ cổng TCT vượt 100 ký tự thường xuyên (đã gặp tên kèm chú thích
+    -- khuyến mại còn dài hơn), nên để 500.
+    ten_hang       NVARCHAR(500),
     ma_dvt         NVARCHAR(20),
     dvt            NVARCHAR(20),
     thue_suat      DECIMAL(18,2),
     ma_nh          NVARCHAR(20),
     gia_mua        DECIMAL(18,2),
     gia_ban        DECIMAL(18,2),
-    ghi_chu        DECIMAL(18,2),
-    tk_kho         DECIMAL(18,2),
-    tk_gv          DECIMAL(18,2),
-    ma_ncc         DECIMAL(18,2)
+    -- Bốn cột dưới bản đầu khai nhầm là DECIMAL, nhưng cả bốn đều chứa CHỮ. Database đã
+    -- dựng thì vá bằng 018_dm_hang_sua_kieu.sql; sửa luôn ở đây để cài mới đúng ngay.
+    -- Hai file phải khớp nhau — sửa một bên là phải sửa bên kia.
+    ghi_chu        NVARCHAR(500),   -- tên hàng gốc lấy từ hóa đơn, chờ kế toán định khoản
+    tk_kho         NVARCHAR(20),    -- '156' / '641' — tài khoản là CHUỖI; để số thì
+    tk_gv          NVARCHAR(20),    -- '1561' và '1561.00' hóa làm một
+    ma_ncc         NVARCHAR(50)
 );
 GO
 
