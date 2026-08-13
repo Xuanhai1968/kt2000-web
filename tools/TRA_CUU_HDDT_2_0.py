@@ -1812,11 +1812,26 @@ class tra_cuu_hdt:
                 den_ngay = den_ngay
                 khoang_cach.append((thang_bd, tu_ngay, den_ngay))
             else:
+                # Tháng ĐANG DIỄN RA thì đừng xin tới ngày cuối tháng: hôm nay 13/08 mà
+                # hỏi cổng "01/08 đến 31/08" là hỏi sang tương lai — cổng lúc trả lỗi, lúc
+                # trả rỗng, và cả hai đều đọc như "tháng này không có hóa đơn".
+                # Chặn ở hôm nay (chốt Trường 13/08). Tháng đã qua giữ nguyên ngày cuối
+                # tháng như cũ.
+                hom_nay = datetime.date.today()
                 for thang in range(thang_bd, thang_kt + 1):
                     tu_ngay = f"01/{thang:02d}/{nam}"
                     _, so_ngay = calendar.monthrange(nam, thang)
-                    den_ngay = f"{so_ngay:02d}/{thang:02d}/{nam}"
-                    
+                    ngay_cuoi = datetime.date(nam, thang, so_ngay)
+                    if ngay_cuoi > hom_nay:
+                        # Cả tháng còn nằm ở tương lai (đang tháng 8 mà xin tháng 10):
+                        # bỏ hẳn lượt, xin cũng không có gì mà lấy.
+                        if datetime.date(nam, thang, 1) > hom_nay:
+                            append_run_log(run_log,
+                                f"BO_QUA_THANG_TUONG_LAI thang={thang}/{nam}")
+                            continue
+                        ngay_cuoi = hom_nay
+                    den_ngay = ngay_cuoi.strftime("%d/%m/%Y")
+
                     khoang_cach.append((thang, tu_ngay, den_ngay))
                 
             # #print("đang mở trình duyệt và đăng nhập...")
