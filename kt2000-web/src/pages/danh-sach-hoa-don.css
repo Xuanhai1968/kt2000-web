@@ -126,6 +126,16 @@
   color: #000;
 }
 
+.ds-hoadon .ag-header-cell .ag-header-cell-label {
+  justify-content: center;
+  text-align: center;
+}
+
+.ds-hoadon .ag-header-cell .ag-header-cell-label .ag-header-cell-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .ds-hoadon .ag-row.dong-dang-chon .ag-cell {
   background-color: #b7f0c5 !important;
 }

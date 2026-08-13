@@ -1561,12 +1561,12 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                   <Input size="small" value={v} title={v}
                          onChange={(e) => suaDongHang(m.sttLine, { tenHang: e.target.value })} />
                 ) },
-              { title: "ĐVT", dataIndex: "dvt", width: 74,
+              { title: "ĐVT", dataIndex: "dvt", width: 54, align: "center",
                 render: (v: string | null, m: HoaDonLine) => (
                   <Input size="small" value={v ?? ""}
                          onChange={(e) => suaDongHang(m.sttLine, { dvt: e.target.value })} />
                 ) },
-              { title: "Số lượng", dataIndex: "soLuong", width: 92, align: "right",
+              { title: "Số lượng", dataIndex: "soLuong", width: 72, align: "right",
                 render: (v: number, m: HoaDonLine) => (
                   <InputNumber size="small" value={v} controls={false}
                                style={{ width: "100%" }}
@@ -1580,20 +1580,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                                formatter={tienVn} parser={docTienVn}
                                onChange={(x) => suaDongHang(m.sttLine, { donGia: x ?? 0 })} />
                 ) },
-              // CHỈ ĐỌC: thành tiền = SL × ĐG, sửa hai ô kia thì nó tự chạy theo.
-              // Cho gõ tay thì lưới tự mâu thuẫn với chính nó.
-              { title: "Thành tiền", dataIndex: "thanhTien", width: 140, align: "right",
-                render: (v: number) => (
-                  <b>{v.toLocaleString("vi-VN",
-                      { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</b>
-                ) },
-              { title: "Ghi chú", dataIndex: "ghiChu", width: 260,
-                render: (v: string | null, m: HoaDonLine) => (
-                  <Input size="small" value={v ?? ""} placeholder={m.tenHang}
-                         title={v || m.tenHang}
-                         onChange={(e) => suaDongHang(m.sttLine, { ghiChu: e.target.value })} />
-                ) },
-              // Để trống thì lấy định khoản chung của hóa đơn (dk.ghiNo/ghiCo) làm
+               // Để trống thì lấy định khoản chung của hóa đơn (dk.ghiNo/ghiCo) làm
               // giá trị gợi ý — gõ vào là ghi đè riêng cho dòng này.
               { title: "Nợ", dataIndex: "ghiNo", width: 56, align: "center",
                 render: (v: string | null, m: HoaDonLine) => (
@@ -1604,21 +1591,34 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                 render: (v: string | null, m: HoaDonLine) => (
                   <Input size="small" value={v ?? ""} placeholder={dk.ghiCo}
                          onChange={(e) => suaDongHang(m.sttLine, { ghiCo: e.target.value })} />
-                ) },
-
-              { title: "% VAT", dataIndex: "ptVat", width: 74, align: "right",
+                ) },  
+              { title: "% VAT", dataIndex: "ptVat", width: 56, align: "right",
+                onHeaderCell: () => ({ style: { textAlign: "center" as const } }),
                 render: (v: number, m: HoaDonLine) => (
                   <InputNumber size="small" controls={false}
                                style={{ width: "100%" }}
                                value={v > 0 && v <= 1 ? v * 100 : v}
                                onChange={(x) => suaDongHang(m.sttLine, { ptVat: x ?? 0 })} />
                 ) },
-              { title: "C.Khấu", dataIndex: "tienCk", width: 80, align: "right",
+              { title: "C.Khấu", dataIndex: "tienCk", width: 96, align: "right",
+                onHeaderCell: () => ({ style: { textAlign: "center" as const } }),
                 render: (v: number, m: HoaDonLine) => (
                   <InputNumber size="small" value={v} controls={false}
                                style={{ width: "100%" }}
                                formatter={tienVn} parser={docTienVn}
                                onChange={(x) => suaDongHang(m.sttLine, { tienCk: x ?? 0 })} />
+                ) },  
+
+              { title: "Thành tiền", dataIndex: "thanhTien", width: 140, align: "right",
+                render: (v: number) => (
+                  <b>{v.toLocaleString("vi-VN",
+                      { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</b>
+                ) },
+              { title: "Ghi chú", dataIndex: "ghiChu", width: 260,
+                render: (v: string | null, m: HoaDonLine) => (
+                  <Input size="small" value={v ?? ""} placeholder={m.tenHang}
+                         title={v || m.tenHang}
+                         onChange={(e) => suaDongHang(m.sttLine, { ghiChu: e.target.value })} />
                 ) },
             ]}
           />
