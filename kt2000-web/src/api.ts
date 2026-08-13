@@ -902,9 +902,12 @@ export interface KetQuaRaSoat {
 export const thueRaSoat = (thang: number | undefined, hoaDon: HoaDonFile[]) =>
   api.post<KetQuaRaSoat>("/thue/ra-soat", { hoaDon }, { params: { thang } });
 
-// Quét thư mục XML nằm sẵn TRÊN MÁY CHỦ
+// Quét thư mục XML nằm sẵn TRÊN MÁY CHỦ.
+// huong TÙY CHỌN: bỏ trống thì server suy hướng từng file theo MST người bán so với
+// MST đơn vị, nên một lượt quét soi được cả hóa đơn vào lẫn ra. Chỉ truyền khi muốn
+// ép cứng một chiều.
 export const thueRaSoatThuMuc = (
-  thang: number | undefined, thuMuc: string, huong: "VAO" | "RA"
+  thang: number | undefined, thuMuc: string, huong?: "VAO" | "RA"
 ) => api.post<KetQuaRaSoat>("/thue/ra-soat/thu-muc", { thuMuc, huong },
                             { params: { thang } });
 

@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using KT2000.Api.Data;
 using KT2000.Api.Services;
 
 namespace KT2000.Api.Controllers
@@ -19,11 +21,25 @@ namespace KT2000.Api.Controllers
         private readonly ThueService _thue;
         private readonly RaSoatService _raSoat;
         private readonly IConfiguration _config;
-        public ThueController(ThueService thue, RaSoatService raSoat, IConfiguration config)
+        private readonly AppDbContext _db;
+        public ThueController(ThueService thue, RaSoatService raSoat, IConfiguration config,
+                              AppDbContext db)
         {
             _thue = thue;
             _raSoat = raSoat;
             _config = config;
+            _db = db;
+        }
+
+        // MST của đơn vị đang đăng nhập, đọc từ Master. Dùng để suy hướng hóa đơn khi
+        // rà soát — xem RaSoatService.SuyHuong. Hồ sơ bỏ trống thì trả null.
+        private async Task<string?> MstDonVi()
+        {
+            var code = TenantCode();
+            return await _db.Tenants
+                .Where(t => t.Code == code)
+                .Select(t => t.TaxCode)
+                .FirstOrDefaultAsync();
         }
 
         private string TenantCode() =>
@@ -142,6 +158,16 @@ namespace KT2000.Api.Controllers
             if (ds.Count > 20000)
                 return BadRequest(new { message = "Quá 20.000 hóa đơn trong một lần rà soát" });
 
+            // Rà soát CẢ HAI CHIỀU trong một lượt: hướng suy từ MST người bán trong
+            // file, không bắt người dùng chọn trước. Client gửi Huong rỗng; nếu nó có
+            // gửi (bản cũ) thì giữ nguyên giá trị đó.
+            var mstDv = await MstDonVi();
+            foreach (var f in ds)
+            {
+                if (!string.IsNullOrWhiteSpace(f.Huong)) continue;
+                f.Huong = RaSoatService.SuyHuong(f.Mst, mstDv) ?? "VAO";
+            }
+
             var ky = thang is >= 1 and <= 12 ? thang : null;
             return Ok(await _raSoat.Soat(TenantCode(), FiscalYear(), ky, ds));
         }
@@ -163,9 +189,10 @@ namespace KT2000.Api.Controllers
             if (string.IsNullOrWhiteSpace(req?.ThuMuc))
                 return BadRequest(new { message = "Chưa nhập đường dẫn thư mục" });
 
+            // Hướng KHÔNG còn bắt buộc: để trống thì suy từ MST người bán của từng
+            // file, nhờ vậy một lượt quét soi được cả hóa đơn vào lẫn ra. Vẫn nhận
+            // giá trị tường minh nếu người dùng muốn ép một chiều.
             var huong = ChuanHoaHuong(req.Huong);
-            if (huong == null)
-                return BadRequest(new { message = "Phải chọn hướng VAO hoặc RA cho thư mục" });
 
             try
             {
@@ -178,8 +205,11 @@ namespace KT2000.Api.Controllers
                     { message = "Chưa khai Paths:ScanDocRoot trong cấu hình máy chủ" });
 
                 var ds = RaSoatService.QuetThuMuc(req.ThuMuc, goc);
-                // File XML không tự nói vào hay ra — lấy theo lựa chọn của người dùng
-                foreach (var x in ds) x.Huong = huong;
+                // File XML không tự nói vào hay ra. Ép một chiều nếu người dùng chọn,
+                // còn không thì suy từng file theo MST người bán so với MST đơn vị.
+                var mstDv = huong == null ? await MstDonVi() : null;
+                foreach (var x in ds)
+                    x.Huong = huong ?? RaSoatService.SuyHuong(x.Mst, mstDv) ?? "VAO";
 
                 var ky = thang is >= 1 and <= 12 ? thang : null;
                 return Ok(await _raSoat.Soat(TenantCode(), FiscalYear(), ky, ds));

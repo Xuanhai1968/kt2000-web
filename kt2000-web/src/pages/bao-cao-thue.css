@@ -37,13 +37,16 @@
 /* scroll.y của antd chỉ là cận TRÊN: 3 dòng thì bảng lùn tịt, 300 dòng mới cao
    hết cỡ — khung nhảy lung tung mỗi lần đổi kỳ. Ép cả height lẫn max-height thì
    khung đứng yên, ít dòng để trống phần dưới, nhiều dòng thì cuộn trong lòng.
+
+   ĐỪNG đổi sang flex:1 để "tự chia": antd dựng .ant-table-body bằng style NỘI
+   TUYẾN sinh từ scroll.y, nên chiều cao thật vẫn do con số bên TSX quyết. Bỏ con
+   số đó đi (từng thử truyền 1) thì bảng cao 1px và trắng trơn.
    PHẢI KHỚP với hằng CAO_BANG trong BaoCaoThue.tsx.
-   !important vì antd đặt max-height bằng style nội tuyến sinh từ scroll.y —
-   selector thường không thắng được.
-   280px = 96 (ngoài Card) + đầu Card + dải tab + header bảng + dòng tổng. */
+   !important vì antd đặt max-height nội tuyến — selector thường không thắng.
+   300px = 96 (ngoài Card) + đầu Card + dải tab + header bảng + THANH TỔNG. */
 .bc-thue .bang-bc .ant-table-body {
-  height: calc(100vh - 280px);
-  max-height: calc(100vh - 280px) !important;
+  height: calc(100vh - 300px);
+  max-height: calc(100vh - 300px) !important;
   overflow-y: auto !important;
 }
 
@@ -56,34 +59,102 @@
   min-height: 0;
 }
 
+/* Bảng TỔNG HỢP không có thanh tổng dưới đáy nên được cao thêm đúng phần đó,
+   nếu không sẽ hụt một khoảng trống bằng chiều cao thanh tổng. */
+.bc-thue .bang-tong-hop .ant-table-body {
+  height: calc(100vh - 260px);
+  max-height: calc(100vh - 260px) !important;
+}
+
 /* Bảng rỗng: giữ nguyên chiều cao thay vì sập xuống một dòng chữ */
 .bc-thue .bang-bc .ant-table-placeholder > td {
   border-bottom: none;
 }
 
 /* ----- Mật độ dòng ----- */
-/* Bảng kê 11 cột, xem cả trăm dòng một lúc nên nén sát hơn size="small" mặc định */
+/* Bảng kê 11 cột, xem cả trăm dòng một lúc nên nén sát hơn size="small" mặc định.
+   Cỡ chữ giữ nguyên mặc định — chỉ thanh tổng mới phóng to. */
 .bc-thue .bang-bc .ant-table-thead > tr > th,
 .bc-thue .bang-bc .ant-table-tbody > tr > td {
   padding: 4px 8px;
+}
+
+/* Số tiền trong bảng: tabular-nums để chữ số thẳng cột với thanh tổng bên dưới */
+.bc-thue .bang-bc .ant-table-tbody > tr > td {
+  font-variant-numeric: tabular-nums;
 }
 
 .bc-thue .bang-bc .ant-table-thead > tr > th {
   white-space: nowrap;
 }
 
-/* ----- Dòng TỔNG cuối bảng kê ----- */
-/* Nằm trong Table.Summary nên thẳng cột tuyệt đối với cột nó cộng. Tô nền + in
-   đậm để tách khỏi dòng dữ liệu; số tiền lấy màu như hai ô Statistic cũ. */
-.bc-thue .bang-bc .dong-tong > td {
+/* ----- Thanh TỔNG: khối riêng dưới bảng, DÓNG THẲNG CỘT ----- */
+/* Tách khỏi Table.Summary (khỏi phải đếm colSpan mỗi lần đổi cột) nhưng vẫn lặp
+   lại đúng bề rộng cột của bảng — bề rộng lấy từ RONG_COT trong BaoCaoThue.tsx,
+   một nguồn duy nhất nên hai chỗ không bao giờ lệch.
+
+   Khối NGOÀI cuộn ngang, khối TRONG rộng đúng bằng bảng: JS nối scrollLeft hai
+   bên nên khi bảng trượt sang phải, thanh tổng trượt y hệt và số luôn nằm đúng
+   dưới cột nó đang cộng. */
+.tong-bc-ngoai {
+  overflow-x: auto;
+  overflow-y: hidden;
   background: #fafafa;
-  font-weight: 600;
-  border-top: 1px solid #d9d9d9;
+  /* KHÔNG đặt viền trái/phải: bảng bên trên không có, thêm vào là đẩy cả dải nội
+     dung lệch 1px so với cột. Chỉ giữ đúng đường kẻ trên. */
+  /* Kẻ ĐẬM ở trên để tách hẳn khỏi dòng dữ liệu cuối: đây là số tổng, không phải
+     thêm một dòng hóa đơn nữa. Đường mảnh 1px của antd chìm lẫn với kẻ dòng. */
+  border-top: 2px solid #8c8c8c;
+  /* Thanh cuộn của bảng đã đủ để kéo; giấu cái ở đây cho gọn mắt */
+  scrollbar-width: none;
 }
 
-/* Ô thứ 8 (D.Thu chưa thuế) và ô thứ 10 (Thuế GTGT) — đếm từ 1 theo CSS */
-.bc-thue .bang-bc .dong-tong > td:nth-child(2) { color: #1677ff; }
-.bc-thue .bang-bc .dong-tong > td:nth-child(4) { color: #cf1322; }
+.tong-bc-ngoai::-webkit-scrollbar { display: none; }
+
+.tong-bc {
+  display: flex;
+  align-items: center;
+  padding: 7px 0;
+  font-size: 18px;              /* +5px so với 13px của dòng dữ liệu */
+  font-weight: 600;
+}
+
+/* box-sizing: border-box là mấu chốt của việc DÓNG CỘT.
+   antd áp bề rộng cột qua <colgroup>, tức 150px đã GỒM padding của ô. Nếu ở đây
+   để content-box (mặc định) thì width:150 + padding 8px hai bên = 166px thật —
+   mỗi ô phình 16px, dồn lại làm hai số tổng lệch hẳn sang trái so với cột. */
+.tong-nhan,
+.tong-o {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+
+/* Nhãn trải trên 7 cột đầu. padding-left khớp padding ô của bảng (8px) để chữ
+   thẳng hàng với cột STT. */
+.tong-nhan {
+  padding-left: 8px;
+  color: rgba(0, 0, 0, 0.75);
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ô tiền: căn phải + padding 8px y như ô của bảng, nhờ vậy chữ số cuối thẳng
+   tuyệt đối với chữ số cuối của cột bên trên.
+   tabular-nums để bề rộng chữ số cố định, số không nhảy khi đổi kỳ. */
+.tong-o {
+  padding: 0 8px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tong-dt   { color: #1677ff; }
+.tong-thue { color: #cf1322; }
+
+/* Khối bọc bảng + thanh tổng. Không cần flex: bảng đã cao cố định theo scroll.y,
+   thanh tổng chỉ việc nằm ngay dưới nó theo dòng chảy bình thường. */
 
 /* ----- Dòng chỉ tiêu chính của tờ khai ----- */
 /* Các chỉ tiêu 1, 2, 3, 4... in đậm để tách khỏi dòng con 2a/2b/3c. Không tô nền

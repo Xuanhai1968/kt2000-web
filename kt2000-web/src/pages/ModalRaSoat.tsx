@@ -1,6 +1,6 @@
 import { useState } from "react";
 import {
-  Modal, Upload, Button, Input, Select, Space, Table, Tabs, Alert, Typography,
+  Modal, Upload, Button, Input, Space, Table, Tabs, Alert,
   Statistic, Row, Col, message,
 } from "antd";
 import { InboxOutlined, FolderOpenOutlined } from "@ant-design/icons";
@@ -104,7 +104,6 @@ function docXml(noiDung: string, tenFile: string, huong: string): HoaDonFile | n
 }
 
 export default function ModalRaSoat({ mo, onDong, thang, nhanKy }: Props) {
-  const [huong, setHuong] = useState<"VAO" | "RA">("VAO");
   const [thuMuc, setThuMuc] = useState("");
   const [dangSoat, setDangSoat] = useState(false);
   const [kq, setKq] = useState<KetQuaRaSoat | null>(null);
@@ -135,7 +134,8 @@ export default function ModalRaSoat({ mo, onDong, thang, nhanKy }: Props) {
     let hong = 0;
     for (const f of files) {
       if (!f.name.toLowerCase().endsWith(".xml")) { hong++; continue; }
-      const hd = docXml(await f.text(), f.name, huong);
+      // Hướng để TRỐNG — server tự suy theo MST người bán trong file.
+      const hd = docXml(await f.text(), f.name, "");
       if (hd) ds.push(hd); else hong++;
     }
     await soatDanhSach(ds, hong);
@@ -148,7 +148,8 @@ export default function ModalRaSoat({ mo, onDong, thang, nhanKy }: Props) {
     }
     setDangSoat(true);
     try {
-      const r = await thueRaSoatThuMuc(thang, thuMuc.trim(), huong);
+      // Không truyền hướng — server suy từng file, quét một lượt ra cả vào lẫn ra.
+      const r = await thueRaSoatThuMuc(thang, thuMuc.trim());
       setKq(r.data);
       setSoFileHong(0);
       setTab("thieu-so");
@@ -180,7 +181,8 @@ export default function ModalRaSoat({ mo, onDong, thang, nhanKy }: Props) {
       title={`Rà soát dữ liệu — ${nhanKy}`}
       open={mo}
       onCancel={onDong}
-      footer={<Button onClick={onDong}>Đóng</Button>}
+
+      footer={null}
       width="80vw"
       style={{ top: 40, maxWidth: 1400 }}
       styles={{ body: { maxHeight: "calc(100vh - 200px)", overflow: "auto" } }}
@@ -193,19 +195,10 @@ export default function ModalRaSoat({ mo, onDong, thang, nhanKy }: Props) {
         description="Màn này so hóa đơn trong file với hóa đơn đã có trong sổ để bạn biết còn thiếu hay lệch gì. Muốn nạp hóa đơn thì dùng màn Lấy HĐ điện tử."
       />
 
-      {/* ----- Nguồn dữ liệu ----- */}
+      {/* ----- Nguồn dữ liệu -----
+          Không còn ô chọn hướng: server đọc MST người bán trong từng file, trùng MST
+          đơn vị thì là hóa đơn RA, khác thì VÀO. Một lượt soát ra cả hai chiều. */}
       <Space direction="vertical" size={10} style={{ width: "100%" }}>
-        <Space wrap>
-          <Typography.Text type="secondary">Hướng hóa đơn</Typography.Text>
-          {/* File XML không tự nói vào hay ra — cùng một file là HĐ ra của bên bán
-              và HĐ vào của bên mua, nên phải hỏi. */}
-          <Select value={huong} onChange={setHuong} style={{ width: 150 }}
-                  options={[
-                    { value: "VAO", label: "Mua vào" },
-                    { value: "RA", label: "Bán ra" },
-                  ]} />
-        </Space>
-
         <Upload.Dragger
           multiple
           accept=".xml"
@@ -230,7 +223,7 @@ export default function ModalRaSoat({ mo, onDong, thang, nhanKy }: Props) {
         <Space.Compact style={{ width: "100%" }}>
           <Input
             prefix={<FolderOpenOutlined />}
-            placeholder="…hoặc gõ đường dẫn thư mục XML có sẵn trên máy chủ"
+            placeholder="hoặc gõ đường dẫn thư mục XML có sẵn trên máy chủ"
             value={thuMuc}
             onChange={(e) => setThuMuc(e.target.value)}
             onPressEnter={soatThuMuc}

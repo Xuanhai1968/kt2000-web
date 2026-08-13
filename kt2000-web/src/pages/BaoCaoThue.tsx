@@ -39,27 +39,46 @@ const ngayNgan = (s: string | null) => {
   return p.length === 3 && p[0] ? `${p[2]}/${p[1]}/${p[0].slice(2)}` : "";
 };
 
+// Bề rộng cột — MỘT nguồn duy nhất cho cả bảng lẫn thanh tổng, để hai chỗ không
+// bao giờ lệch nhau. Thứ tự đúng như cotBangKe bên dưới.
+//
+// PHẢI khai TRƯỚC cotBangKe: const không được hoisting, đặt sau thì cotBangKe đọc
+// phải vùng chết và nổ "Cannot access before initialization" ngay khi nạp module.
+const RONG_COT = {
+  stt: 56, khHd: 90, soHd: 90, ngay: 86, ten: 300, mst: 130, matHang: 240,
+  dt: 150, ts: 56, thue: 140, ghiChu: 200,
+} as const;
+
+// Nhãn thanh tổng trải trên 7 cột đầu (STT…Mặt hàng), y như colSpan=7 trước đây.
+const RONG_NHAN = RONG_COT.stt + RONG_COT.khHd + RONG_COT.soHd + RONG_COT.ngay
+                + RONG_COT.ten + RONG_COT.mst + RONG_COT.matHang;
+
+const RONG_BANG = RONG_NHAN + RONG_COT.dt + RONG_COT.ts + RONG_COT.thue
+                + RONG_COT.ghiChu;
+
 // Cột chung cho hai bảng kê. Khác nhau đúng một chữ: "Người bán" (mua vào) vs
 // "Người mua" (bán ra). Để ngoài component vì không dùng state nào.
 const cotBangKe = (vaiTro: string): ColumnsType<BangKeHoaDon> => [
-  { title: "STT", dataIndex: "stt", width: 56, fixed: "left", align: "right" },
-  { title: "KH HĐ", dataIndex: "khHd", width: 90 },
-  { title: "Số HĐ", dataIndex: "soHd", width: 90 },
-  { title: "Ngày", dataIndex: "ngay", width: 86,
+  // KHÔNG fixed:"left" — cột ghim đứng yên khi cuộn ngang, còn thanh tổng bên dưới
+  // trượt cả khối, hai bên sẽ lệch nhau đúng 56px. Thà cùng trượt còn hơn lệch cột.
+  { title: "STT", dataIndex: "stt", width: RONG_COT.stt, align: "right" },
+  { title: "KH HĐ", dataIndex: "khHd", width: RONG_COT.khHd },
+  { title: "Số HĐ", dataIndex: "soHd", width: RONG_COT.soHd },
+  { title: "Ngày", dataIndex: "ngay", width: RONG_COT.ngay,
     render: (v: string | null) => ngayNgan(v) },
-  { title: `Tên ${vaiTro}`, dataIndex: "tenDoiTac", width: 300, ellipsis: true,
+  { title: `Tên ${vaiTro}`, dataIndex: "tenDoiTac", width: RONG_COT.ten, ellipsis: true,
     render: (v: string | null) => <span title={v ?? ""}>{v}</span> },
-  { title: `MST ${vaiTro}`, dataIndex: "mstDoiTac", width: 130 },
-  { title: "Mặt hàng", dataIndex: "matHang", width: 240, ellipsis: true,
+  { title: `MST ${vaiTro}`, dataIndex: "mstDoiTac", width: RONG_COT.mst },
+  { title: "Mặt hàng", dataIndex: "matHang", width: RONG_COT.matHang, ellipsis: true,
     render: (v: string | null) => <span title={v ?? ""}>{v}</span> },
-  { title: "D.Thu Chưa thuế", dataIndex: "doanhThuChuaVat", width: 150,
+  { title: "D.Thu Chưa thuế", dataIndex: "doanhThuChuaVat", width: RONG_COT.dt,
     align: "right", render: (v: number) => tien(v) },
   // Thuế suất để trống khi HĐ không khai vat — không bịa thành 0%
-  { title: "TS", dataIndex: "thueSuat", width: 56, align: "right",
+  { title: "TS", dataIndex: "thueSuat", width: RONG_COT.ts, align: "right",
     render: (v: number | null) => v == null ? "" : String(v) },
-  { title: "Thuế GTGT", dataIndex: "thueGtgt", width: 140, align: "right",
+  { title: "Thuế GTGT", dataIndex: "thueGtgt", width: RONG_COT.thue, align: "right",
     render: (v: number) => tien(v) },
-  { title: "Ghi chú", dataIndex: "ghiChu", width: 200, ellipsis: true },
+  { title: "Ghi chú", dataIndex: "ghiChu", width: RONG_COT.ghiChu, ellipsis: true },
 ];
 
 const COT_VAO = cotBangKe("Người bán");
@@ -132,52 +151,92 @@ export default function BaoCaoThue() {
 
   const nhanKy = thang === "all" ? `cả năm ${namLamViec}`
                                  : `tháng ${thang}/${namLamViec}`;
+                                 
+  const oTongRef = useRef<HTMLDivElement | null>(null);
+  const khoaRef = useRef(false);
 
-  // Bảng cuộn trong lòng nó, không đẩy dài cả trang. Trừ chỗ cho thanh lọc, dải
-  // tab, thanh đáy và khung ngoài của AppShell.
-  //
-  // PHẢI KHỚP với height của .ant-table-body trong bao-cao-thue.css — chỗ đó ép
-  // chiều cao CỐ ĐỊNH để khung không co theo số dòng. Sửa một bên thì sửa cả hai.
-  // Trừ: thanh tiêu đề app, padding trang, đầu Card, dải tab, thanh tổng dưới.
-  const CAO_BANG = "calc(100vh - 280px)";
+  useEffect(() => {
+    const oTong = oTongRef.current;
+    // Thân cuộn của antd — chỉ có sau khi bảng đã dựng xong.
+    const oBang = oTong?.closest(".khoi-bang")
+                       ?.querySelector<HTMLElement>(".ant-table-body");
+    if (!oTong || !oBang) return;
 
-  // Dòng TỔNG nằm TRONG bảng (Table.Summary) chứ không phải khối riêng bên dưới:
-  // chỉ có cách này số tổng mới thẳng cột tuyệt đối với cột dữ liệu, và antd tự
-  // ghim nó ở đáy khi cuộn. Trước để Statistic rời bên ngoài nên số nằm lệch hẳn
-  // so với cột "D.Thu Chưa thuế" / "Thuế GTGT" mà nó đang cộng.
+    const noi = (tu: HTMLElement, den: HTMLElement) => () => {
+      if (khoaRef.current) { khoaRef.current = false; return; }
+      khoaRef.current = true;
+      den.scrollLeft = tu.scrollLeft;
+    };
+    const tuBang = noi(oBang, oTong);
+    const tuTong = noi(oTong, oBang);
+
+    oBang.addEventListener("scroll", tuBang, { passive: true });
+    oTong.addEventListener("scroll", tuTong, { passive: true });
+    // Đổi tab/kỳ thì bảng dựng lại từ đầu, kéo vị trí cuộn về 0 cho khớp.
+    oTong.scrollLeft = oBang.scrollLeft;
+    return () => {
+      oBang.removeEventListener("scroll", tuBang);
+      oTong.removeEventListener("scroll", tuTong);
+    };
+  }, [tab, bc, tai]);
+
+  // Chiều cao thân bảng. antd dựng .ant-table-body bằng style NỘI TUYẾN sinh từ
+  // giá trị này, nên nó phải là con số dùng được thật — truyền 1 thì bảng cao 1px
+  // và trắng trơn, không CSS nào cứu được.
   //
-  // Vị trí ô phải khớp thứ tự cột trong cotBangKe: 0=STT … 7=D.Thu, 8=TS, 9=Thuế.
+  // PHẢI KHỚP với .ant-table-body trong bao-cao-thue.css.
+  // 300px = 96 (ngoài Card) + đầu Card + dải tab + header bảng + THANH TỔNG (~40px).
+  const CAO_BANG = "calc(100vh - 300px)";
+
+  // Bảng Tổng hợp không có thanh tổng dưới đáy nên được cao thêm đúng phần đó.
+  const CAO_BANG_TH = "calc(100vh - 260px)";
+
+  // Thanh TỔNG là khối RIÊNG dưới bảng, không dùng Table.Summary — nhưng vẫn DÓNG
+  // ĐÚNG CỘT bằng cách lặp lại đúng bề rộng cột của bảng.
+  //
+  // Vì sao không dùng Table.Summary: antd ghim summary vào trong khung cuộn dọc,
+  // và mỗi lần thêm/bớt cột phải đếm lại colSpan cho khớp. Khối rời nằm ngoài,
+  // luôn thấy được, và chỉ cần đọc cùng một mảng bề rộng là thẳng hàng.
+  //
+  // Cuộn ngang ĐỒNG BỘ với bảng: hai ô tiền nằm ở cột thứ 8 và 10 (x = 952px và
+  // 1258px) nên khi bảng cuộn sang phải, thanh tổng phải trượt theo đúng chừng ấy,
+  // nếu không số sẽ lệch khỏi cột nó đang cộng.
+  const thanhTong = (
+    <div className="tong-bc-ngoai" ref={oTongRef}>
+      <div className="tong-bc" style={{ width: RONG_BANG }}>
+        {/* Gộp 7 cột đầu (STT…Mặt hàng) làm chỗ đặt nhãn */}
+        <span className="tong-nhan" style={{ width: RONG_NHAN }}>
+          Tổng {tab === "ra" ? "bán ra" : "mua vào"} {nhanKy} —{" "}
+          <b>{tongDangXem.soHd}</b> hóa đơn
+        </span>
+        <span className="tong-o tong-dt" style={{ width: RONG_COT.dt }}>
+          {tien(tongDangXem.dt)}
+        </span>
+        <span className="tong-o" style={{ width: RONG_COT.ts }} />
+        <span className="tong-o tong-thue" style={{ width: RONG_COT.thue }}>
+          {tien(tongDangXem.thue)}
+        </span>
+        <span className="tong-o" style={{ width: RONG_COT.ghiChu }} />
+      </div>
+    </div>
+  );
+
   const bangKe = (ds: BangKeHoaDon[] | undefined, cot: ColumnsType<BangKeHoaDon>,
                   nhan: string) => (
-    <Table<BangKeHoaDon>
-      className="bang-bc"
-      size="small"
-      rowKey="maHd"
-      dataSource={ds ?? []}
-      columns={cot}
-      loading={tai}
-      pagination={false}
-      scroll={{ x: 1450, y: CAO_BANG }}
-      locale={{ emptyText: `Kỳ này chưa có hóa đơn ${nhan}` }}
-      summary={() => (
-        <Table.Summary fixed>
-          <Table.Summary.Row className="dong-tong">
-            <Table.Summary.Cell index={0} colSpan={7}>
-              Tổng {tab === "ra" ? "bán ra" : "mua vào"} {nhanKy} —{" "}
-              <b>{tongDangXem.soHd}</b> hóa đơn
-            </Table.Summary.Cell>
-            <Table.Summary.Cell index={7} align="right">
-              {tien(tongDangXem.dt)}
-            </Table.Summary.Cell>
-            <Table.Summary.Cell index={8} />
-            <Table.Summary.Cell index={9} align="right">
-              {tien(tongDangXem.thue)}
-            </Table.Summary.Cell>
-            <Table.Summary.Cell index={10} />
-          </Table.Summary.Row>
-        </Table.Summary>
-      )}
-    />
+    <div className="khoi-bang">
+      <Table<BangKeHoaDon>
+        className="bang-bc"
+        size="small"
+        rowKey="maHd"
+        dataSource={ds ?? []}
+        columns={cot}
+        loading={tai}
+        pagination={false}
+        scroll={{ x: RONG_BANG, y: CAO_BANG }}
+        locale={{ emptyText: `Kỳ này chưa có hóa đơn ${nhan}` }}
+      />
+      {thanhTong}
+    </div>
   );
 
   // Thanh lọc kỳ nằm ở `extra` của Card — đúng chỗ antd dành cho thao tác của khối.
@@ -240,7 +299,7 @@ export default function BaoCaoThue() {
                 columns={COT_TONG_HOP}
                 loading={tai}
                 pagination={false}
-                scroll={{ y: CAO_BANG }}
+                scroll={{ y: CAO_BANG_TH }}
                 // Chỉ tiêu CHÍNH của tờ khai (1, 2, 3...) in đậm để mắt tách ngay
                 // với dòng con 2a/2b/3c.
                 rowClassName={(m) => m.laDongChinh ? "dong-chi-tieu-chinh" : ""}

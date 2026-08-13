@@ -26,6 +26,36 @@ namespace KT2000.Api.Services
         private static string Khoa(string huong, string mst, string khhd, string soHd)
             => $"{huong}|{mst?.Trim()}|{khhd?.Trim()}|{ImportService.ChuanSoHd(soHd ?? "")}";
 
+        // MST chỉ so phần SỐ: cổng TCT khai chi nhánh dạng "0100686174-634" còn hồ sơ
+        // đơn vị thường chỉ ghi "0100686174". So nguyên chuỗi thì mọi hóa đơn chi
+        // nhánh đều lệch hướng.
+        private static string GocMst(string? mst)
+        {
+            var s = (mst ?? "").Trim();
+            var gach = s.IndexOf('-');
+            return (gach > 0 ? s[..gach] : s).Trim();
+        }
+
+        /// <summary>
+        /// Suy HƯỚNG của một hóa đơn đọc từ file: MST người bán trùng MST đơn vị đang
+        /// đăng nhập thì đơn vị là bên BÁN (hóa đơn RA), khác thì là bên MUA (VÀO).
+        /// </summary>
+        /// <remarks>
+        /// Nhờ hàm này mà rà soát chạy được CẢ HAI CHIỀU trong một lượt. Trước đây bắt
+        /// người dùng chọn sẵn một hướng, mà bước "có trong sổ, không có file" lại soi
+        /// toàn bộ hóa đơn của kỳ — chọn "Mua vào" thì mọi hóa đơn bán ra đều bị báo
+        /// thiếu oan, và ngược lại.
+        ///
+        /// Không biết MST đơn vị (hồ sơ bỏ trống) thì trả null: tầng gọi sẽ giữ nguyên
+        /// hướng do người dùng chỉ định, thà quay lại cách cũ còn hơn đoán bừa.
+        /// </remarks>
+        public static string? SuyHuong(string? mstNguoiBan, string? mstDonVi)
+        {
+            var dv = GocMst(mstDonVi);
+            if (dv.Length == 0) return null;
+            return GocMst(mstNguoiBan) == dv ? "RA" : "VAO";
+        }
+
         /// <summary>
         /// So danh sách hóa đơn đọc từ file với sổ của kỳ. Trả về các vấn đề tìm được.
         /// </summary>
