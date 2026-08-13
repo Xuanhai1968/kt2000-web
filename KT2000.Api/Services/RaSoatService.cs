@@ -853,51 +853,40 @@ namespace KT2000.Api.Services
             return ds;
         }
 
-        // ---------- BR-TK-03: phân bổ chiết khấu theo tỷ trọng rồi mới nhân thuế suất ----------
+        // ---------- BR-TK-03: gom theo THUẾ SUẤT CỦA HÓA ĐƠN, trừ chiết khấu ----------
         //
-        // KHÔNG cộng thẳng HOA_DON_LINE.tien_vat_l: cột đó tính trên giá GỐC chưa trừ
-        // chiết khấu nên luôn cao hơn thực tế. Đo trên NHAT_TUAN T7: 42/42 hóa đơn có
-        // chiết khấu đều lệch, tổng lệch 31.990.665 đ (BR-TK-01).
-        //
-        // Cách làm: mỗi hóa đơn, chia tiền hàng theo nhóm thuế suất, phân bổ chiết khấu
-        // theo TỶ TRỌNG tiền hàng của nhóm, rồi mới nhân thuế suất.
+        // ĐỐI CHIẾU với tờ khai T7/2026 thật do HTKK sinh (test\tokhai\...M072026-L00.xml,
         private static List<NhomThueSuatDto> PhanBo(
             List<HoaDonKy> hoaDon, List<DongTheoSuat> dong, string huong,
             List<CanhBaoToKhaiDto> canhBao)
         {
-            var theoMa = hoaDon.Where(h => h.Huong == huong)
-                               .ToDictionary(h => h.MaHd, StringComparer.OrdinalIgnoreCase);
+            var dsHd = hoaDon.Where(h => h.Huong == huong).ToList();
+
+            // loai_thue lấy từ dòng để phân biệt KCT / KKKNT / 0% — ba loại này cùng
+            // thuế suất 0 nên chỉ nhìn con số thì không tách nổi (script 017 sinh ra
+            // cột đó chính vì vậy). Lấy theo mã hóa đơn.
+            var loaiTheoHd = dong
+                .GroupBy(d => d.MaHd, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key,
+                              g => g.Select(x => x.LoaiThue).FirstOrDefault(x => x != null),
+                              StringComparer.OrdinalIgnoreCase);
+
+            var soDongTheoHd = dong
+                .GroupBy(d => d.MaHd, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Sum(x => x.SoDong),
+                              StringComparer.OrdinalIgnoreCase);
 
             var gom = new Dictionary<decimal, NhomThueSuatDto>();
 
-            foreach (var nhomHd in dong.GroupBy(d => d.MaHd, StringComparer.OrdinalIgnoreCase))
+            foreach (var hd in dsHd)
             {
-                if (!theoMa.TryGetValue(nhomHd.Key, out var hd)) continue;
+                if (!gom.TryGetValue(hd.Vat, out var n))
+                    gom[hd.Vat] = n = new NhomThueSuatDto { ThueSuat = hd.Vat };
 
-                var tongHang = nhomHd.Sum(x => x.TienHang);
-                // Hóa đơn tiền hàng 0 (hàng khuyến mại toàn phần) thì không có gì để
-                // chia tỷ trọng — bỏ qua, chiết khấu của nó cũng không phân bổ được.
-                if (tongHang <= 0) continue;
-
-                foreach (var d in nhomHd)
-                {
-                    // Tỷ trọng nhóm trong hóa đơn → phần chiết khấu nhóm gánh
-                    var ck = hd.TienCk * (d.TienHang / tongHang);
-
-                    if (!gom.TryGetValue(d.PtVat, out var n))
-                        gom[d.PtVat] = n = new NhomThueSuatDto
-                        {
-                            ThueSuat = d.PtVat,
-                            LoaiThue = d.LoaiThue,
-                        };
-
-                    n.SoDong += d.SoDong;
-                    n.TienHangGop += d.TienHang;
-                    n.ChietKhau += ck;
-                    // Giữ loai_thue đầu tiên gặp được — cùng thuế suất thì cùng loại,
-                    // trừ trường hợp 0% lẫn KCT mà chính script 017 sinh ra để tách.
-                    n.LoaiThue ??= d.LoaiThue;
-                }
+                n.TienHangGop += hd.TienHangGop;
+                n.ChietKhau += hd.TienCk;
+                n.SoDong += soDongTheoHd.TryGetValue(hd.MaHd, out var sd) ? sd : 0;
+                n.LoaiThue ??= loaiTheoHd.TryGetValue(hd.MaHd, out var lt) ? lt : null;
             }
 
             foreach (var n in gom.Values)
@@ -910,13 +899,13 @@ namespace KT2000.Api.Services
             // BR-TK-03 bước 5: Σ thuế các nhóm PHẢI khớp Σ tien_vat của header.
             // Lệch nhỏ là do làm tròn từng nhóm — dồn vào nhóm doanh thu lớn nhất.
             // Lệch lớn nghĩa là dữ liệu có vấn đề, phải chặn chứ không được lặng lẽ ép.
-            var thueHeader = hoaDon.Where(h => h.Huong == huong).Sum(h => h.TienVat);
+            var thueHeader = dsHd.Sum(h => h.TienVat);
             var thueNhom = gom.Values.Sum(n => n.Thue);
             var lech = thueHeader - thueNhom;
 
             if (lech != 0 && gom.Count > 0)
             {
-                var soHd = theoMa.Count;
+                var soHd = dsHd.Count;
                 // Ngưỡng: mỗi hóa đơn lệch tối đa 5 đồng do làm tròn.
                 if (Math.Abs(lech) <= Math.Max(5m * soHd, 100m))
                 {
