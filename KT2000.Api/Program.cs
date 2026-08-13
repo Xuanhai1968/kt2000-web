@@ -16,6 +16,9 @@ builder.Services.AddDbContext<AppDbContext>(o =>
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddControllers();
 builder.Services.AddSingleton<TenantDbResolver>();
+// Singleton vì nó NHỚ database nào đã đủ phiên bản — để scoped thì mỗi request quên
+// sạch rồi hỏi lại database, mất đúng cái đường nhanh khiến nó gọi được ở nhiều lối vào.
+builder.Services.AddSingleton<VaCauTrucService>();
 builder.Services.AddScoped<AdminService>();
 builder.Services.AddScoped<ImportService>();
 builder.Services.AddScoped<NoiBoService>();   // phần nội bộ: danh mục + phiếu xuất/nhập

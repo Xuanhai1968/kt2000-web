@@ -38,13 +38,20 @@ namespace KT2000.Api.Services
         private readonly AppDbContext _db;
         private readonly TenantDbResolver _resolver;
         private readonly IConfiguration _config;
-        public ImportService(AppDbContext db, TenantDbResolver resolver, IConfiguration config)
-        { _db = db; _resolver = resolver; _config = config; }
+        private readonly VaCauTrucService _va;
+        public ImportService(AppDbContext db, TenantDbResolver resolver, IConfiguration config,
+                             VaCauTrucService va)
+        { _db = db; _resolver = resolver; _config = config; _va = va; }
 
         public async Task<KetQuaNapJob> ImportJob(ImportJobRequest req, string userName)
         {
             var tenant = await _db.Tenants.FindAsync(req.TenantId)
                 ?? throw new ArgumentException("Không tìm thấy đơn vị");
+
+            // Vá cấu trúc TRƯỚC khi ghi: đây là chỗ cần cột mới nhất, và cũng là chỗ hay
+            // gặp database lâu không ai đụng tới. Lần đầu tốn một câu SELECT, sau đó nhớ
+            // trong bộ nhớ nên gần như miễn phí.
+            _va.BaoDam(tenant.Code, req.Nam, userName);
 
             string jobsRoot = _config["Paths:JobsRoot"]!;
             string scanRoot = _config["Paths:ScanDocRoot"]!;
@@ -77,6 +84,10 @@ namespace KT2000.Api.Services
             using var conn = new SqlConnection(
                 _resolver.GetTenantConnection(tenant.Code, req.Nam));
             await conn.OpenAsync();
+
+            // Dò MỘT LẦN cho cả job: database chưa chạy 017 thì bỏ cột loai_thue ra khỏi
+            // câu ghi thay vì để cả mẻ nạp chết.
+            bool coLoaiThue = CoCot(conn, "HOA_DON_LINE", "loai_thue");
 
             // Theo đúng lựa chọn trên màn hình: "Chỉ đầu vào" thì đừng đụng tới file RA
             var cacHuongNap = CacHuong(req.Huong);
@@ -227,7 +238,8 @@ namespace KT2000.Api.Services
                         bool existed = UpsertMaster(conn, tx, r, M, huong, maHd, userName,
                                                     tenant.KhaiQuy, tienHangChuaThue);
                         ReplaceLines(conn, tx, maHd, lines, L, userName,
-                                     N2(r, M, "TIEN_VAT", "TVAT_HD_G"), tienHangChuaThue);
+                                     N2(r, M, "TIEN_VAT", "TVAT_HD_G"), tienHangChuaThue,
+                                     coLoaiThue);
                         tx.Commit();
                         if (existed) updated++; else inserted++;
                         // Đếm song song theo hướng: chạy "cả vào cả ra" thì số tổng không
@@ -545,12 +557,17 @@ namespace KT2000.Api.Services
                     using (var del = new SqlCommand("DELETE FROM HOA_DON_LINE WHERE ma_hd=@id", conn, tx))
                     { del.Parameters.AddWithValue("@id", maHd); await del.ExecuteNonQueryAsync(); }
 
+                    // Cùng lý do như ở ImportJob: database chưa chạy 017 thì bỏ cột ra.
+                    bool coLoaiThue = CoCot(conn, "HOA_DON_LINE", "loai_thue");
+
                     foreach (var m in req.MatHangs)
                     {
-                        using var ins = new SqlCommand(@"
+                        using var ins = new SqlCommand($@"
                             INSERT INTO HOA_DON_LINE (ma_hd, stt_line, ten_hang_goc, dvt, so_luong,
-                                don_gia, pt_vat, tien_ck, tinh_chat, created_by)
-                            VALUES (@id, @stt, @ten, @dvt, @sl, @dg, @pt_vat, @tien_ck, @tc, @user)", conn, tx);
+                                don_gia, pt_vat, tien_ck, tinh_chat, created_by
+                                {(coLoaiThue ? ", loai_thue" : "")})
+                            VALUES (@id, @stt, @ten, @dvt, @sl, @dg, @pt_vat, @tien_ck, @tc, @user
+                                {(coLoaiThue ? ", @loai_thue" : "")})", conn, tx);
                         var p = ins.Parameters;
                         p.AddWithValue("@id", maHd);
                         p.AddWithValue("@stt", m.Stt);
@@ -558,7 +575,14 @@ namespace KT2000.Api.Services
                         p.AddWithValue("@dvt", (object?)Nz(m.Dvt) ?? DBNull.Value);
                         p.AddWithValue("@sl", m.SoLuong);
                         p.AddWithValue("@dg", m.DonGia);
-                        p.AddWithValue("@pt_vat", DocPhanTram(m.ThueSuat));
+                        string thueSuat = (m.ThueSuat ?? "").Trim();
+                        p.AddWithValue("@pt_vat", DocPhanTram(thueSuat));
+                        if (coLoaiThue)
+                        {
+                            // Giữ nguyên chuỗi gốc — xem giải thích ở ReplaceLines
+                            string lt = thueSuat.Length > 10 ? thueSuat[..10] : thueSuat;
+                            p.AddWithValue("@loai_thue", (object?)Nz(lt) ?? DBNull.Value);
+                        }
                         // Trước ghi cứng 0: cột Chiết khấu ở lưới dòng hàng nay sửa được
                         // (chốt 12/08), không ghi thì gõ xong số bay mất.
                         p.AddWithValue("@tien_ck", m.ChietKhau);
@@ -754,6 +778,10 @@ namespace KT2000.Api.Services
                                   Dictionary<string,int> M, string huong, string maHd,
                                   string user, bool khaiQuy, decimal tienHang)
         {
+            // Dọn bản cũ khác cách đệm TRƯỚC khi kiểm tồn tại — nếu không, bản 8 chữ số
+            // của lần nạp trước vẫn nằm đó và ta chèn thêm bản 7 chữ số bên cạnh.
+            DonBanTrungKhacDem(c, tx, maHd, ChuanSoHd(S2(r, M, "SO_HD", "SO_HD_G")));
+
             bool existed;
             using (var chk = new SqlCommand("SELECT COUNT(*) FROM HOA_DON WHERE ma_hd=@id", c, tx))
             { chk.Parameters.AddWithValue("@id", maHd); existed = (int)chk.ExecuteScalar()! > 0; }
@@ -849,6 +877,60 @@ namespace KT2000.Api.Services
             return existed;
         }
 
+        // Cùng một hóa đơn mà đệm số khác nhau thì ra HAI ma_hd khác nhau — bản cũ
+        // "..._C26TMN_00014708" (8 chữ số) và bản nay "..._C26TMN_0014708" (7 chữ số) —
+        // nên nạp lại đẻ ra hai dòng song song thay vì đè lên nhau (chốt Trường 13/08).
+        //
+        // Dọn trước khi ghi: xóa mọi bản có CÙNG phần đầu và CÙNG GIÁ TRỊ SỐ nhưng khác
+        // ma_hd. Bản đang ghi luôn là bản mới và đầy đủ nhất, bản kia là rác.
+        // Xóa chứ không đổi tên: nếu cả hai đã cùng tồn tại thì đổi tên sẽ đụng khóa
+        // chính, mà rốt cuộc vẫn phải bỏ một bản.
+        // Có 14 database đơn vị-năm, script đánh số chạy TAY từng cái — sót một cái là
+        // mọi lần nạp vào đó chết với "Invalid column name". ThueService đã dính đúng
+        // chuyện này với mấy cột của 015. Dò một lần mỗi job rồi ghi theo, đắt gần bằng
+        // không mà không bao giờ vỡ.
+        private static bool CoCot(SqlConnection c, string bang, string cot)
+        {
+            using var cmd = new SqlCommand("SELECT COL_LENGTH(@b, @c)", c);
+            cmd.Parameters.AddWithValue("@b", bang);
+            cmd.Parameters.AddWithValue("@c", cot);
+            var o = cmd.ExecuteScalar();
+            return o != null && o != DBNull.Value;
+        }
+
+        private static void DonBanTrungKhacDem(SqlConnection c, SqlTransaction tx,
+                                               string maHd, string soHd)
+        {
+            // Số có ký tự lạ thì không dám dọn — không so được "cùng giá trị".
+            if (!long.TryParse(soHd, out var soGoc)) return;
+            int viTri = maHd.LastIndexOf('_');
+            if (viTri < 0) return;
+
+            // '_' '%' '[' là ký tự đại diện của LIKE, phải thoát — không thì "VAO_0101_"
+            // khớp cả những mã chỉ hao hao.
+            string mau = maHd[..(viTri + 1)]
+                .Replace("[", "[[]").Replace("_", "[_]").Replace("%", "[%]") + "%";
+            int batDau = viTri + 2;      // SUBSTRING của SQL đếm từ 1
+
+            const string loc = @"ma_hd <> @moi AND ma_hd LIKE @mau
+                                 AND TRY_CONVERT(bigint, SUBSTRING(ma_hd, @batdau, 50)) = @so";
+
+            // LINE trước, master sau — ngược lại là bỏ mồ côi dòng hàng.
+            foreach (var sql in new[]
+            {
+                $"DELETE FROM HOA_DON_LINE WHERE ma_hd IN (SELECT ma_hd FROM HOA_DON WHERE {loc})",
+                $"DELETE FROM HOA_DON WHERE {loc}",
+            })
+            {
+                using var cmd = new SqlCommand(sql, c, tx);
+                cmd.Parameters.AddWithValue("@moi", maHd);
+                cmd.Parameters.AddWithValue("@mau", mau);
+                cmd.Parameters.AddWithValue("@batdau", batDau);
+                cmd.Parameters.AddWithValue("@so", soGoc);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
         // masterTienVat / masterTienHang: tiền thuế và tiền hàng ghi ở mức HÓA ĐƠN. Chỉ
         // dùng để vá ca hóa đơn KHÔNG CÓ XML — cổng không khai gì ở tầng dòng cho loại
         // này, mà nó luôn đúng MỘT dòng nên cả tiền thuế lẫn thuế suất đều là của dòng
@@ -856,18 +938,21 @@ namespace KT2000.Api.Services
         // tien_vat_l lẫn pt_vat đều trống.
         private void ReplaceLines(SqlConnection c, SqlTransaction tx, string maHd,
                                   List<IXLRow> lines, Dictionary<string,int> L, string user,
-                                  decimal masterTienVat = 0m, decimal masterTienHang = 0m)
+                                  decimal masterTienVat = 0m, decimal masterTienHang = 0m,
+                                  bool coLoaiThue = false)
         {
             using (var del = new SqlCommand("DELETE FROM HOA_DON_LINE WHERE ma_hd=@id", c, tx))
             { del.Parameters.AddWithValue("@id", maHd); del.ExecuteNonQuery(); }
 
             foreach (var r in lines)
             {
-                using var cmd = new SqlCommand(@"
+                using var cmd = new SqlCommand($@"
                     INSERT INTO HOA_DON_LINE (ma_hd, stt_line, ten_hang_goc, dvt, so_luong,
-                        don_gia, pt_vat, tien_ck, tien_vat_l, ma_ngan, tinh_chat, created_by)
+                        don_gia, pt_vat, tien_ck, tien_vat_l, ma_ngan, tinh_chat, created_by
+                        {(coLoaiThue ? ", loai_thue" : "")})
                     VALUES (@id, @stt, @ten_goc, @dvt, @sl, @dg, @pt_vat, @ck,
-                        @tien_vat_l, @ma_ngan, @tc, @user)", c, tx);
+                        @tien_vat_l, @ma_ngan, @tc, @user
+                        {(coLoaiThue ? ", @loai_thue" : "")})", c, tx);
                 var p = cmd.Parameters;
                 p.AddWithValue("@id", maHd);
                 p.AddWithValue("@stt", I2(r, L, "LINE_NO", "STT_LINE_G"));
@@ -877,15 +962,25 @@ namespace KT2000.Api.Services
                 // với đơn vị tính mất trắng. Đo thật: 22/22 dòng thiếu tên đều là NOXML.
                 p.AddWithValue("@ten_goc", (object?)Nz(S2(r, L, "TEN_HANG", "TEN_HANG_G")) ?? DBNull.Value);
                 p.AddWithValue("@dvt",     (object?)Nz(S2(r, L, "DVT", "DVT_G")) ?? DBNull.Value);
-                p.AddWithValue("@sl", N2(r, L, "SO_LUONG", "SO_LUONG_G"));
-                p.AddWithValue("@dg", N2(r, L, "DON_GIA", "DON_GIA_G"));
+                // @sl / @dg gán ở CUỐI hàm: phải biết khongCoXml và thanhTien mới quyết
+                // được — xem khối "SL × ĐG" bên dưới.
                 // Thuế suất trong Excel là CHUỖI có dấu phần trăm ("10%"), không phải số.
                 // N2 gọi DocSo — bộ đọc TIỀN — và decimal.TryParse chết ngay ở ký tự '%',
                 // trả về 0 mà không báo gì: toàn bộ pt_vat trong DB bằng 0.
                 // DocPhanTram lọc bỏ mọi ký tự không phải chữ số trước khi đọc, đúng việc.
                 // Dùng S2 (lấy chuỗi) chứ không N2 (lấy số) để có giá trị thô mà lọc.
                 // (biến ptVat khai ngay dưới, dùng lại cho tien_vat_l)
-                decimal ptVat = DocPhanTram(S2(r, L, "PT_VAT", "PT_VAT_L"));
+                string thueSuatTho = S2(r, L, "PT_VAT", "PT_VAT_L").Trim();
+                if (coLoaiThue)
+                {
+                    // Giữ NGUYÊN chuỗi cổng khai. pt_vat bên dưới biến "KCT" thành 0, y
+                    // hệt "0%" — hai thứ khác nhau ở tờ khai GTGT mà nhìn số không ra.
+                    // Cắt 10 ký tự cho vừa NVARCHAR(10): dài hơn thế là cổng đổi khuôn,
+                    // thà mất đuôi còn hơn cả mẻ nạp chết vì tràn cột.
+                    string lt = thueSuatTho.Length > 10 ? thueSuatTho[..10] : thueSuatTho;
+                    p.AddWithValue("@loai_thue", (object?)Nz(lt) ?? DBNull.Value);
+                }
+                decimal ptVat = DocPhanTram(thueSuatTho);
 
                 // Hóa đơn KHÔNG CÓ XML không có thuế suất ở tầng dòng — suy từ chính hóa
                 // đơn: tiền thuế / tiền hàng (chốt Trường 12/08).
@@ -940,6 +1035,34 @@ namespace KT2000.Api.Services
                 // khấu chia SL×ĐG — mà số suy ra không phải số người bán khai. Số tiền
                 // chiết khấu đã nằm ở tien_ck, đủ dùng. Cần % thật thì thêm TLCKhau vào
                 // XML_MAP rồi tải lại, ĐỪNG tính lại ở đây.
+                // ===== SL × ĐG =====
+                // HOA_DON_LINE KHÔNG có cột thành tiền — tiền hàng của dòng là SL × ĐG.
+                // Dòng nào thiếu một trong hai thì coi như dòng đó trị giá 0, và tiền hàng
+                // của cả hóa đơn hụt theo.
+                decimal sl = N2(r, L, "SO_LUONG", "SO_LUONG_G");
+                decimal dg = N2(r, L, "DON_GIA",  "DON_GIA_G");
+
+                if (khongCoXml)
+                {
+                    // Script đặt sẵn SL=1, ĐG=TỔNG TIỀN (đã gồm VAT). Đổi về tiền CHƯA
+                    // thuế (chốt Trường 13/08) để cột don_gia trong DB chỉ mang MỘT nghĩa
+                    // duy nhất — cùng một cột mà lúc gồm thuế lúc không là bẫy cho mọi
+                    // báo cáo về sau.
+                    sl = 1m;
+                    if (masterTienHang > 0) dg = masterTienHang;
+                }
+                else if (sl == 0 && dg == 0 && thanhTien != 0)
+                {
+                    // Hóa đơn chỉ ghi thành tiền, không kê số lượng lẫn đơn giá — hay gặp
+                    // ở hóa đơn dịch vụ / hỗ trợ bán hàng / tri ân, và hóa đơn bán lẻ.
+                    // Đo thật: 12 dòng, đều là hóa đơn RA của HOA_SANG.
+                    // thanhTien của dòng đọc từ XML vốn đã là tiền CHƯA thuế nên dùng thẳng.
+                    sl = 1m;
+                    dg = thanhTien;
+                }
+                p.AddWithValue("@sl", sl);
+                p.AddWithValue("@dg", dg);
+
                 p.AddWithValue("@ma_ngan", (object?)Nz(S(r, L, "MA_NGAN_G")) ?? DBNull.Value);
                 p.AddWithValue("@tc", I(r, L, "LOAI_HH"));
                 p.AddWithValue("@user", user);

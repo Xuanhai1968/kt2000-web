@@ -21,6 +21,14 @@
     <EmbeddedResource Include="..\database\015_tenant_nb.sql"
                       LogicalName="KT2000.Api.tenant_nb.sql" />
 
+    <!-- BẢN VÁ cấu trúc cho database đơn vị-năm ĐÃ TỒN TẠI. Khác hai file trên: chúng là
+         KHUÔN để dựng database mới, còn đây là thứ VaCauTrucService chạy khi gặp database
+         còn ở phiên bản cũ. Thêm bản vá mới thì phải thêm MỘT dòng ở đây VÀ một dòng
+         trong mảng CAC_BAN_VA của VaCauTrucService — thiếu một trong hai thì vá không
+         chạy mà chẳng báo gì. -->
+    <EmbeddedResource Include="..\database\017_hoa_don_line_loai_thue.sql"
+                      LogicalName="KT2000.Api.va_017_loai_thue.sql" />
+
     <!-- Bộ tải HĐ của TCT đi kèm bản build: TctFetchService gọi nó bằng Process.Start
          theo đường dẫn <thư mục exe>\tools\. Copy chứ không nhúng, vì python.exe cần
          file thật trên đĩa. Đè được bằng khóa Paths:TctScript nếu muốn để nơi khác. -->

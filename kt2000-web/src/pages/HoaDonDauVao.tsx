@@ -41,6 +41,10 @@ interface Props { huongMacDinh: "vao" | "ra" }
 //   chênh 8.390.648 = 2 × 4.195.324 (đúng số TTCKTMai).
 const laDongChietKhau = (m: MatHang) => m.tinhChat === "3";
 
+// getMonth() đếm từ 0. Tính một lần lúc nạp module là đủ — giá trị này chỉ dùng làm
+// mặc định lúc dựng state, mở màn qua nửa đêm sang tháng mới cũng không sao.
+const THANG_HIEN_TAI = new Date().getMonth() + 1;
+
 // Hóa đơn CHỈ có dòng chiết khấu, không có dòng hàng hóa nào (chốt 12/08). Khi đó số
 // tiền của dòng chính LÀ khoản chiết khấu chứ không phải giá trị hàng bán — để ở cột
 // Thành tiền thì đọc như đang bán được ngần ấy, ngược hẳn bản chất.
@@ -192,8 +196,11 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
   const [selected, setSelected] = useState<React.Key[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [tuThang, setTuThang] = useState(1);
-  const [denThang, setDenThang] = useState(1);
+  // Mở màn là nhắm sẵn tháng đang chạy chứ không phải tháng 1 — tháng nào cũng phải
+  // sửa hai ô là việc thừa (chốt Trường 13/08). Lấy tháng hiện tại KỂ CẢ khi năm làm
+  // việc khác năm hiện tại: kế toán làm sổ năm cũ vẫn quen nghĩ theo tháng đang chạy.
+  const [tuThang, setTuThang] = useState(THANG_HIEN_TAI);
+  const [denThang, setDenThang] = useState(THANG_HIEN_TAI);
   const [xoaTruoc, setXoaTruoc] = useState(false);
 
   // NT-06: đọc lên từ localStorage ngay lúc dựng chứ không phải sau một vòng render —
