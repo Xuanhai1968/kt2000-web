@@ -812,6 +812,102 @@ export const thueLuuLinesHoaDon = (maHd: string, lines: HoaDonLine[]) =>
   api.put<{ message: string; soDong: number }>(
     `/thue/hoa-don/${encodeURIComponent(maHd)}/lines`, lines);
 
+// ===== BÁO CÁO THUẾ GTGT (FRM_BC_THUE) =====
+
+// Một dòng bảng kê hóa đơn mua vào / bán ra
+export interface BangKeHoaDon {
+  stt: number;
+  maHd: string;
+  khHd: string | null;
+  soHd: string | null;
+  ngay: string | null;
+  tenDoiTac: string | null;
+  mstDoiTac: string | null;
+  matHang: string | null;
+  doanhThuChuaVat: number;
+  thueSuat: number | null;
+  thueGtgt: number;
+  ghiChu: string | null;
+}
+
+// Một chỉ tiêu trên tờ khai 01/GTGT. stt là CHUỖI ("2a", "3c") chứ không phải số.
+export interface ChiTieuTongHop {
+  stt: string;
+  chiTieu: string;
+  doanhThuChuaVat: number | null;
+  thueGtgt: number | null;
+  laDongChinh: boolean;
+}
+
+export interface BaoCaoThue {
+  nam: number;
+  thang: number | null;
+  muaVao: BangKeHoaDon[];
+  banRa: BangKeHoaDon[];
+  tongHop: ChiTieuTongHop[];
+}
+
+// thang bỏ trống = cả năm
+export const thueBaoCao = (thang?: number) =>
+  api.get<BaoCaoThue>("/thue/bao-cao", { params: { thang } });
+
+// ===== RÀ SOÁT DỮ LIỆU TRƯỚC KHI KHAI THUẾ =====
+// Đối chiếu hóa đơn trong FILE với hóa đơn trong SỔ. Server CHỈ ĐỌC, không ghi.
+
+// Một hóa đơn đọc được từ file XML/Excel, gửi lên để đối chiếu
+export interface HoaDonFile {
+  tenFile: string;
+  huong: string;          // VAO | RA
+  mst: string;            // MST đối tác
+  khhd: string;
+  soHd: string;
+  ngay?: string | null;
+  tenDoiTac?: string | null;
+  tienHang: number;
+  tienVat: number;
+}
+
+// Một vấn đề tìm được. Dùng chung cho cả bốn loại nên trường nào không hợp với
+// loại đó thì null.
+export interface VanDeRaSoat {
+  loai: string;           // thieu-trong-so | lech-tien | trung-so | sai-ky…
+  maHd?: string | null;
+  khhd?: string | null;
+  soHd?: string | null;
+  mst?: string | null;
+  tenDoiTac?: string | null;
+  ngay?: string | null;
+  huong?: string | null;
+  tenFile?: string | null;
+  tienHangFile?: number | null;
+  tienVatFile?: number | null;
+  tienHangSo?: number | null;
+  tienVatSo?: number | null;
+  moTa: string;
+}
+
+export interface KetQuaRaSoat {
+  nam: number;
+  thang: number | null;
+  soHdFile: number;
+  soHdSo: number;
+  thieuTrongSo: VanDeRaSoat[];
+  thieuTrongFile: VanDeRaSoat[];
+  lechTien: VanDeRaSoat[];
+  trung: VanDeRaSoat[];
+  saiKy: VanDeRaSoat[];
+}
+
+// Client tự đọc file rồi gửi danh sách lên
+export const thueRaSoat = (thang: number | undefined, hoaDon: HoaDonFile[]) =>
+  api.post<KetQuaRaSoat>("/thue/ra-soat", { hoaDon }, { params: { thang } });
+
+// Quét thư mục XML nằm sẵn TRÊN MÁY CHỦ
+export const thueRaSoatThuMuc = (
+  thang: number | undefined, thuMuc: string, huong: "VAO" | "RA"
+) => api.post<KetQuaRaSoat>("/thue/ra-soat/thu-muc", { thuMuc, huong },
+                            { params: { thang } });
+
 export const thueHtmlHoaDon = (maHd: string) =>
   api.get<string>(`/thue/hoa-don/${encodeURIComponent(maHd)}/html`,
                   { responseType: "text" });

@@ -325,6 +325,141 @@ namespace KT2000.Api.Services
             }
         }
 
+        // ==================== BÁO CÁO THUẾ GTGT (FRM_BC_THUE) ====================
+        // Bảng kê hóa đơn theo hướng. Tiền hàng gộp từ HOA_DON_LINE như mọi chỗ khác;
+        // ten_hang lấy dòng ĐẦU làm đại diện để nhìn ra hóa đơn nói về cái gì.
+        //
+        // LỌC THEO CỘT `thang` (tháng KÊ KHAI) chứ không phải MONTH(ngay): báo cáo
+        // thuế là tờ khai của KỲ, hóa đơn ngày 28/6 kê khai tháng 7 phải nằm ở tờ
+        // khai tháng 7. Đây cũng là lý do màn danh sách tách hai ô lọc riêng.
+        private const string SqlBangKe = @"
+            SELECT h.ma_hd, h.khhd, h.so_hd, h.ngay, h.ten_kh, h.mst,
+                   ISNULL(l.tien_hang, 0) AS tien_hang,
+                   h.vat,
+                   ISNULL(h.tien_vat, 0)  AS tien_vat,
+                   h.ghi_chu,
+                   l.ten_hang_dau
+              FROM HOA_DON h
+              OUTER APPLY (
+                    SELECT SUM(ISNULL(x.so_luong, 0) * ISNULL(x.don_gia, 0)) AS tien_hang,
+                           MIN(x.ten_hang_goc)  AS ten_hang_dau
+                      FROM HOA_DON_LINE x
+                     WHERE x.ma_hd = h.ma_hd
+              ) l
+             WHERE h.huong = @huong";
+
+        private static async Task<List<BangKeHoaDonDto>> DocBangKe(
+            SqlConnection conn, string huong, int? thang)
+        {
+            var sql = SqlBangKe
+                    + (thang is > 0 ? " AND h.thang = @thang" : "")
+                    + " ORDER BY h.ngay, h.so_hd";
+
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@huong", huong);
+            if (thang is > 0) cmd.Parameters.AddWithValue("@thang", thang);
+
+            var ds = new List<BangKeHoaDonDto>();
+            using var r = await cmd.ExecuteReaderAsync();
+            int stt = 0;
+            while (await r.ReadAsync())
+            {
+                ds.Add(new BangKeHoaDonDto
+                {
+                    Stt             = ++stt,
+                    MaHd            = r.GetString(0),
+                    KhHd            = r.IsDBNull(1) ? null : r.GetString(1),
+                    SoHd            = r.IsDBNull(2) ? null : r.GetString(2),
+                    Ngay            = r.IsDBNull(3) ? null : r.GetDateTime(3),
+                    TenDoiTac       = r.IsDBNull(4) ? null : r.GetString(4),
+                    MstDoiTac       = r.IsDBNull(5) ? null : r.GetString(5),
+                    DoanhThuChuaVat = r.GetDecimal(6),
+                    ThueSuat        = r.IsDBNull(7) ? null : r.GetInt32(7),
+                    ThueGtgt        = r.GetDecimal(8),
+                    GhiChu          = r.IsDBNull(9) ? null : r.GetString(9),
+                    MatHang         = r.IsDBNull(10) ? null : r.GetString(10),
+                });
+            }
+            return ds;
+        }
+
+        /// <summary>
+        /// Báo cáo thuế GTGT của một kỳ: bảng kê mua vào, bán ra và bảng tổng hợp
+        /// theo chỉ tiêu tờ khai 01/GTGT. thang = null nghĩa là cả năm.
+        /// </summary>
+        public async Task<BaoCaoThueDto> BaoCaoThue(string code, int year, int? thang)
+        {
+            using var conn = await OpenAsync(code, year);
+
+            var kq = new BaoCaoThueDto { Nam = year, Thang = thang };
+            kq.MuaVao = await DocBangKe(conn, "VAO", thang);
+            kq.BanRa  = await DocBangKe(conn, "RA", thang);
+            kq.TongHop = TinhTongHop(kq.MuaVao, kq.BanRa);
+            return kq;
+        }
+
+        // Dựng bảng chỉ tiêu tờ khai 01/GTGT từ hai bảng kê.
+        //
+        // Vì sao tính ở SERVER chứ không để frontend cộng: đây là số đi vào tờ khai
+        // thuế, phải có MỘT chỗ định nghĩa cách tính. Frontend cộng lại thì mai này
+        // thêm màn khác (xuất Excel, in) là có hai công thức song song, lệch nhau
+        // lúc nào không biết.
+        //
+        // Chỉ tiêu 5/6/7 (khấu trừ kỳ trước, đã nộp, được hoàn) chưa có nguồn dữ
+        // liệu — sổ hiện chỉ có HOA_DON. Để 0 và ghi rõ ở đây, KHÔNG bịa số.
+        private static List<ChiTieuTongHopDto> TinhTongHop(
+            List<BangKeHoaDonDto> muaVao, List<BangKeHoaDonDto> banRa)
+        {
+            // Gom theo thuế suất. HĐ không khai vat (null) xếp vào nhóm "không chịu
+            // thuế" — đúng nghĩa hơn là nhét bừa vào 0%.
+            decimal DtTheo(List<BangKeHoaDonDto> ds, Func<int?, bool> loc) =>
+                ds.Where(x => loc(x.ThueSuat)).Sum(x => x.DoanhThuChuaVat);
+            decimal ThueTheo(List<BangKeHoaDonDto> ds, Func<int?, bool> loc) =>
+                ds.Where(x => loc(x.ThueSuat)).Sum(x => x.ThueGtgt);
+
+            var dtRa    = banRa.Sum(x => x.DoanhThuChuaVat);
+            var thueRa  = banRa.Sum(x => x.ThueGtgt);
+            var dtVao   = muaVao.Sum(x => x.DoanhThuChuaVat);
+            var thueVao = muaVao.Sum(x => x.ThueGtgt);
+
+            // Chỉ tiêu 4 = thuế đầu vào ĐƯỢC KHẤU TRỪ. Bản này lấy trọn thuế đầu vào:
+            // luật loại trừ (HĐ không hợp lệ, dùng cho hoạt động không chịu thuế...)
+            // chưa có chỗ đánh dấu trong sổ.
+            var duocKhauTru = thueVao;
+            var phaiNop = thueRa - duocKhauTru;
+
+            ChiTieuTongHopDto D(string stt, string ten, decimal? dt, decimal? thue,
+                                bool chinh = false) =>
+                new() { Stt = stt, ChiTieu = ten, DoanhThuChuaVat = dt,
+                        ThueGtgt = thue, LaDongChinh = chinh };
+
+            return new List<ChiTieuTongHopDto>
+            {
+                D("1",  "Hàng hoá, dịch vụ bán ra",                     dtRa,   thueRa, true),
+                D("2",  "Thuế GTGT của HHDV bán ra trong kỳ",           null,   thueRa, true),
+                D("2a", "Hàng hoá, dịch vụ bán ra không chịu thuế",
+                        DtTheo(banRa, v => v == null), 0),
+                D("2b", "Hàng hoá, dịch vụ thuế suất 0%",
+                        DtTheo(banRa, v => v == 0), ThueTheo(banRa, v => v == 0)),
+                D("2c", "Hàng hoá, dịch vụ thuế suất 5%",
+                        DtTheo(banRa, v => v == 5), ThueTheo(banRa, v => v == 5)),
+                D("2d", "Hàng hoá, dịch vụ thuế suất 10%",
+                        DtTheo(banRa, v => v == 10), ThueTheo(banRa, v => v == 10)),
+                D("3",  "Hàng hoá, dịch vụ mua vào",                    dtVao,  thueVao, true),
+                D("3a", "Hàng hoá, dịch vụ nhập khẩu",                  0, 0),
+                D("3b", "Hàng hoá, dịch vụ mua vào là TSCĐ",            0, 0),
+                D("3c", "Hàng hoá, dịch vụ mua vào chịu thuế",
+                        DtTheo(muaVao, v => v != null && v > 0),
+                        ThueTheo(muaVao, v => v != null && v > 0)),
+                D("4",  "Thuế GTGT của HHDV mua vào được khấu trừ trong kỳ",
+                        null, duocKhauTru, true),
+                D("5",  "Thuế GTGT còn được khấu trừ kỳ trước chuyển sang", null, 0, true),
+                D("6",  "Thuế GTGT đã nộp trong kỳ",                    null, 0, true),
+                D("7",  "Thuế GTGT được hoàn trả trong kỳ",             null, 0, true),
+                D("8",  "Thuế GTGT phải nộp kỳ này",                    null, phaiNop, true),
+            };
+        }
+
         public async Task<(string? Html, string? TenFile)> LayHtmlGoc(
             string code, int year, string maHd)
         {

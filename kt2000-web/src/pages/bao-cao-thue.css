@@ -1,0 +1,98 @@
+/* Màn BÁO CÁO THUẾ GTGT — dựng lại FRM_BC_THUE của KT2000 VFP.
+
+   Khung dùng NGÔN NGỮ MẶC ĐỊNH CỦA ANT DESIGN: Card + Tabs + Table + Statistic.
+   Trước đây màn này tự vẽ lại tông VFP (nền xám, viền, ô tổng hồng, dải tab tự
+   dựng) — hơn 180 dòng CSS chỉ để bắt chước thứ antd đã có sẵn, mà lại lệch với
+   phần còn lại của ứng dụng.
+
+   File này vì thế chỉ còn những gì antd KHÔNG lo được:
+     1. Bảng cao cố định, không co theo số dòng.
+     2. Nén mật độ dòng cho hợp bảng kê nhiều cột.
+     3. Tô đậm dòng chỉ tiêu chính của tờ khai. */
+
+/* ----- Chỉ CUỘN TRONG BẢNG, trang ngoài đứng yên -----
+   Card cao đúng bằng vùng nội dung và không cho tràn; phần cuộn duy nhất là thân
+   bảng (.ant-table-body bên dưới). Nhờ vậy thanh lọc, dải tab và dòng tổng luôn
+   nằm trong tầm mắt, không phải cuộn cả trang mới thấy.
+   96px = 64px thanh tiêu đề app + 32px padding của .vo__than. */
+.bc-thue {
+  height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@media (max-width: 767px) {
+  .bc-thue { height: calc(100vh - 64px); }
+}
+
+/* Thân Card giãn hết chỗ còn lại và tự chặn tràn — thứ duy nhất cuộn là bảng */
+.bc-thue > .ant-card-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ----- Bảng cao CỐ ĐỊNH ----- */
+/* scroll.y của antd chỉ là cận TRÊN: 3 dòng thì bảng lùn tịt, 300 dòng mới cao
+   hết cỡ — khung nhảy lung tung mỗi lần đổi kỳ. Ép cả height lẫn max-height thì
+   khung đứng yên, ít dòng để trống phần dưới, nhiều dòng thì cuộn trong lòng.
+   PHẢI KHỚP với hằng CAO_BANG trong BaoCaoThue.tsx.
+   !important vì antd đặt max-height bằng style nội tuyến sinh từ scroll.y —
+   selector thường không thắng được.
+   280px = 96 (ngoài Card) + đầu Card + dải tab + header bảng + dòng tổng. */
+.bc-thue .bang-bc .ant-table-body {
+  height: calc(100vh - 280px);
+  max-height: calc(100vh - 280px) !important;
+  overflow-y: auto !important;
+}
+
+/* Chuỗi khối giữa thân Card và bảng: cho phép co để bảng không đội chúng ra
+   ngoài vùng Card đã chặn overflow. */
+.bc-thue .ant-tabs,
+.bc-thue .ant-tabs-content-holder,
+.bc-thue .ant-tabs-content,
+.bc-thue .ant-tabs-tabpane {
+  min-height: 0;
+}
+
+/* Bảng rỗng: giữ nguyên chiều cao thay vì sập xuống một dòng chữ */
+.bc-thue .bang-bc .ant-table-placeholder > td {
+  border-bottom: none;
+}
+
+/* ----- Mật độ dòng ----- */
+/* Bảng kê 11 cột, xem cả trăm dòng một lúc nên nén sát hơn size="small" mặc định */
+.bc-thue .bang-bc .ant-table-thead > tr > th,
+.bc-thue .bang-bc .ant-table-tbody > tr > td {
+  padding: 4px 8px;
+}
+
+.bc-thue .bang-bc .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+/* ----- Dòng TỔNG cuối bảng kê ----- */
+/* Nằm trong Table.Summary nên thẳng cột tuyệt đối với cột nó cộng. Tô nền + in
+   đậm để tách khỏi dòng dữ liệu; số tiền lấy màu như hai ô Statistic cũ. */
+.bc-thue .bang-bc .dong-tong > td {
+  background: #fafafa;
+  font-weight: 600;
+  border-top: 1px solid #d9d9d9;
+}
+
+/* Ô thứ 8 (D.Thu chưa thuế) và ô thứ 10 (Thuế GTGT) — đếm từ 1 theo CSS */
+.bc-thue .bang-bc .dong-tong > td:nth-child(2) { color: #1677ff; }
+.bc-thue .bang-bc .dong-tong > td:nth-child(4) { color: #cf1322; }
+
+/* ----- Dòng chỉ tiêu chính của tờ khai ----- */
+/* Các chỉ tiêu 1, 2, 3, 4... in đậm để tách khỏi dòng con 2a/2b/3c. Không tô nền
+   màu: bảng đã có kẻ dòng của antd, thêm nền nữa thành rối. */
+.bc-thue .bang-tong-hop .dong-chi-tieu-chinh > td {
+  font-weight: 600;
+  background: #fafafa;
+}
+
+.bc-thue .bang-tong-hop .dong-chi-tieu-chinh:hover > td {
+  background: #f0f0f0;
+}

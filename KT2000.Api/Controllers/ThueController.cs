@@ -17,7 +17,14 @@ namespace KT2000.Api.Controllers
     public class ThueController : ControllerBase
     {
         private readonly ThueService _thue;
-        public ThueController(ThueService thue) => _thue = thue;
+        private readonly RaSoatService _raSoat;
+        private readonly IConfiguration _config;
+        public ThueController(ThueService thue, RaSoatService raSoat, IConfiguration config)
+        {
+            _thue = thue;
+            _raSoat = raSoat;
+            _config = config;
+        }
 
         private string TenantCode() =>
             User.FindFirst("tenant_code")?.Value
@@ -99,6 +106,92 @@ namespace KT2000.Api.Controllers
                      .ToList();
 
             return Ok(await _thue.LayLinesNhieu(TenantCode(), FiscalYear(), ds));
+        }
+
+        /// <summary>
+        /// GET api/thue/bao-cao?thang=12 — báo cáo thuế GTGT của một kỳ.
+        /// Bỏ trống thang = cả năm. Trả bảng kê mua vào, bán ra và bảng tổng hợp
+        /// theo chỉ tiêu tờ khai 01/GTGT (đã tính sẵn ở server).
+        /// </summary>
+        [HttpGet("bao-cao")]
+        public async Task<IActionResult> BaoCao([FromQuery] int? thang)
+        {
+            var chan = ChanNeuLaNoiBo();
+            if (chan != null) return chan;
+
+            // Tháng ngoài 1..12 coi như không lọc, thay vì ném lỗi làm trắng màn hình
+            var ky = thang is >= 1 and <= 12 ? thang : null;
+            return Ok(await _thue.BaoCaoThue(TenantCode(), FiscalYear(), ky));
+        }
+
+        /// <summary>
+        /// POST api/thue/ra-soat?thang=7 — đối chiếu hóa đơn trong FILE với SỔ.
+        /// Client đọc XML/Excel rồi gửi danh sách lên; server chỉ SO, KHÔNG GHI.
+        /// </summary>
+        public record RaSoatRequest(List<Models.HoaDonFileDto>? HoaDon);
+
+        [HttpPost("ra-soat")]
+        public async Task<IActionResult> RaSoat([FromQuery] int? thang,
+                                                [FromBody] RaSoatRequest req)
+        {
+            var chan = ChanNeuLaNoiBo();
+            if (chan != null) return chan;
+
+            var ds = req?.HoaDon ?? new List<Models.HoaDonFileDto>();
+            // Chặn payload phi lý — một kỳ nhiều nhất vài nghìn hóa đơn
+            if (ds.Count > 20000)
+                return BadRequest(new { message = "Quá 20.000 hóa đơn trong một lần rà soát" });
+
+            var ky = thang is >= 1 and <= 12 ? thang : null;
+            return Ok(await _raSoat.Soat(TenantCode(), FiscalYear(), ky, ds));
+        }
+
+        /// <summary>
+        /// POST api/thue/ra-soat/thu-muc?thang=7 — quét thư mục XML TRÊN MÁY CHỦ rồi
+        /// đối chiếu với sổ. Dùng khi kho XML đã tải sẵn về server.
+        /// Chỉ cho quét trong các gốc khai ở appsettings (Paths) — xem RaSoatService.
+        /// </summary>
+        public record QuetThuMucRequest(string? ThuMuc, string? Huong);
+
+        [HttpPost("ra-soat/thu-muc")]
+        public async Task<IActionResult> RaSoatThuMuc([FromQuery] int? thang,
+                                                      [FromBody] QuetThuMucRequest req)
+        {
+            var chan = ChanNeuLaNoiBo();
+            if (chan != null) return chan;
+
+            if (string.IsNullOrWhiteSpace(req?.ThuMuc))
+                return BadRequest(new { message = "Chưa nhập đường dẫn thư mục" });
+
+            var huong = ChuanHoaHuong(req.Huong);
+            if (huong == null)
+                return BadRequest(new { message = "Phải chọn hướng VAO hoặc RA cho thư mục" });
+
+            try
+            {
+                var goc = new[] { _config["Paths:ScanDocRoot"], _config["Paths:RawRoot"] }
+                          .Where(x => !string.IsNullOrWhiteSpace(x))
+                          .Select(x => x!)
+                          .ToList();
+                if (goc.Count == 0)
+                    return BadRequest(new
+                    { message = "Chưa khai Paths:ScanDocRoot trong cấu hình máy chủ" });
+
+                var ds = RaSoatService.QuetThuMuc(req.ThuMuc, goc);
+                // File XML không tự nói vào hay ra — lấy theo lựa chọn của người dùng
+                foreach (var x in ds) x.Huong = huong;
+
+                var ky = thang is >= 1 and <= 12 ? thang : null;
+                return Ok(await _raSoat.Soat(TenantCode(), FiscalYear(), ky, ds));
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(403, new { message = ex.Message });
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
         }
 
         /// <summary>
