@@ -1,0 +1,319 @@
+/* Xem trước tờ khai 01/GTGT — dùng chung cho màn hình và bản IN (PDF).
+   Spec: docs/NB/SPEC-TO-KHAI-01-GTGT.md */
+
+/* ----- Thanh chân modal: luôn nhìn thấy nút Tạo tờ khai -----
+   Nằm ở footer của antd Modal nên KHÔNG cuộn theo thân. Trước đây nút nằm trong
+   thân, cuộn xuống xem bảng kết quả là nút trôi mất khỏi màn hình. */
+.chan-to-khai {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  /* antd canh phải nội dung footer bằng text-align — trả về trái, nếu không cả
+     dải bị dồn cục sang phải và nhãn dính sát vào nút. */
+  text-align: left;
+  width: 100%;
+}
+
+/* Nhãn NUỐT hết chỗ thừa, đẩy các nút về sát mép phải */
+.chan-nhan {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 13px;
+  line-height: 1.4;
+  /* Nhãn dài không được phép đội nút ra khỏi footer */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Nút không co lại khi nhãn dài */
+.chan-to-khai .ant-btn { flex: 0 0 auto; }
+
+.chan-loi {
+  color: #cf1322;
+  font-weight: 600;
+}
+
+/* ----- Danh sách kỳ đã nhận file -----
+   Thay cho bảng chi tiết hàng trăm dòng: kế toán chỉ cần thấy mỗi kỳ có bao nhiêu
+   hóa đơn và TỔNG TIỀN là bao nhiêu, để đối chiếu thẳng với chỉ tiêu tờ khai. */
+.ds-ky {
+  margin-top: 14px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ky-dong {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  flex-wrap: wrap;
+}
+
+.ky-dong:last-of-type { border-bottom: none; }
+
+/* Kỳ đang lập tờ khai: tô nền để tách khỏi các kỳ chỉ dùng đối soát */
+.ky-hientai { background: #e6f4ff; }
+
+.ky-ten {
+  flex: 0 0 auto;
+  min-width: 150px;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.ky-nhan {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+.ky-so {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ky-nhom { white-space: nowrap; }
+
+.ky-mo {
+  color: rgba(0, 0, 0, 0.45);
+  margin-right: 6px;
+  font-size: 13px;
+}
+
+/* Dòng tóm tắt cuối: chỉ nêu SỐ điểm lệch, không liệt kê từng dòng */
+.ky-tomtat {
+  padding: 7px 12px;
+  background: #fafafa;
+  border-top: 1px solid #d9d9d9;
+  font-size: 13px;
+}
+
+.ky-ok  { color: #389e0d; font-weight: 600; }
+.ky-loi { color: #cf1322; font-weight: 600; }
+.ky-bo  { color: #d46b08; }
+
+/* ============================================================
+   TỜ KHAI 01/GTGT — KHUÔN GIẤY
+   Dựng theo bản in thật docs/NB/TKGTGT_T7_2026_DVT.pdf
+
+   Toàn bộ khối này dùng chung cho MÀN HÌNH và BẢN IN: xem sao thì in ra vậy, không
+   có hai bộ style song song để lệch nhau. Font Times New Roman và cỡ 13px vì tờ
+   khai giấy dùng chữ có chân — in bằng font khác là nhìn ra ngay không phải bản gốc.
+   ============================================================ */
+.to-khai {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #000;
+}
+
+/* Mỗi trang giấy A4: nền trắng, bề rộng cố định để bố cục không co theo cửa sổ.
+   Bề rộng đặt theo TỶ LỆ A4 (210×297mm trừ lề 10mm mỗi bên = 190×277mm) để bản chụp
+   PDF ăn trọn một tờ, không phải cắt đôi giữa bảng. */
+.tk-trang {
+  background: #fff;
+  width: 780px;
+  max-width: 100%;
+  margin: 0 auto 20px;
+  padding: 4px 2px;
+  position: relative;
+}
+
+/* ----- Đầu tờ khai ----- */
+.tk-dau { text-align: center; position: relative; margin-bottom: 10px; }
+
+.tk-quocngu { font-weight: 700; font-size: 14px; }
+.tk-tieungu { font-weight: 700; font-size: 13px; }
+.tk-gach    { font-size: 12px; letter-spacing: -0.5px; }
+
+.tk-ten {
+  font-weight: 700;
+  font-size: 15px;
+  margin-top: 8px;
+}
+
+.tk-apdung { font-style: italic; font-size: 12.5px; margin: 2px 24px 0; }
+
+/* Khung "Mẫu số" góc trên phải — dấu hiệu nhận dạng của tờ khai HTKK */
+.tk-khungmau {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 165px;
+  border: 1px solid #000;
+  padding: 3px 6px;
+  font-size: 11.5px;
+  text-align: center;
+  line-height: 1.3;
+}
+
+.tk-khungmau-mo { font-style: italic; font-size: 10px; margin-top: 2px; }
+
+/* ----- Khối thông tin người nộp thuế ----- */
+.tk-ttin { margin: 10px 0 4px; }
+.tk-ttin > div { margin-bottom: 1px; }
+
+.tk-giua { text-align: center; }
+.tk-thut { padding-left: 22px; }
+.tk-phai { float: right; margin-right: 120px; }
+.tk-o11b { margin-left: 90px; }
+.tk-o11c { margin-left: 90px; }
+
+.tk-donvitien { text-align: right; margin: 4px 0 3px; font-size: 12.5px; }
+
+/* ----- Bảng chỉ tiêu -----
+   border-collapse để đường kẻ liền một nét như bảng in, không bị nhân đôi ở mép ô. */
+.tk-bang {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.tk-bang th,
+.tk-bang td {
+  border: 1px solid #000;
+  padding: 2px 5px;
+  vertical-align: middle;
+}
+
+.tk-bang th {
+  text-align: center;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.c-stt  { width: 40px;  text-align: center; font-weight: 700; }
+.c-ten  { }
+.c-gt   { width: 190px; }
+.c-thue { width: 190px; }
+
+/* Ô MÃ chỉ tiêu ([21], [22]…) và ô GIÁ TRỊ luôn đi thành cặp: mã căn giữa trong ô
+   hẹp, số căn phải — đúng cách tờ khai giấy trình bày. */
+.o-ma {
+  width: 42px;
+  text-align: center;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.o-gt {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 105px;
+}
+
+/* Dòng nhóm A/B/C và mục I/II/III/IV/V/VI — in đậm như bản gốc */
+.d-nhom > td,
+.d-muc  > td,
+.d-dam  > td { font-weight: 700; }
+
+/* Công thức ghi ngay dưới tên chỉ tiêu, cỡ nhỏ hơn */
+.ct-ct { font-size: 11.5px; font-weight: 400; }
+
+.giua { text-align: center; }
+.phai { text-align: right; font-weight: 700; }
+
+/* ----- Phụ lục NQ142 ----- */
+.pl-muc { margin: 10px 0 4px; font-size: 12.5px; }
+
+.pl-bang th { font-size: 11.5px; padding: 3px 4px; }
+
+/* Dòng đánh số cột (1)(2)(3)… của bảng phụ lục */
+.d-sohieu > td {
+  border: 1px solid #000;
+  text-align: center;
+  font-size: 11.5px;
+  padding: 1px 4px;
+}
+
+/* ----- Cam đoan và chữ ký ----- */
+.tk-camdoan { margin: 10px 0 14px; font-size: 12.5px; }
+
+.tk-chuky {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 6px;
+}
+
+.tk-ky-trai { flex: 0 0 45%; }
+.tk-ky-phai { flex: 0 0 50%; text-align: center; }
+
+.tk-ky-ten { font-weight: 700; margin-bottom: 6px; }
+.tk-ky-ngay { margin-bottom: 4px; }
+.tk-ky-mo  { font-size: 12px; margin-top: 2px; }
+
+/* ============ BẢN IN / PDF ============
+   Bấm "In / Lưu PDF" → window.print(). Trình duyệt tự sinh PDF, nên không phải kéo
+   thư viện PDF vào server chỉ để in một tờ khai.
+
+   Ẩn hết vỏ ứng dụng, chỉ chừa đúng khối tờ khai. */
+@media print {
+  body * { visibility: hidden; }
+  .to-khai, .to-khai * { visibility: visible; }
+
+  .to-khai {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0;
+    font-size: 12.5pt;
+  }
+
+  /* Cảnh báo và nút chỉ có nghĩa trên màn hình, in ra là rác giấy */
+  .khong-in { display: none !important; }
+
+  /* Modal antd dựng nhiều lớp bọc có bóng đổ và giới hạn chiều cao — bỏ hết, nếu
+     không bản in bị cắt cụt đúng chỗ khung cuộn kết thúc. */
+  .ant-modal-mask,
+  .ant-modal-header,
+  .ant-modal-footer,
+  .ant-modal-close { display: none !important; }
+
+  .ant-modal,
+  .ant-modal-content,
+  .ant-modal-body {
+    position: static !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+  }
+
+  .tk-trang {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Phụ lục sang trang mới — đúng như bản gốc: tờ khai chính và phụ lục là hai tờ */
+  .tk-trang-moi { page-break-before: always; }
+
+  /* Không cắt đôi một dòng giữa hai trang giấy */
+  .tk-bang tr { page-break-inside: avoid; }
+
+  /* Khối chữ ký phải nằm trọn một trang, không tách đôi */
+  .tk-chuky { page-break-inside: avoid; }
+
+  @page { size: A4; margin: 12mm 10mm; }
+}
+

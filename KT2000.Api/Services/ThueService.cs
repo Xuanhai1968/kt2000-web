@@ -4,6 +4,16 @@ using KT2000.Api.Models;
 
 namespace KT2000.Api.Services
 {
+    /// <summary>
+    /// Đơn vị chưa có database của năm đang chọn. Là tình huống NGHIỆP VỤ bình thường
+    /// (chưa mở năm làm việc), không phải lỗi hệ thống — nên controller trả 409 kèm lời
+    /// nhắn đọc được, thay vì để nguyên 500 với stack trace.
+    /// </summary>
+    public class SoChuaMoException : Exception
+    {
+        public SoChuaMoException(string message) : base(message) { }
+    }
+
     // Đọc sổ THUẾ: bảng HOA_DON / HOA_DON_LINE trong database ĐƠN VỊ-NĂM.
     //
     // Phục vụ màn Hóa đơn GTGT đầu vào / đầu ra của đơn vị thuế thường. Trước đây
@@ -28,11 +38,29 @@ namespace KT2000.Api.Services
             _config = config;
         }
 
+        // Database đơn vị-năm CÓ THỂ CHƯA TỒN TẠI: Master khai FiscalYears cho một năm
+        // nhưng database năm đó chưa được tạo (MDN_NB có năm 2026 trong Master mà không
+        // có MDN_NB_2026 — bắt gặp 13/08). Khi đó SqlClient ném lỗi 4060 kèm nguyên
+        // stack trace 500, người dùng chỉ thấy màn hình vỡ mà không hiểu vì sao.
+        //
+        // Bắt riêng 4060 và đổi thành thông điệp nói rõ phải làm gì. Không tự tạo
+        // database ở đây: tạo DB là việc của AdminService (luật 10 — vùng lõi chung),
+        // và một endpoint CHỈ ĐỌC thì không được phép sinh ra database.
         private async Task<SqlConnection> OpenAsync(string code, int year)
         {
             var conn = new SqlConnection(_resolver.GetTenantConnection(code, year));
-            await conn.OpenAsync();
-            return conn;
+            try
+            {
+                await conn.OpenAsync();
+                return conn;
+            }
+            catch (SqlException ex) when (ex.Number is 4060 or 911)
+            {
+                conn.Dispose();
+                throw new SoChuaMoException(
+                    $"Đơn vị {code} chưa có sổ của năm {year}. "
+                    + "Vào Quản trị -> Đơn vị để mở năm làm việc này trước khi xem sổ thuế.");
+            }
         }
 
         // ===================== CHỈ ĐỌC CỘT CỦA SỔ THUẾ =====================

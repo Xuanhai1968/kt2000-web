@@ -56,6 +56,33 @@ Ví dụ `VAO_2300235006_C26TCA_0008400`:
 chiết khấu theo tỷ trọng từng nhóm thuế suất, rồi mới nhân thuế suất — không được cộng
 thẳng `tien_vat_l`. Xem §3.3.
 
+### 2.1b. BR-TK-05 — Chiết khấu nằm NGAY TRONG dòng hàng (bổ sung 13/08)
+
+Khi chạy engine lần đầu, BR-TK-03 báo lệch **15.995.333 đ** ở mua vào. Truy nguyên:
+
+Hóa đơn `VAO_2300235006_C26TCA_0008400` có 10 dòng:
+
+| Dòng | Nội dung | tinh_chat | Tiền |
+|---|---|---|---|
+| 1–3 | Hàng thật (mì, phở Cung Đình) | `1` | 70.944.368 |
+| 4–10 | "Chiết khấu bán ra", "Chiết khấu 3%"… (mã `TPCK.*`) | **`3`** | **66.442.293** |
+
+Tổng dòng chiết khấu **đúng bằng** `h.tien_ck` của header.
+
+> **BR-TK-05.** `Σ(so_luong × don_gia)` ĐÃ chứa sẵn các dòng chiết khấu. Trừ thêm
+> `h.tien_ck` là **trừ hai lần**. Phải lọc `tinh_chat = '3'` ra khỏi tiền hàng trước,
+> rồi mới trừ `tien_ck` một lần duy nhất.
+
+Kiểm chứng trên NHAT_TUAN T7 sau khi sửa:
+
+| Hướng | VAT header | VAT tính lại | Lệch |
+|---|---|---|---|
+| Bán ra | 242.331.533 | 242.331.533 | **0 đ** |
+| Mua vào | 298.065.311 | 298.065.314 | **3 đ** (làm tròn) |
+
+Phân bố `tinh_chat` của T7: `1` = hàng thật, `2` = hàng khuyến mại (tiền 0),
+`3` = chiết khấu, `4` = khác. Chỉ loại nhóm `3`.
+
 ### 2.2. Quy tắc liên kỳ — đã kiểm chứng qua 6 tháng
 
 Đọc 6 XML tờ khai gốc T1–T6/2026:
@@ -217,15 +244,28 @@ trước, hoặc nhập tay `ct22` kèm lý do (ghi vào `ActivityLog` theo lu�
 
 ## 6. Khuôn tờ khai theo đơn vị (điều kiện 3)
 
-Mỗi đơn vị một thư mục `TO_KHAI_GOC` riêng, đặt cạnh kho XML hóa đơn:
+Tờ khai **ăn theo kho `SCAN_DOC`** sẵn có, nằm trong thư mục của NĂM tài chính
+(chốt với Trường 13/08):
 
 ```
-\\SERVER-TEST\data_hddt\<MA_DONVI>\TO_KHAI_GOC\TKG_T<tháng>_<năm>\
+<Paths:ScanDocRoot>\<MA_DONVI>\NAM<năm>\TO_KHAI\TO_KHAI_GOC\TKG_T<tháng>_<năm>\
     <MST>000-01_GTGT_TT80-M<MM><yyyy>-L00.xml     ← tờ khai
     HD_RA_<MA_DONVI>_T<n>.xlsx                     ← bảng kê ra
     HD_VAO_<MA_DONVI>_T<n>.xlsx                    ← bảng kê vào
     Bang_Ke_01_GiamThue_GTGT_NQ142_GTGT_TT80.xls   ← bảng kê giảm thuế (nếu có)
 ```
+
+Ví dụ: `...\NHAT_TUAN\NAM2026\TO_KHAI\TO_KHAI_GOC\TKG_T6_2026\`
+
+Nằm **trong** `NAM<năm>` chứ không để phẳng ở gốc đơn vị: tờ khai là hồ sơ của một năm
+tài chính, gom cùng chỗ với dữ liệu năm đó thì sang năm mới chỉ thêm một thư mục, không
+trộn tờ khai nhiều năm vào một rổ.
+
+⇒ Kỳ **tháng 1** phải tra tờ khai tháng 12 của `NAM<năm−1>` — tìm theo năm của kỳ cần
+lấy, không dùng năm làm việc hiện tại.
+
+> Thư mục `\\SERVER-TEST\data_hddt\NHAT_TUAN\TO_KHAI_GOC` chỉ là **bản copy tham khảo**
+> Trường gửi để khảo sát mẫu XML, không phải vị trí lưu chính thức.
 
 **Quy tắc tên file XML** (suy từ 6 mẫu thật):
 
