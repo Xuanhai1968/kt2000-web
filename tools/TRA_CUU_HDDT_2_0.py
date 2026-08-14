@@ -587,6 +587,17 @@ def ghi_excel_tong(duong_dan, masters, lines, sheet_master, sheet_line, run_log)
 # "Đường dẫn XML" (chạy sau vòng tải) không kịp thực hiện: toàn bộ XML vừa tải
 # về coi như mất dấu, lượt sau tải lại từ đầu. Kiểm cờ ở các mốc an toàn rồi
 # thoát theo đường bình thường thì bước đó vẫn chạy.
+# Số giây CHỜ trước mỗi lần thử lại việc tải Excel danh sách. Số phần tử quyết định
+# luôn số lần thử: 3 mốc = 4 lần gọi.
+#
+# Vì sao giãn dần (chốt Trường 13/08): cổng trả 504 sau đúng 60 giây, mà bản cũ chỉ chờ
+# 3 giây giữa các lần — ba lần thử gói trong 3 phút, tức hỏi lại một server đang quá tải
+# gần như cùng lúc, gần như chắc chắn trượt cả ba.
+#
+# Đánh đổi: endpoint hỏng kinh niên (máy tính tiền của cổng) sẽ ngốn tới ~8 phút mỗi lượt
+# trước khi bỏ. Thấy lâu quá thì cắt bớt mốc — sửa đúng dòng dưới, không phải mò trong code.
+CHO_TRUOC_KHI_THU_LAI = (15, 60, 180)
+
 TEN_FILE_DUNG = "STOP"
 _LUC_BAT_DAU = time.time()
 
@@ -2288,17 +2299,56 @@ class tra_cuu_hdt:
                         resp = None
                         append_run_log(run_log, f"EXCEL_FETCH_START url={api_url}") ###
 
-                        for lan_thu in range(1, 4):
-                            try:                           
+                        for lan_thu in range(1, len(CHO_TRUOC_KHI_THU_LAI) + 2):
+                            try:
                                 resp = requests.get(api_url, headers=headers, timeout=90)
                                 append_run_log(run_log, f"EXCEL_FETCH_RESPONSE status_code={resp.status_code if resp is not None else 'None'}")
                                 if resp.status_code == 200:
+                                    break
+
+                                # 401 = HẾT PHIÊN, không phải cổng bận. Thử lại suông thì
+                                # lần nào cũng 401 rồi bỏ cuộc oan (chốt Trường 13/08).
+                                # Đăng nhập lại rồi thử NGAY, không chờ — chờ chẳng giúp gì.
+                                if resp.status_code == 401:
+                                    append_run_log(run_log, "EXCEL_FETCH_401 -> dang nhap lai")
+                                    tok_moi = None
+                                    try:
+                                        tok_moi = _login_mot_lan()
+                                    except Exception as e_dn:
+                                        append_run_log(run_log,
+                                            f"DANG_NHAP_LAI_LOI {short_exc(e_dn)}")
+                                    if tok_moi:
+                                        # Gán vào token của cả hàm: make_headers() đọc biến
+                                        # này LÚC GỌI nên mọi lượt tải XML sau cũng dùng
+                                        # token mới, không phải sửa thêm chỗ nào.
+                                        token = tok_moi
+                                        headers["Authorization"] = f"Bearer {token}"
+                                        append_run_log(run_log, "DANG_NHAP_LAI_OK")
+                                        continue
+                                    append_run_log(run_log, "DANG_NHAP_LAI_THAT_BAI -> bo luot")
+                                    break
+
+                                # Sai tham số thì thử lại bao nhiêu lần cũng vẫn sai
+                                if resp.status_code in (400, 404):
+                                    append_run_log(run_log,
+                                        f"EXCEL_FETCH_BO_QUA status_code={resp.status_code} (loi tham so)")
                                     break
                             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e_net:
                                 #print(f"   [Excel] Lan {lan_thu} timeout/connection: {e_net}")
                                 events.log("EXCELL",message=f"   [Excel] Lan {lan_thu} timeout/connection: {e_net}")
                                 resp = None
-                            time.sleep(3)
+
+                            # Giãn dần thay vì 3 giây cố định. Đo thật (HOA_SANG T2, hai
+                            # lượt ngày 12/08): mỗi lần gọi mất đúng 60 giây rồi mới 504 —
+                            # đó là ngưỡng gateway của cổng, chưa chạm timeout 90s của ta.
+                            # Cộng sleep(3) thì ba lần thử gói trong ĐÚNG 3 PHÚT, tức hỏi
+                            # lại server đang quá tải gần như cùng một lúc.
+                            if lan_thu <= len(CHO_TRUOC_KHI_THU_LAI):
+                                cho = CHO_TRUOC_KHI_THU_LAI[lan_thu - 1]
+                                append_run_log(run_log,
+                                    f"EXCEL_FETCH_CHO {cho}s roi thu lai "
+                                    f"(lan {lan_thu + 1}/{len(CHO_TRUOC_KHI_THU_LAI) + 1})")
+                                time.sleep(cho)
                         if resp is not None and resp.status_code == 200:
                             save_path = os.path.join(sub_dir, ten_file)
                             # Che do tang dan: hop nhat ban vua tai voi ban dang co, giu
