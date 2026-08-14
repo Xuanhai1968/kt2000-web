@@ -605,7 +605,12 @@ namespace KT2000.Api.Services
 
             using (var cmd = new SqlCommand(
                 @"SELECT l.stt_line, l.ma_hang, l.ten_hang_goc, l.dvt, l.so_luong, l.don_gia,
-                         l.pt_vat, l.tien_vat_l, l.ghi_chu, l.he_so_qd, l.sl_quy_doi,
+                         -- CAST bắt buộc: HOA_DON_LINE.pt_vat là INT từ script 020, mà
+                         -- chỗ đọc bên dưới dùng GetDecimal — không ép thì ném
+                         -- InvalidCastException lúc chạy. Ép trong SQL để chỗ đọc khỏi
+                         -- phụ thuộc kiểu cột. (DM_HANG_NB.pt_vat là cột KHÁC, vẫn DECIMAL.)
+                         CAST(l.pt_vat AS DECIMAL(18,3)) AS pt_vat,
+                         l.tien_vat_l, l.ghi_chu, l.he_so_qd, l.sl_quy_doi,
                          l.la_hang_tang, l.quy_cach, l.ngay_nh_l,
                          l.ma_mau, l.tien_tinh_mau, m.ma_hex, h.ten_hd
                   FROM HOA_DON_LINE l

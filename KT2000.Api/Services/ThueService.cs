@@ -213,7 +213,11 @@ namespace KT2000.Api.Services
             SELECT ma_hd, stt_line, ma_hang, ten_hang_goc, dvt,
                    ISNULL(so_luong, 0), ISNULL(don_gia, 0),
                    ISNULL(so_luong, 0) * ISNULL(don_gia, 0) AS thanh_tien,
-                   ISNULL(pt_vat, 0), ISNULL(tien_ck, 0),
+                   -- CAST bắt buộc: pt_vat là INT từ script 020, mà DocLine đọc bằng
+                   -- GetDecimal — không ép thì ném InvalidCastException lúc chạy.
+                   -- Ép ngay trong SQL (giống cách RaSoatService đã làm) để chỗ đọc
+                   -- không phụ thuộc kiểu cột, mai kia đổi lần nữa cũng không gãy.
+                   CAST(ISNULL(pt_vat, 0) AS DECIMAL(18,3)), ISNULL(tien_ck, 0),
                    ghi_no, ghi_co, ma_ngan, tinh_chat, ghi_chu
               FROM HOA_DON_LINE";
 

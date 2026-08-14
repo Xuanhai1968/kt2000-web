@@ -109,7 +109,10 @@ CREATE TABLE HOA_DON_LINE (
     pt_ck                     DECIMAL(18,3)  NULL,
     tien_ck                   DECIMAL(18,2)  NULL,
     dg_tt                     BIT            NULL,
-    pt_vat                    DECIMAL(18,3)  NULL,
+    -- INT: chỉ chứa thuế suất nguyên (0/5/8/10) và hai mã loại (-1 không kê khai,
+    -- -2 không chịu thuế). Vá kèm 020_hoa_don_line_pt_vat_int.sql cho database dựng
+    -- từ trước — hai file phải luôn khớp nhau.
+    pt_vat                    INT            NULL,
     -- Chuỗi thuế suất GỐC của cổng: 'KCT' / '0%' / '5%' / '8%' / '10%'.
     -- pt_vat là số nên KCT và 0% cùng ra 0, không phân biệt được — mà tờ khai GTGT xếp
     -- hai loại đó vào hai chỉ tiêu khác nhau. Giữ cả hai: pt_vat để TÍNH, cột này để
