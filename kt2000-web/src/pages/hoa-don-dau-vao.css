@@ -204,6 +204,11 @@
   line-height: 19px;
 }
 
+.phieu-nhap.phieu-nhap .luoi-hang .ant-input-number-input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .phieu-nhap.phieu-nhap .nut-vang  { background: #ffe08a; border-color: #d4b106; }
 .phieu-nhap.phieu-nhap .nut-cam   { background: #ffc9a0; border-color: #d46b08; }
 .phieu-nhap.phieu-nhap .nut-xanh  { background: #b7e3c0; border-color: #389e0d; }

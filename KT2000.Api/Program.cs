@@ -14,7 +14,9 @@ builder.Services.AddDbContext<AppDbContext>(o =>
         sql => sql.EnableRetryOnFailure()));
 
 builder.Services.AddScoped<AuthService>();
-builder.Services.AddControllers();
+// SoChuaMoFilter: đơn vị chưa mở sổ của năm đang chọn thì trả 409 kèm lời nhắn, thay
+// vì để SqlException 4060 lộ nguyên stack trace 500 ra trình duyệt.
+builder.Services.AddControllers(o => o.Filters.Add<SoChuaMoFilter>());
 builder.Services.AddSingleton<TenantDbResolver>();
 // Singleton vì nó NHỚ database nào đã đủ phiên bản — để scoped thì mỗi request quên
 // sạch rồi hỏi lại database, mất đúng cái đường nhanh khiến nó gọi được ở nhiều lối vào.
@@ -25,6 +27,7 @@ builder.Services.AddScoped<ImportService>();
 builder.Services.AddScoped<NoiBoService>();   // phần nội bộ: danh mục + phiếu xuất/nhập
 builder.Services.AddScoped<ThueService>();    // sổ thuế: đọc HOA_DON của đơn vị đang đăng nhập
 builder.Services.AddScoped<RaSoatService>();  // đối chiếu file vs sổ trước khi khai thuế — CHỈ ĐỌC
+builder.Services.AddScoped<ToKhaiService>();  // lập tờ khai 01/GTGT — CHỈ ĐỌC
 
 // Mật khẩu cổng TCT mã hóa hai chiều bằng Data Protection. Khóa PHẢI lưu ra đĩa:
 // mặc định nó nằm trong profile người dùng và đổi theo tài khoản chạy tiến trình —

@@ -902,14 +902,83 @@ export interface KetQuaRaSoat {
 export const thueRaSoat = (thang: number | undefined, hoaDon: HoaDonFile[]) =>
   api.post<KetQuaRaSoat>("/thue/ra-soat", { hoaDon }, { params: { thang } });
 
-// Quét thư mục XML nằm sẵn TRÊN MÁY CHỦ.
-// huong TÙY CHỌN: bỏ trống thì server suy hướng từng file theo MST người bán so với
-// MST đơn vị, nên một lượt quét soi được cả hóa đơn vào lẫn ra. Chỉ truyền khi muốn
-// ép cứng một chiều.
-export const thueRaSoatThuMuc = (
-  thang: number | undefined, thuMuc: string, huong?: "VAO" | "RA"
-) => api.post<KetQuaRaSoat>("/thue/ra-soat/thu-muc", { thuMuc, huong },
-                            { params: { thang } });
+// ===================== TỜ KHAI 01/GTGT =====================
+// Xem docs/NB/SPEC-TO-KHAI-01-GTGT.md
+
+export interface NhomThueSuat {
+  thueSuat: number;
+  loaiThue: string | null;
+  soDong: number;
+  tienHangGop: number;
+  chietKhau: number;
+  doanhThu: number;
+  thue: number;
+}
+
+export interface CanhBaoToKhai {
+  ma: string;
+  muc: "CHAN" | "CANH_BAO";
+  moTa: string;
+  maHd: string | null;
+  chenhLech: number | null;
+}
+
+export interface PhuLucNq142 {
+  giaTriHhdvMuaVao: number;
+  thueGtgtHhdvMuaVao: number;
+  giaTriHhdvBanRa: number;
+  thueSuatTheoQuyDinh: number;
+  thueSuatSauGiam: number;
+  thueGtgtDuocGiam: number;
+  chenhLechCt9: number;
+}
+
+// Tên trường giữ đúng mã chỉ tiêu HTKK (ct21, ct22…) — khi đối chiếu với tờ khai
+// giấy hay XML gốc thì mã chỉ tiêu là thứ duy nhất hai bên cùng gọi tên.
+export interface ToKhaiGtgt {
+  nam: number;
+  thang: number;
+  maDonVi: string;
+  mst: string;
+  tenNnt: string;
+  diaChiNnt: string | null;
+  maCqtNoiNop: string | null;
+  tenCqtNoiNop: string | null;
+  ct21: number; ct22: number; ct23: number; ct24: number;
+  ct23a: number; ct24a: number; ct25: number; ct26: number;
+  ct27: number; ct28: number; ct29: number; ct30: number;
+  ct31: number; ct32: number; ct33: number; ct32a: number;
+  ct34: number; ct35: number; ct36: number; ct37: number;
+  ct38: number; ct39a: number; ct40a: number; ct40b: number;
+  ct40: number; ct41: number; ct42: number; ct43: number;
+  phuLucNq142: PhuLucNq142 | null;
+  nhomBanRa: NhomThueSuat[];
+  nhomMuaVao: NhomThueSuat[];
+  canhBao: CanhBaoToKhai[];
+  nguonCt22: string | null;
+  choXuat: boolean;
+  tenFileXml: string;
+}
+
+// Đọc bảng kê Excel của cổng TCT (HD_VAO/HD_RA…xlsx) thành danh sách hóa đơn.
+// Đọc ở SERVER vì frontend không có thư viện đọc Excel — backend đã sẵn ClosedXML.
+export const thueDocBangKe = (file: File) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post<{ soDong: number; hoaDon: HoaDonFile[] }>(
+    "/thue/doc-bang-ke", fd,
+    { headers: { "Content-Type": "multipart/form-data" } });
+};
+
+// Lập tờ khai để XEM TRƯỚC. xmlKyTruoc = nội dung file XML tờ khai kỳ liền trước,
+// server lấy ct43 trong đó làm ct22 của kỳ này (BR-TK-02).
+export const thueLapToKhai = (thang: number, xmlKyTruoc?: string) =>
+  api.post<ToKhaiGtgt>("/thue/to-khai", { xmlKyTruoc }, { params: { thang } });
+
+// Tải file XML tờ khai để nạp vào HTKK. Trả về blob.
+export const thueToKhaiXml = (thang: number, xmlKyTruoc?: string) =>
+  api.post<Blob>("/thue/to-khai/xml", { xmlKyTruoc },
+                 { params: { thang }, responseType: "blob" });
 
 export const thueHtmlHoaDon = (maHd: string) =>
   api.get<string>(`/thue/hoa-don/${encodeURIComponent(maHd)}/html`,

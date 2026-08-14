@@ -172,4 +172,103 @@ namespace KT2000.Api.Models
         public List<BangKeHoaDonDto> BanRa { get; set; } = new();
         public List<ChiTieuTongHopDto> TongHop { get; set; } = new();
     }
+
+    // ======================= TỜ KHAI 01/GTGT (TT80) =======================
+    // Xem docs/NB/SPEC-TO-KHAI-01-GTGT.md. Tên trường giữ đúng mã chỉ tiêu của HTKK
+    // (ct21, ct22…) chứ không đặt tên "dễ đọc": khi đối chiếu với tờ khai giấy hay
+    // XML gốc, mã chỉ tiêu là thứ duy nhất hai bên cùng gọi tên.
+
+    /// <summary>Một nhóm doanh thu theo thuế suất, sau khi đã phân bổ chiết khấu.</summary>
+    public class NhomThueSuatDto
+    {
+        public decimal ThueSuat { get; set; }        // 0, 5, 8, 10
+        public string? LoaiThue { get; set; }        // KCT | KKKNT | 0% | 8% | 10%…
+        public int SoDong { get; set; }
+        public decimal TienHangGop { get; set; }     // Σ(so_luong × don_gia), CHƯA trừ CK
+        public decimal ChietKhau { get; set; }       // CK phân bổ về nhóm này
+        public decimal DoanhThu { get; set; }        // TienHangGop − ChietKhau
+        public decimal Thue { get; set; }            // DoanhThu × ThueSuat
+    }
+
+    /// <summary>Một cảnh báo/lỗi phát hiện khi lập tờ khai.</summary>
+    public class CanhBaoToKhaiDto
+    {
+        public string Ma { get; set; } = "";         // BR-TK-01, LK-01, KT-02…
+        public string Muc { get; set; } = "";        // CHAN | CANH_BAO
+        public string MoTa { get; set; } = "";
+        public string? MaHd { get; set; }
+        public decimal? ChenhLech { get; set; }
+    }
+
+    /// <summary>Phụ lục giảm thuế GTGT theo NQ142 (10% → 8%).</summary>
+    public class PhuLucNq142Dto
+    {
+        // Mua vào thuộc nhóm được giảm
+        public decimal GiaTriHhdvMuaVao { get; set; }
+        public decimal ThueGtgtHhdvMuaVao { get; set; }
+        // Bán ra thuộc nhóm được giảm
+        public decimal GiaTriHhdvBanRa { get; set; }
+        public decimal ThueSuatTheoQuyDinh { get; set; } = 10;
+        public decimal ThueSuatSauGiam { get; set; } = 8;
+        public decimal ThueGtgtDuocGiam { get; set; }   // = GiaTriHhdvBanRa × 2%
+        public decimal ChenhLechCt9 { get; set; }       // mua vào − bán ra
+    }
+
+    /// <summary>Tờ khai 01/GTGT đã tính xong, đủ để xem trước và sinh XML.</summary>
+    public class ToKhaiGtgtDto
+    {
+        public int Nam { get; set; }
+        public int Thang { get; set; }
+        public string MaDonVi { get; set; } = "";
+        public string Mst { get; set; } = "";
+        public string TenNnt { get; set; } = "";
+        public string? DiaChiNnt { get; set; }
+        public string? MaCqtNoiNop { get; set; }
+        public string? TenCqtNoiNop { get; set; }
+        public string? MaTinhNnt { get; set; }
+        public string? TenTinhNnt { get; set; }
+
+        // ----- Chỉ tiêu tờ khai chính -----
+        public decimal Ct21 { get; set; }   // Không phát sinh HĐ mua bán (0/1)
+        public decimal Ct22 { get; set; }   // Khấu trừ kỳ trước chuyển sang = ct43 kỳ N-1
+        public decimal Ct23 { get; set; }   // Giá trị HHDV mua vào
+        public decimal Ct24 { get; set; }   // Thuế GTGT mua vào
+        public decimal Ct23a { get; set; }  // Trong đó: hàng nhập khẩu
+        public decimal Ct24a { get; set; }
+        public decimal Ct25 { get; set; }   // Thuế GTGT được khấu trừ kỳ này
+        public decimal Ct26 { get; set; }   // Bán ra không chịu thuế
+        public decimal Ct27 { get; set; }   // Bán ra chịu thuế
+        public decimal Ct28 { get; set; }
+        public decimal Ct29 { get; set; }   // Thuế suất 0%
+        public decimal Ct30 { get; set; }   // Thuế suất 5%
+        public decimal Ct31 { get; set; }
+        public decimal Ct32 { get; set; }   // Thuế suất 10% (gồm cả hàng giảm còn 8%)
+        public decimal Ct33 { get; set; }
+        public decimal Ct32a { get; set; }  // Không phải kê khai nộp thuế
+        public decimal Ct34 { get; set; }   // Tổng doanh thu bán ra
+        public decimal Ct35 { get; set; }   // Tổng thuế bán ra
+        public decimal Ct36 { get; set; }   // ct35 − ct25
+        public decimal Ct37 { get; set; }
+        public decimal Ct38 { get; set; }
+        public decimal Ct39a { get; set; }
+        public decimal Ct40a { get; set; }
+        public decimal Ct40b { get; set; }
+        public decimal Ct40 { get; set; }   // Phải nộp trong kỳ
+        public decimal Ct41 { get; set; }   // Còn được khấu trừ
+        public decimal Ct42 { get; set; }   // Đề nghị hoàn
+        public decimal Ct43 { get; set; }   // Chuyển kỳ sau = ct41 − ct42
+
+        public PhuLucNq142Dto? PhuLucNq142 { get; set; }
+
+        // ----- Phần để người dùng soi trước khi xuất -----
+        public List<NhomThueSuatDto> NhomBanRa { get; set; } = new();
+        public List<NhomThueSuatDto> NhomMuaVao { get; set; } = new();
+        public List<CanhBaoToKhaiDto> CanhBao { get; set; } = new();
+
+        // Nguồn của ct22 — hiện rõ để kế toán biết số ở đâu ra (BR-TK-02)
+        public string? NguonCt22 { get; set; }
+        // Có cảnh báo mức CHAN thì KHÔNG cho xuất XML
+        public bool ChoXuat => !CanhBao.Any(x => x.Muc == "CHAN");
+        public string TenFileXml { get; set; } = "";
+    }
 }
