@@ -154,10 +154,18 @@ namespace KT2000.Api.Services
                     var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
 
                     // ---- Kiểm Σ line = master: ưu tiên cặp chuẩn hóa, trống thì cặp _G ----
-                    // Sai số cho phép DƯỚI 10 đồng (chốt với Trường 03/08). Lý do: XML gốc
-                    // của TCT có HĐ ghi đơn giá lẻ tới phần thập phân, cộng lại lệch vài
-                    // hào so với tổng đã làm tròn — vd HUY_THANH T1/2026 lệch 0,4đ và 0,25đ.
-                    // Từ 10 đồng trở lên là sai thật, phải để lại raw\ xử lý tay.
+                    // Sai số cho phép DƯỚI 10 đồng. Có lúc nới lên 1.000đ rồi trả về 10đ
+                    // (chốt Trường 14/08) sau khi đo lại cho đúng.
+                    //
+                    // Đo trên ~1.250 hóa đơn thật, ĐÃ tính cả nhánh EXCEL_NO_XML: chỉ 63
+                    // hóa đơn có lệch, cao nhất 160đ, và TUYỆT ĐỐI không có gì trong
+                    // khoảng 0,01%–1% giá trị. Lỗi thật thì lệch hàng triệu.
+                    // Nên 1.000đ rộng gấp 6 lần mức cần — bỏ lọt cả một hạng sai số mà
+                    // không đổi lại được gì.
+                    //
+                    // Vì sao KHÔNG nới cho nhóm lệch 11–160đ: mấy hóa đơn đó chỉ có MỘT
+                    // dòng, nên không thể là sai số cộng dồn — nó sinh ngay từ con số
+                    // người bán khai. Loại đó đáng để mắt chứ không đáng bỏ qua.
                     const decimal SAI_SO_CHO_PHEP = 10m;
 
                     // Dòng CHIẾT KHẤU thương mại (LOAI_HH = TChat = 3) ghi thành tiền
@@ -180,17 +188,37 @@ namespace KT2000.Api.Services
                     bool toanChietKhau = lines.Count > 0
                         && lines.All(x => S(x, L, "LOAI_HH").Trim() == "3");
 
-                    decimal Cong(string cot) => lines.Sum(x =>
-                        (!toanChietKhau && S(x, L, "LOAI_HH").Trim() == "3" ? -1m : 1m)
-                        * N(x, L, cot));
+                    // Tiền hàng của một dòng = SL × ĐG − chiết khấu dòng, SAU khi vá SL/ĐG
+                    // khuyết bằng đúng hàm mà ReplaceLines dùng lúc ghi (chốt Trường 14/08).
+                    // Trước đây đọc thẳng THANH_TIEN — khớp master hoàn hảo nhưng không nói
+                    // được gì về hai cột thật sự vào DB, nên dòng thiếu đơn giá lọt qua rồi
+                    // vào sổ bằng 0.
+                    decimal TienHangDong(IXLRow x)
+                    {
+                        var (sl, dg) = SoLuongDonGia(
+                            N2(x, L, "SO_LUONG", "SO_LUONG_G"),
+                            N2(x, L, "DON_GIA",  "DON_GIA_G"),
+                            N2(x, L, "THANH_TIEN", "TTIEN_LINE"));
+                        // Làm tròn về ĐỒNG ngay ở TỪNG DÒNG, trước khi cộng (chốt Trường
+                        // 14/08). Người bán cũng làm đúng thế khi in hóa đơn: thành tiền
+                        // mỗi dòng là số nguyên đồng. Giữ phần lẻ của mọi dòng rồi mới
+                        // cộng là tự tích ra sai số mà bản gốc không hề có.
+                        // Đo trên 1.250 hóa đơn thật: kéo thêm 22 hóa đơn về khớp TUYỆT ĐỐI.
+                        return Math.Round(sl * dg, 0, MidpointRounding.AwayFromZero)
+                             - N(x, L, "CK_LINE_G");
+                    }
 
-                    decimal mNorm = N(r, M, "TIEN_HANG");
-                    decimal sNorm = Cong("THANH_TIEN");
-                    decimal mG    = N(r, M, "TT_HD_G");
-                    decimal sG    = Cong("TTIEN_LINE");
-                    bool useNorm  = mNorm != 0 || sNorm != 0;
-                    decimal masterVal = useNorm ? mNorm : mG;
-                    decimal sumLine   = useNorm ? sNorm : sG;
+                    decimal CongTienHang() => lines.Sum(x =>
+                        (!toanChietKhau && S(x, L, "LOAI_HH").Trim() == "3" ? -1m : 1m)
+                        * TienHangDong(x));
+
+                    // MỘT cách tính Σ duy nhất. Bản cũ có hai (THANH_TIEN và TTIEN_LINE)
+                    // rồi chọn theo cặp nào khác 0 — giữ hai lối tính song song là tái lập
+                    // đúng cái vênh vừa sửa. Bên master vẫn lùi từ cột chuẩn hóa sang cột _G
+                    // vì đó chỉ là hai cách CHÉP cùng một số của cổng.
+                    decimal sumLine   = CongTienHang();
+                    decimal masterVal = N(r, M, "TIEN_HANG");
+                    if (masterVal == 0) masterVal = N(r, M, "TT_HD_G");
 
                     // Hóa đơn KHÔNG CHỊU THUẾ: cổng không khai tiền chưa thuế nên cả
                     // TIEN_HANG lẫn TT_HD_G đều rỗng → masterVal = 0, và hóa đơn bị đá ra
@@ -217,9 +245,11 @@ namespace KT2000.Api.Services
                     if (S(r, M, "NGUON_DL").Equals("EXCEL_NO_XML", StringComparison.OrdinalIgnoreCase))
                     {
                         decimal tongTien = N(r, M, "TONG_TIEN");
-                        if (tongTien == 0) tongTien = mNorm + N(r, M, "TIEN_VAT");
+                        if (tongTien == 0) tongTien = masterVal + N(r, M, "TIEN_VAT");
                         masterVal = tongTien;
-                        sumLine   = sNorm;
+                        // sumLine giữ nguyên: với dòng NOXML thì script đặt SL=1 và
+                        // ĐG=TỔNG TIỀN, nên SL × ĐG chính là tổng đã gồm VAT — đúng cặp
+                        // cần so ở nhánh này.
                     }
 
                     decimal chenh = masterVal - sumLine;
@@ -584,7 +614,7 @@ namespace KT2000.Api.Services
                         p.AddWithValue("@sl", m.SoLuong);
                         p.AddWithValue("@dg", m.DonGia);
                         string thueSuat = (m.ThueSuat ?? "").Trim();
-                        p.AddWithValue("@pt_vat", DocPhanTram(thueSuat));
+                        p.AddWithValue("@pt_vat", DocThueSuat(thueSuat));
                         if (coLoaiThue)
                         {
                             // Giữ nguyên chuỗi gốc — xem giải thích ở ReplaceLines
@@ -631,6 +661,53 @@ namespace KT2000.Api.Services
         }
 
         // "10%" / "8%" / "KCT" → số phần trăm; không đọc được thì 0
+        // MÃ ÂM cho loại không có thuế suất bằng số (chốt Trường 14/08):
+        //     -1 = Không kê khai   (cổng ghi 'KKKNT' — 863 dòng thật)
+        //     -2 = Không chịu thuế (cổng ghi 'KCT'   —  91 dòng thật)
+        // Mã -3 "Thuế TC" đã BỎ: quét 91.062 dòng của mọi đơn vị không có giá trị nào ứng
+        // với nó, giữ chỗ cho một mã không ai sinh ra chỉ tổ gây thắc mắc.
+        //
+        // VÌ SAO SỐ ÂM: pt_vat là DECIMAL nên không chứa nổi chữ, mà 0 đã có nghĩa riêng —
+        // "thuế suất 0%", 8.450 dòng thật đang mang đúng nghĩa đó. Dồn KCT vào 0 là trộn
+        // hai thứ mà tờ khai GTGT xếp vào hai chỉ tiêu khác nhau. Số âm an toàn vì thuế
+        // suất thật không bao giờ âm.
+        //
+        // Chuỗi gốc vẫn giữ ở loai_thue: cột này để TÍNH, cột kia để ĐỌC.
+        // Số lượng / đơn giá của MỘT dòng sau khi vá chỗ cổng khai thiếu.
+        //
+        // Dùng CHUNG cho phép kiểm Σ (ImportJob) và cho lúc ghi (ReplaceLines) — đây là
+        // điểm mấu chốt (chốt Trường 14/08). Trước đây phép kiểm đọc THANH_TIEN còn chỗ
+        // ghi lưu SL và ĐG: hóa đơn khớp hoàn hảo lúc kiểm rồi vào DB thành 0, không phép
+        // kiểm nào bắt được vì hai bên đọc hai cột khác nhau.
+        //   Ca thật VAO_0107696742_C26TDM_3647 (HUY_THANH T8): SL = -9.292, cổng KHÔNG
+        //   khai đơn giá, THANH_TIEN = -140.224.736. Σ khớp master đúng 0đ nên qua cửa,
+        //   nhưng SL × ĐG = 0 — 140 triệu biến mất khỏi sổ.
+        //
+        // Hai ca vá:
+        //   SL và ĐG cùng trống  -> coi như 1 đơn vị, đơn giá chính là thành tiền
+        //   chỉ thiếu ĐG         -> suy ngược ĐG = thành tiền / SL
+        internal static (decimal Sl, decimal Dg) SoLuongDonGia(
+            decimal sl, decimal dg, decimal thanhTien)
+        {
+            if (thanhTien == 0) return (sl, dg);
+            if (sl == 0 && dg == 0) return (1m, thanhTien);
+            if (dg == 0 && sl != 0) return (sl, thanhTien / sl);
+            return (sl, dg);
+        }
+
+        internal const decimal PT_VAT_KHONG_KE_KHAI   = -1m;
+        internal const decimal PT_VAT_KHONG_CHIU_THUE = -2m;
+
+        internal static decimal DocThueSuat(string tho)
+        {
+            string s = (tho ?? "").Trim().ToUpperInvariant();
+            if (s == "KKKNT") return PT_VAT_KHONG_KE_KHAI;
+            if (s == "KCT")   return PT_VAT_KHONG_CHIU_THUE;
+            // '0%' '5%' '8%' '10%' và cả chuỗi rỗng đều qua đây; rỗng cho ra 0
+            // (chốt Trường 14/08: dòng trống vẫn để 0, không để NULL).
+            return DocPhanTram(s);
+        }
+
         private static decimal DocPhanTram(string s)
         {
             var so = new string((s ?? "").Where(c => char.IsDigit(c) || c == '.' || c == ',').ToArray())
@@ -1033,7 +1110,7 @@ namespace KT2000.Api.Services
                     string lt = thueSuatTho.Length > 10 ? thueSuatTho[..10] : thueSuatTho;
                     p.AddWithValue("@loai_thue", (object?)Nz(lt) ?? DBNull.Value);
                 }
-                decimal ptVat = DocPhanTram(thueSuatTho);
+                decimal ptVat = DocThueSuat(thueSuatTho);
 
                 // Hóa đơn KHÔNG CÓ XML không có thuế suất ở tầng dòng — suy từ chính hóa
                 // đơn: tiền thuế / tiền hàng (chốt Trường 12/08).
@@ -1078,7 +1155,10 @@ namespace KT2000.Api.Services
                 }
                 else
                 {
-                    tienVatL = thanhTien != 0 && ptVat != 0
+                    // ptVat > 0 chứ KHÔNG phải != 0: từ 14/08 giá trị âm là MÃ LOẠI
+                    // (-1 không kê khai, -2 không chịu thuế) chứ không phải thuế suất.
+                    // Nhân vào là ra tiền thuế ÂM cho 954 dòng vốn không có thuế nào.
+                    tienVatL = thanhTien != 0 && ptVat > 0
                         ? Math.Round(thanhTien * ptVat / 100m, 2) : (object)DBNull.Value;
                 }
                 p.AddWithValue("@tien_vat_l", tienVatL);
@@ -1104,14 +1184,13 @@ namespace KT2000.Api.Services
                     sl = 1m;
                     if (masterTienHang > 0) dg = masterTienHang;
                 }
-                else if (sl == 0 && dg == 0 && thanhTien != 0)
+                else
                 {
-                    // Hóa đơn chỉ ghi thành tiền, không kê số lượng lẫn đơn giá — hay gặp
-                    // ở hóa đơn dịch vụ / hỗ trợ bán hàng / tri ân, và hóa đơn bán lẻ.
-                    // Đo thật: 12 dòng, đều là hóa đơn RA của HOA_SANG.
-                    // thanhTien của dòng đọc từ XML vốn đã là tiền CHƯA thuế nên dùng thẳng.
-                    sl = 1m;
-                    dg = thanhTien;
+                    // Vá SL/ĐG khuyết bằng ĐÚNG hàm mà phép kiểm Σ ở ImportJob dùng — hai
+                    // bên phải ra cùng một con số, không thì lại tái diễn cảnh "khớp lúc
+                    // kiểm, mất lúc ghi". thanhTien của dòng đọc từ XML là tiền CHƯA thuế
+                    // nên dùng thẳng được.
+                    (sl, dg) = SoLuongDonGia(sl, dg, thanhTien);
                 }
                 p.AddWithValue("@sl", sl);
                 p.AddWithValue("@dg", dg);

@@ -22,12 +22,18 @@ namespace KT2000.Api.Services
         // Bản vá cho database đơn vị-năm. XẾP TĂNG DẦN theo Ver, và ĐỪNG BAO GIỜ đổi số
         // đã phát hành — Ver chính là thứ đang nằm trong SCHEMA_VERSION của khách.
         // Thêm bản vá mới = thêm một dòng ở đây + một <EmbeddedResource> trong .csproj.
+        // Số Ver phải TRA TRONG DATABASE THẬT trước khi đặt, không suy từ thư mục database/.
+        // Bản đầu đặt 10 vì script 015 ghi version 9 — nhưng database thật đã có 10 và 11
+        // từ trước (những bản vá không nằm trong thư mục, hoặc ai đó chạy tay). Kết quả là
+        // Ver=10 mang hai nghĩa khác nhau tùy database. Lấy 12 cho chắc (bắt được 14/08).
+        //   Cách tra:  SELECT Ver FROM SCHEMA_VERSION  trên vài database đang chạy.
         private static readonly (int Ver, string TaiNguyen)[] CAC_BAN_VA =
         {
-            (10, "KT2000.Api.va_017_loai_thue.sql"),
+            (12, "KT2000.Api.va_017_loai_thue.sql"),
+            (13, "KT2000.Api.va_019_dinh_khoan_kieu.sql"),
         };
 
-        private static readonly int VER_MOI_NHAT = CAC_BAN_VA.Max(x => x.Ver);
+        // KHÔNG có khái niệm "phiên bản mới nhất" — xem giải thích ở DocCacPhienBan.
 
         // Database nào đã đủ phiên bản thì thôi hỏi lại. CHỈ ghi vào đây sau khi vá xong
         // — vá hỏng mà đánh dấu là đủ thì lần sau bỏ qua luôn, hỏng âm thầm.
@@ -62,7 +68,8 @@ namespace KT2000.Api.Services
                 using var conn = new SqlConnection(_resolver.GetTenantConnection(code, nam));
                 conn.Open();
 
-                if (DocPhienBan(conn) >= VER_MOI_NHAT) { _daDu[khoa] = true; return; }
+                var daCo = DocCacPhienBan(conn);
+                if (CAC_BAN_VA.All(x => daCo.Contains(x.Ver))) { _daDu[khoa] = true; return; }
 
                 var daVa = Va(conn, khoa);
                 if (daVa.Count > 0)
@@ -83,15 +90,26 @@ namespace KT2000.Api.Services
             }
         }
 
-        // SCHEMA_VERSION có thể chưa tồn tại (database dựng tay đời đầu) — khi đó coi như
-        // phiên bản 0 và chạy hết bản vá. Mỗi bản vá đều tự kiểm trước khi sửa nên không sao.
-        private static int DocPhienBan(SqlConnection conn)
+        // Đọc TOÀN BỘ danh sách bản vá đã áp, KHÔNG phải MAX(Ver).
+        //
+        // Bản đầu so `MAX(Ver) >= phiên bản mới nhất` và sai nặng (bắt được 14/08):
+        // SCHEMA_VERSION là DANH SÁCH các bản đã chạy, mỗi bản một dòng — không phải một
+        // cái mốc. Database nào mang số CAO hơn sẽ không bao giờ nhận được bản vá số THẤP
+        // hơn, dù chưa hề chạy nó.
+        //   Ca thật: HOA_SANG_2026 có {6,7,8,9,10,11}. Bản vá số 10 bị coi là "đã có" vì
+        //   MAX = 11, trong khi cột loai_thue chưa hề được thêm. Bốn database dính y hệt.
+        //
+        // SCHEMA_VERSION có thể chưa tồn tại (database dựng tay đời đầu) — khi đó trả tập
+        // RỖNG và chạy hết bản vá. Mỗi bản vá đều tự kiểm trước khi sửa nên chạy thừa vô hại.
+        private static HashSet<int> DocCacPhienBan(SqlConnection conn)
         {
+            var da = new HashSet<int>();
             using var cmd = new SqlCommand(
-                @"IF OBJECT_ID('SCHEMA_VERSION') IS NULL SELECT 0
-                  ELSE SELECT ISNULL(MAX(Ver), 0) FROM SCHEMA_VERSION", conn);
-            var o = cmd.ExecuteScalar();
-            return o is int i ? i : 0;
+                @"IF OBJECT_ID('SCHEMA_VERSION') IS NOT NULL
+                      SELECT Ver FROM SCHEMA_VERSION", conn);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) if (!r.IsDBNull(0)) da.Add(r.GetInt32(0));
+            return da;
         }
 
         private static List<int> Va(SqlConnection conn, string khoa)
@@ -112,11 +130,10 @@ namespace KT2000.Api.Services
 
             try
             {
-                // Đọc lại phiên bản SAU khi có khóa: tiến trình kia có thể vừa vá xong
-                // trong lúc ta đứng chờ.
-                int hienTai = DocPhienBan(conn);
+                // Đọc lại SAU khi có khóa: tiến trình kia có thể vừa vá xong trong lúc ta chờ.
+                var daCo = DocCacPhienBan(conn);
 
-                foreach (var (ver, taiNguyen) in CAC_BAN_VA.Where(x => x.Ver > hienTai)
+                foreach (var (ver, taiNguyen) in CAC_BAN_VA.Where(x => !daCo.Contains(x.Ver))
                                                            .OrderBy(x => x.Ver))
                 {
                     foreach (var lo in TachLo(DocNhung(taiNguyen)))

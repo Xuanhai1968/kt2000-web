@@ -28,6 +28,8 @@
          chạy mà chẳng báo gì. -->
     <EmbeddedResource Include="..\database\017_hoa_don_line_loai_thue.sql"
                       LogicalName="KT2000.Api.va_017_loai_thue.sql" />
+    <EmbeddedResource Include="..\database\019_hoa_don_dinh_khoan_kieu.sql"
+                      LogicalName="KT2000.Api.va_019_dinh_khoan_kieu.sql" />
 
     <!-- Bộ tải HĐ của TCT đi kèm bản build: TctFetchService gọi nó bằng Process.Start
          theo đường dẫn <thư mục exe>\tools\. Copy chứ không nhúng, vì python.exe cần
