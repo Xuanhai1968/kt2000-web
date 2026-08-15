@@ -1,8 +1,20 @@
-import { Alert, Typography } from "antd";
-import type { ToKhaiGtgt } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { Alert, Typography, Modal, InputNumber, Input, Button, message } from "antd";
+import { SaveOutlined, FileDoneOutlined, DiffOutlined } from "@ant-design/icons";
+import { thueDocToKhaiTay, thueLuuToKhaiTay, thueDoiChieu, loiApi } from "../api";
+import type { ToKhaiGtgt, ToKhaiTay, DongDoiChieu } from "../api";
 import "./bang-to-khai.css";
 
-// ============ TỜ KHAI 01/GTGT — BẢN IN CHUẨN HTKK ============
+// BangToKhai.tsx — TỜ KHAI 01/GTGT, hai component trong một file:
+//
+//   BangToKhai (default)  — XEM/IN tờ khai đã TÍNH từ sổ hóa đơn (chỉ đọc)
+//   NhapToKhaiTay (named) — NHẬP TAY tờ khai rồi lưu vào bảng TOKHAI
+//
+// Vì sao chung một file: cùng MỘT tờ khai 01/GTGT, cùng bộ chỉ tiêu ct21…ct43 và
+// cùng bộ công thức. Tách hai file thì nhãn chỉ tiêu và công thức bị chép hai bản,
+// sửa một bên quên bên kia là hai màn nói hai con số khác nhau.
+//
+// ============ PHẦN 1: BẢN IN CHUẨN HTKK ============
 // Spec: docs/NB/SPEC-TO-KHAI-01-GTGT.md
 // Khuôn dựng theo bản in thật: docs/NB/TKGTGT_T7_2026_DVT.pdf
 //
@@ -18,16 +30,49 @@ const so = (v: number | null | undefined) =>
   v == null ? "" : v.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
 
 // Ô mã chỉ tiêu + giá trị — cặp ô luôn đi cùng nhau trong tờ khai gốc.
-function O({ ma, gt }: { ma: string; gt?: number | null }) {
+//
+// MỘT ô dùng cho CẢ HAI chế độ:
+//   sua = undefined → chỉ hiện số (xem/in)
+//   sua = hàm       → ô nhập được, gõ thẳng trong khuôn tờ khai
+//   sua + tinh      → ô CÔNG THỨC: hiện số nhưng khóa, tô nền khác
+// Nhờ vậy bản nhập tay và bản in dùng CHUNG một khuôn bảng, không phải dựng lại
+// bố cục lần hai rồi lo hai bên lệch nhau.
+function O({ ma, gt, sua, tinh }: {
+  ma: string;
+  gt?: number | null;
+  sua?: (v: number) => void;
+  tinh?: boolean;
+}) {
+  const nhapDuoc = sua != null && !tinh;
   return (
     <>
       <td className="o-ma">[{ma}]</td>
-      <td className="o-gt">{gt == null ? "" : so(gt)}</td>
+      <td className={`o-gt ${sua != null ? "o-sua" : ""} ${tinh ? "o-tinh" : ""}`}>
+        {nhapDuoc ? (
+          <InputNumber
+            size="small"
+            value={gt ?? 0}
+            controls={false}
+            variant="borderless"
+            // Dấu . ngăn nghìn như tờ khai giấy; parser gỡ ra khi gõ.
+            formatter={(v) => `${v ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ".")}
+            parser={(v) => Number((v ?? "").replace(/\./g, "")) || 0}
+            onChange={(v) => sua(Number(v) || 0)}
+          />
+        ) : (gt == null ? "" : so(gt))}
+      </td>
     </>
   );
 }
 
-export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
+/**
+ * sua: bỏ trống = chỉ XEM/IN. Truyền hàm = cho SỬA ngay trong khuôn tờ khai —
+ * nhận (tên chỉ tiêu, giá trị mới), ví dụ ("ct23", 1500000).
+ * Nhờ tham số này mà bản nhập tay dùng lại CHÍNH khuôn PDF này, không dựng lại
+ * bố cục lần hai.
+ */
+export default function BangToKhai(
+  { tk, sua }: { tk: ToKhaiGtgt; sua?: (ma: string, v: number) => void }) {
   const chan = tk.canhBao.filter((c) => c.muc === "CHAN");
   const nhac = tk.canhBao.filter((c) => c.muc !== "CHAN");
   const pl = tk.phuLucNq142;
@@ -129,11 +174,18 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
             </tr>
           </thead>
           <tbody>
+            {/* [21] là Ô ĐÁNH DẤU "X", không phải ô tiền — bản in ghi X hoặc để
+                trống. Ở chế độ nhập tay cho bấm để bật/tắt, vì đơn vị không phát
+                sinh mua bán trong kỳ vẫn phải nộp tờ khai và đánh dấu đúng ô này. */}
             <tr className="d-nhom">
               <td className="c-stt">A</td>
               <td>Không phát sinh hoạt động mua, bán trong kỳ (đánh dấu "X")</td>
               <td className="o-ma">[21]</td>
-              <td className="o-gt">{tk.ct21 === 1 ? "X" : ""}</td>
+              <td className={`o-gt o-danhdau ${sua ? "o-sua" : ""}`}
+                  onClick={() => sua?.("ct21", tk.ct21 === 1 ? 0 : 1)}
+                  title={sua ? "Bấm để đánh dấu / bỏ dấu" : undefined}>
+                {tk.ct21 === 1 ? "X" : ""}
+              </td>
               <td className="o-ma" />
               <td className="o-gt">[]</td>
             </tr>
@@ -141,7 +193,8 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
               <td className="c-stt">B</td>
               <td>Thuế giá trị gia tăng còn được khấu trừ kỳ trước chuyển sang</td>
               <td className="o-ma" /><td className="o-gt" />
-              <O ma="22" gt={tk.ct22} />
+              <O ma="22" gt={tk.ct22}
+                 sua={sua && ((v) => sua("ct22", v))} />
             </tr>
             <tr className="d-nhom">
               <td className="c-stt">C</td>
@@ -155,9 +208,17 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
             <tr>
               <td className="c-stt">1</td>
               <td>Giá trị và thuế giá trị gia tăng của hàng hóa, dịch vụ mua vào</td>
-              <O ma="23" gt={tk.ct23} />
-              <O ma="24" gt={tk.ct24} />
+              <O ma="23" gt={tk.ct23}
+                 sua={sua && ((v) => sua("ct23", v))} />
+              <O ma="24" gt={tk.ct24}
+                 sua={sua && ((v) => sua("ct24", v))} />
             </tr>
+            {/* [23a]/[24a] — hàng nhập khẩu. KHÔNG cho gõ ở bản nhập tay: khuôn
+                Excel kế toán đang dùng (tkhai_2026_mau_xls.xls) và bảng TOKHAI đều
+                KHÔNG có hai cột này, gõ vào thì lưu xong là mất trắng. Vẫn giữ dòng
+                để bản in khớp từng dòng với tờ khai giấy.
+                Muốn khai được thì phải thêm cột ct23a_nnt/ct24a_nnt vào TOKHAI
+                bằng một script mới — chưa làm vì chưa có nhu cầu thật. */}
             <tr>
               <td className="c-stt" />
               <td>Trong đó: hàng hóa, dịch vụ nhập khẩu</td>
@@ -168,7 +229,8 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
               <td className="c-stt">2</td>
               <td>Thuế giá trị gia tăng của hàng hóa, dịch vụ mua vào được khấu trừ kỳ này</td>
               <td className="o-ma" /><td className="o-gt" />
-              <O ma="25" gt={tk.ct25} />
+              <O ma="25" gt={tk.ct25}
+                 sua={sua && ((v) => sua("ct25", v))} />
             </tr>
 
             <tr className="d-muc">
@@ -178,7 +240,8 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
             <tr>
               <td className="c-stt">1</td>
               <td>Hàng hóa, dịch vụ bán ra không chịu thuế giá trị gia tăng</td>
-              <O ma="26" gt={tk.ct26} />
+              <O ma="26" gt={tk.ct26}
+                 sua={sua && ((v) => sua("ct26", v))} />
               <td className="o-ma" /><td className="o-gt" />
             </tr>
             <tr>
@@ -187,31 +250,37 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
                 Hàng hóa, dịch vụ bán ra chịu thuế giá trị gia tăng
                 <div className="ct-ct">([27]=[29]+[30]+[32]+[32a]; [28]=[31]+[33])</div>
               </td>
-              <O ma="27" gt={tk.ct27} />
-              <O ma="28" gt={tk.ct28} />
+              <O ma="27" gt={tk.ct27} sua={sua ? (() => {}) : undefined} tinh />
+              <O ma="28" gt={tk.ct28} sua={sua ? (() => {}) : undefined} tinh />
             </tr>
             <tr>
               <td className="c-stt">a</td>
               <td>Hàng hoá, dịch vụ bán ra chịu thuế suất 0%</td>
-              <O ma="29" gt={tk.ct29} />
+              <O ma="29" gt={tk.ct29}
+                 sua={sua && ((v) => sua("ct29", v))} />
               <td className="o-ma" /><td className="o-gt" />
             </tr>
             <tr>
               <td className="c-stt">b</td>
               <td>Hàng hoá, dịch vụ bán ra chịu thuế suất 5%</td>
-              <O ma="30" gt={tk.ct30} />
-              <O ma="31" gt={tk.ct31} />
+              <O ma="30" gt={tk.ct30}
+                 sua={sua && ((v) => sua("ct30", v))} />
+              <O ma="31" gt={tk.ct31}
+                 sua={sua && ((v) => sua("ct31", v))} />
             </tr>
             <tr>
               <td className="c-stt">c</td>
               <td>Hàng hoá, dịch vụ bán ra chịu thuế suất 10%</td>
-              <O ma="32" gt={tk.ct32} />
-              <O ma="33" gt={tk.ct33} />
+              <O ma="32" gt={tk.ct32}
+                 sua={sua && ((v) => sua("ct32", v))} />
+              <O ma="33" gt={tk.ct33}
+                 sua={sua && ((v) => sua("ct33", v))} />
             </tr>
             <tr>
               <td className="c-stt">d</td>
               <td>Hàng hoá, dịch vụ bán ra không tính thuế</td>
-              <O ma="32a" gt={tk.ct32a} />
+              <O ma="32a" gt={tk.ct32a}
+                 sua={sua && ((v) => sua("ct32a", v))} />
               <td className="o-ma" /><td className="o-gt" />
             </tr>
             <tr>
@@ -220,8 +289,8 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
                 Tổng doanh thu và thuế giá trị gia tăng của hàng hóa, dịch vụ bán ra
                 <div className="ct-ct">([34]=[26]+[27]; [35]=[28])</div>
               </td>
-              <O ma="34" gt={tk.ct34} />
-              <O ma="35" gt={tk.ct35} />
+              <O ma="34" gt={tk.ct34} sua={sua ? (() => {}) : undefined} tinh />
+              <O ma="35" gt={tk.ct35} sua={sua ? (() => {}) : undefined} tinh />
             </tr>
 
             <tr className="d-muc">
@@ -229,7 +298,7 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
               <td colSpan={3}>
                 Thuế giá trị gia tăng phát sinh trong kỳ ([36]=[35]-[25])
               </td>
-              <O ma="36" gt={tk.ct36} />
+              <O ma="36" gt={tk.ct36} sua={sua ? (() => {}) : undefined} tinh />
             </tr>
 
             <tr className="d-muc">
@@ -241,12 +310,14 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
             <tr>
               <td className="c-stt">1</td>
               <td colSpan={3}>Điều chỉnh giảm</td>
-              <O ma="37" gt={tk.ct37} />
+              <O ma="37" gt={tk.ct37}
+                 sua={sua && ((v) => sua("ct37", v))} />
             </tr>
             <tr>
               <td className="c-stt">2</td>
               <td colSpan={3}>Điều chỉnh tăng</td>
-              <O ma="38" gt={tk.ct38} />
+              <O ma="38" gt={tk.ct38}
+                 sua={sua && ((v) => sua("ct38", v))} />
             </tr>
 
             <tr className="d-muc">
@@ -254,7 +325,11 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
               <td colSpan={3}>
                 Thuế giá trị gia tăng nhận bàn giao được khấu trừ trong kỳ
               </td>
-              <O ma="39a" gt={tk.ct39a} />
+              {/* Bản in ghi [39a] chứ không phải [39] — đo trên PDF gốc
+                  docs/THUE/TOKHAI/TKGTGT_T7_2026_DVT.pdf (mục V). Bảng TOKHAI lại
+                  đặt tên cột là ct39_nnt theo khuôn Excel; chỗ đọc/ghi tự ánh xạ. */}
+              <O ma="39a" gt={tk.ct39a}
+                 sua={sua && ((v) => sua("ct39", v))} />
             </tr>
 
             <tr className="d-muc">
@@ -269,7 +344,7 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
                 Thuế giá trị gia tăng phải nộp của hoạt động sản xuất kinh doanh trong kỳ
                 <div className="ct-ct">{"{[40a]=([36]-[22]+[37]-[38]-[39a]) ≥ 0}"}</div>
               </td>
-              <O ma="40a" gt={tk.ct40a} />
+              <O ma="40a" gt={tk.ct40a} sua={sua ? (() => {}) : undefined} tinh />
             </tr>
             <tr className="d-dam">
               <td className="c-stt">2</td>
@@ -278,33 +353,37 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
                 còn phải nộp của hoạt động sản xuất kinh doanh cùng kỳ tính thuế
                 ([40b]≤[40a])
               </td>
-              <O ma="40b" gt={tk.ct40b} />
+              <O ma="40b" gt={tk.ct40b}
+                 sua={sua && ((v) => sua("ct40b", v))} />
             </tr>
             <tr className="d-dam">
               <td className="c-stt">3</td>
               <td colSpan={3}>
                 Thuế giá trị gia tăng còn phải nộp trong kỳ ([40]=[40a]-[40b])
               </td>
-              <O ma="40" gt={tk.ct40} />
+              <O ma="40" gt={tk.ct40} sua={sua ? (() => {}) : undefined} tinh />
             </tr>
+            {/* Dòng 4 của bản in CHỈ có công thức, không có tên chỉ tiêu — đúng như
+                PDF gốc. Giữ nguyên để bản in khớp từng dòng với tờ khai giấy. */}
             <tr className="d-dam">
               <td className="c-stt">4</td>
               <td colSpan={3}>
                 {"{[41]=([36]-[22]+[37]-[38]-[39a]) ≤ 0}"}
               </td>
-              <O ma="41" gt={tk.ct41} />
+              <O ma="41" gt={tk.ct41} sua={sua ? (() => {}) : undefined} tinh />
             </tr>
             <tr className="d-dam">
               <td className="c-stt">4.1</td>
               <td colSpan={3}>Thuế giá trị gia tăng đề nghị hoàn ([42] ≤ [41])</td>
-              <O ma="42" gt={tk.ct42} />
+              <O ma="42" gt={tk.ct42}
+                 sua={sua && ((v) => sua("ct42", v))} />
             </tr>
             <tr className="d-dam">
               <td className="c-stt">4.2</td>
               <td colSpan={3}>
                 Thuế giá trị gia tăng còn được khấu trừ chuyển kỳ sau ([43]=[41]-[42])
               </td>
-              <O ma="43" gt={tk.ct43} />
+              <O ma="43" gt={tk.ct43} sua={sua ? (() => {}) : undefined} tinh />
             </tr>
           </tbody>
         </table>
@@ -456,5 +535,288 @@ export default function BangToKhai({ tk }: { tk: ToKhaiGtgt }) {
         </div>
       )}
     </div>
+  );
+}
+
+
+// ============ PHẦN 2: NHẬP TAY TỜ KHAI 01/GTGT ============
+//
+// Dùng cho đơn vị CHƯA CÓ HÓA ĐƠN trong sổ nhưng vẫn phải nộp tờ khai (AK_GLOBAL,
+// ANH_DAO, CONG_TY_B… — trắng trơn trên lưới chéo). Kế toán gõ tay chỉ tiêu từ tờ
+// khai giấy/HTKK rồi lưu vào bảng TOKHAI, để KỲ SAU tự lấy được ct22 (BR-TK-02)
+// mà không phải nhớ lại con số.
+//
+// GÕ THẲNG TRONG KHUÔN TỜ KHAI: dùng lại chính component BangToKhai ở trên, chỉ
+// truyền thêm hàm `sua`. Kế toán nhìn thấy đúng bản in PDF quen thuộc và điền vào
+// đúng ô [23], [24]… như điền tờ khai giấy — không phải học một bố cục thứ hai,
+// và không có nguy cơ hai màn lệch nhau vì chép nhãn/công thức hai bản.
+//
+// Ô CÔNG THỨC (ct27, ct34, ct36, ct40, ct41, ct43…) tự tính, khóa không cho gõ:
+// công thức in sẵn trên tờ khai, cho sửa thì kế toán gõ ra số không cân mà cơ quan
+// thuế sẽ trả về.
+
+// Bản rỗng của ToKhaiTay — dùng khi kỳ đó chưa lưu lần nào.
+const RONG_TAY: ToKhaiTay = {
+  maDonVi: "", nam: 0, thang: 0, lanNop: 0,
+  ct21: 0, ct22: 0, ct23: 0, ct24: 0, ct25: 0, ct26: 0,
+  ct27: 0, ct28: 0, ct29: 0, ct30: 0, ct31: 0, ct32: 0,
+  ct33: 0, ct32a: 0, ct34: 0, ct35: 0, ct36: 0, ct37: 0,
+  ct38: 0, ct39: 0, ct40a: 0, ct40b: 0, ct40: 0, ct41: 0,
+  ct42: 0, ct43: 0,
+};
+
+interface PropsTay {
+  mo: boolean;
+  onDong: () => void;
+  /** Đã lưu xong — để màn cha nạp lại lưới cho thấy số mới. */
+  onDaLuu?: () => void;
+  maDonVi: string;
+  tenDonVi?: string | null;
+  /** MST của đơn vị — điền sẵn vào ô [05] cho tờ khai mới. */
+  mstDonVi?: string | null;
+  nam: number;
+  thang: number;
+}
+
+export function NhapToKhaiTay(
+  { mo, onDong, onDaLuu, maDonVi, tenDonVi, mstDonVi, nam, thang }: PropsTay) {
+
+  const [tk, setTk] = useState<ToKhaiTay>(RONG_TAY);
+  const [tai, setTai] = useState(false);
+  const [dangLuu, setDangLuu] = useState(false);
+  const [daCo, setDaCo] = useState(false);
+  // Nguồn của ct22 — hiện dưới chân để kế toán biết số tồn đầu ở đâu ra (BR-TK-02).
+  const [nguonCt22, setNguonCt22] = useState<string | null>(null);
+
+  // ----- ĐỐI CHIẾU BA NGUỒN: tờ khai · sổ hóa đơn · bản TCT trả về -----
+  const [dc, setDc] = useState<DongDoiChieu[] | null>(null);
+  const [dangDc, setDangDc] = useState(false);
+
+  // Chỉ hiện dòng CÓ LỆCH: 26 chỉ tiêu mà bày hết thì phần khớp lấn át phần lệch,
+  // đúng thứ cần nhìn lại chìm nghỉm.
+  const doiChieu = async () => {
+    setDangDc(true);
+    try {
+      const r = await thueDoiChieu(maDonVi, thang, nam);
+      setDc(r.data.dong.filter((x) => x.coLech));
+      if (r.data.soLech === 0) message.success("Khớp cả ba nguồn — không có lệch");
+      else message.warning(`${r.data.soLech} chỉ tiêu lệch`);
+    } catch (e) {
+      setDc(null);
+      message.error(loiApi(e, "Không đối chiếu được"));
+    } finally {
+      setDangDc(false);
+    }
+  };
+
+  // Nạp bản đã lưu (nếu có) mỗi lần mở — mở ra sửa tiếp chứ không phải lúc nào cũng
+  // gõ lại từ đầu. Chưa lưu lần nào thì server trả 204, dữ liệu rỗng → form trắng.
+  useEffect(() => {
+    if (!mo || !maDonVi) return;
+    const id = setTimeout(() => {
+      setTai(true);
+      thueDocToKhaiTay(maDonVi, thang, nam)
+        .then((r) => {
+          // Server trả BA dạng (xem ThueController.DocToKhaiTay):
+          //   204 rỗng            -> kỳ chưa lưu VÀ kỳ trước cũng chưa có tờ khai
+          //   { ct22, nguonCt22 } -> chưa lưu, nhưng ĐIỀN SẴN tồn đầu từ kỳ trước
+          //   { tk, nguonCt22 }   -> đã lưu rồi
+          const d = r.data as unknown as
+            { tk?: ToKhaiTay; ct22?: number; nguonCt22?: string } | "" | null;
+          if (!d || typeof d !== "object") {
+            setDaCo(false);
+            setTk({ ...RONG_TAY, maDonVi, nam, thang });
+            setNguonCt22(null);
+            return;
+          }
+          setNguonCt22(d.nguonCt22 ?? null);
+          if (d.tk) {
+            setDaCo(true);
+            setTk(d.tk);
+          } else {
+            // Khung rỗng nhưng ct22 đã có sẵn từ kỳ trước — kế toán khỏi phải mở
+            // tờ khai cũ ra chép tay (chỗ hay sai nhất của cả quy trình).
+            setDaCo(false);
+            setTk({ ...RONG_TAY, maDonVi, nam, thang, ct22: d.ct22 ?? 0 });
+          }
+        })
+        .catch((e) => {
+          setDaCo(false);
+          setTk({ ...RONG_TAY, maDonVi, nam, thang });
+          setNguonCt22(null);
+          message.error(loiApi(e, "Không đọc được tờ khai đã lưu"));
+        })
+        .finally(() => setTai(false));
+    }, 0);
+    return () => clearTimeout(id);
+  }, [mo, maDonVi, nam, thang]);
+
+  // ----- Ô TỰ TÍNH -----
+  // ct40a có thể ÂM — khi âm thì phần âm đó chuyển sang ct41 (chưa khấu trừ hết)
+  // chứ không phải "phải nộp số âm". Đây đúng là chỗ tờ khai giấy hay bị điền nhầm.
+  const st = useMemo(() => {
+    const ct27 = tk.ct29 + tk.ct30 + tk.ct32 + tk.ct32a;
+    const ct28 = tk.ct31 + tk.ct33;
+    const ct34 = tk.ct26 + ct27;
+    const ct35 = ct28;
+    const ct36 = ct35 - tk.ct25;
+    const con = ct36 - tk.ct22 + tk.ct37 - tk.ct38 - tk.ct39;
+    const ct40a = con > 0 ? con : 0;
+    const ct40 = Math.max(ct40a - tk.ct40b, 0);
+    const ct41 = con < 0 ? -con : 0;
+    const ct43 = Math.max(ct41 - tk.ct42, 0);
+    return { ct27, ct28, ct34, ct35, ct36, ct40a, ct40, ct41, ct43 };
+  }, [tk]);
+
+  // Ghép thành ToKhaiGtgt để đưa vào BangToKhai — component đó nhận kiểu đầy đủ
+  // (có cảnh báo, nhóm thuế suất…), còn bản gõ tay không có mấy thứ đó nên để rỗng.
+  const tkHien = useMemo(() => ({
+    // ...tk PHẢI đứng TRƯỚC mấy dòng dưới: nó mang mst/tenNnt kiểu `string | null`,
+    // để nó spread sau thì giá trị null của bản mới ghi đè mất phần dự phòng —
+    // đúng lỗi "Mã số thuế: (trống)" nhìn thấy trên màn hình.
+    ...tk, ...st,
+    nam, thang, maDonVi,
+    // Hồ sơ đơn vị: ưu tiên số đã lưu, chưa có thì lấy từ màn cha truyền xuống.
+    mst: tk.mst || mstDonVi || "",
+    tenNnt: tk.tenNnt || tenDonVi || maDonVi,
+    diaChiNnt: tk.diaChiNnt ?? null,
+    maCqtNoiNop: tk.maCct ?? null, tenCqtNoiNop: tk.tenCct ?? null,
+    // ct23a/24a (hàng nhập khẩu) chưa tách riêng ở bản gõ tay — để 0.
+    ct23a: 0, ct24a: 0,
+    // ct39a của bản in ứng với ct39 của bảng TOKHAI (khác tên, cùng chỉ tiêu).
+    ct39a: tk.ct39,
+    phuLucNq142: null, nhomBanRa: [], nhomMuaVao: [], canhBao: [],
+    nguonCt22: null, choXuat: true, tenFileXml: "",
+  }), [tk, st, nam, thang, maDonVi, tenDonVi, mstDonVi]);
+
+  // Tờ khai RỖNG = mọi chỉ tiêu tiền đều 0. Không cho lưu: lưới sẽ hiện một dòng
+  // toàn số 0 trông y như "đã khai và bằng 0", trong khi thực ra chưa khai — và kỳ
+  // sau lấy ct43 = 0 đó làm tồn đầu thì sai dây chuyền.
+  // Ô [21] "không phát sinh mua bán" là ngoại lệ: đánh dấu nó thì tờ khai toàn 0
+  // vẫn hợp lệ. Server chặn lại y hệt (xem ThueController.LuuToKhaiTay).
+  const coSoLieu = tk.ct21 === 1
+    || [tk.ct22, tk.ct23, tk.ct24, tk.ct25, tk.ct26, tk.ct29, tk.ct30, tk.ct31,
+        tk.ct32, tk.ct33, tk.ct32a, tk.ct37, tk.ct38, tk.ct39, tk.ct40b, tk.ct42,
+        st.ct27, st.ct34, st.ct36, st.ct40, st.ct43].some((v) => (v || 0) !== 0);
+
+  const luu = async () => {
+    setDangLuu(true);
+    try {
+      // Gộp ô tự tính vào bản ghi TRƯỚC KHI gửi: bảng TOKHAI lưu đủ 26 chỉ tiêu để
+      // kỳ sau và lưới chéo đọc thẳng, không phải tính lại.
+      await thueLuuToKhaiTay({ ...tk, ...st, maDonVi, nam, thang });
+      message.success(`Đã lưu tờ khai ${String(thang).padStart(2, "0")}/${nam}`);
+      setDaCo(true);
+      onDaLuu?.();
+      onDong();
+    } catch (e) {
+      message.error(loiApi(e, "Không lưu được tờ khai"));
+    } finally {
+      setDangLuu(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={
+        <span>
+          <FileDoneOutlined style={{ marginRight: 8 }} />
+          Tạo tờ khai — <b>{maDonVi}</b>
+          {tenDonVi && <span className="ntk-ten"> · {tenDonVi}</span>}
+          <span className="ntk-ky"> · kỳ {String(thang).padStart(2, "0")}/{nam}</span>
+        </span>
+      }
+      open={mo}
+      onCancel={onDong}
+      // Rộng đúng khổ tờ khai: hẹp hơn thì bảng bị bóp, mất dáng bản in.
+      width={1000}
+      style={{ top: 16 }}
+      styles={{ body: { maxHeight: "calc(100vh - 200px)", overflowY: "auto",
+                        background: "#f0f2f5", padding: 12 } }}
+      footer={
+        <div className="ntk-chan">
+          <span className="ntk-nhac">
+            {daCo ? "Kỳ này đã có tờ khai — lưu sẽ ghi đè"
+                  : "Kỳ này chưa có tờ khai"}
+            {nguonCt22 && <> · tồn đầu lấy từ {nguonCt22}</>}
+            {" · ô nền vàng là ô TỰ TÍNH, không gõ được"}
+          </span>
+          {/* Bỏ nút "Đóng" — dấu X góc phải của Modal đã làm đúng việc đó, để hai
+              lối đóng cạnh nhau chỉ tổ chia sự chú ý khỏi nút Lưu. */}
+          {/* ĐỐI CHIẾU — chỉ bật khi kỳ này ĐÃ lưu tờ khai: chưa lưu thì không có
+              gì để so, bấm vào chỉ nhận bảng rỗng. */}
+          <Button icon={<DiffOutlined />} loading={dangDc}
+                  disabled={tai || !daCo} onClick={doiChieu}
+                  title={daCo ? "So tờ khai với sổ hóa đơn và bản TCT trả về"
+                              : "Lưu tờ khai trước rồi mới đối chiếu được"}>
+            Đối chiếu
+          </Button>
+          <Button type="primary" icon={<SaveOutlined />}
+                  loading={dangLuu} disabled={tai || !coSoLieu} onClick={luu}
+                  title={coSoLieu ? undefined
+                    : "Chưa có số liệu — nhập ít nhất một chỉ tiêu, hoặc đánh dấu "
+                      + "[21] nếu kỳ này không phát sinh mua bán"}>
+            Lưu tờ khai
+          </Button>
+        </div>
+      }
+    >
+      <div className="ntk-ghichu khong-in">
+        <span>Ghi chú</span>
+        <Input size="small" value={tk.ghiChu ?? ""} disabled={tai}
+               placeholder="Ghi chú nội bộ, không in ra tờ khai"
+               onChange={(e) => setTk((c) => ({ ...c, ghiChu: e.target.value }))} />
+      </div>
+
+      {dc && (
+        <div className="dc-khoi">
+          <div className="dc-dau">
+            <b>Đối chiếu ba nguồn</b>
+            <span className="dc-mo">tờ khai - sổ hóa đơn - bản TCT trả về</span>
+            <span className="dc-day" />
+            <Button size="small" onClick={() => setDc(null)}>Đóng</Button>
+          </div>
+          {dc.length === 0 ? (
+            <div className="dc-khop">
+            Cả ba nguồn khớp nhau — không có chỉ tiêu nào lệch.
+            </div>
+          ) : (
+            <table className="dc-bang">
+              <thead>
+                <tr>
+                  <th>CT</th><th>Chỉ tiêu</th>
+                  <th>Tờ khai</th><th>Sổ hóa đơn</th><th>TCT trả về</th>
+                  <th>Lệch sổ</th><th>Lệch TCT</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dc.map((x) => (
+                  <tr key={x.ma}>
+                    <td className="dc-ma">[{x.ma}]</td>
+                    <td>{x.ten}</td>
+                    <td className="dc-so">{so(x.toKhai)}</td>
+                    <td className="dc-so">{x.so == null ? <i>—</i> : so(x.so)}</td>
+                    <td className="dc-so">{x.tct == null ? <i>—</i> : so(x.tct)}</td>
+                    <td className={`dc-so ${(x.lechSo ?? 0) !== 0 ? "dc-lech" : ""}`}>
+                      {x.lechSo == null ? "" : so(x.lechSo)}
+                    </td>
+                    <td className={`dc-so ${(x.lechTct ?? 0) !== 0 ? "dc-lech" : ""}`}>
+                      {x.lechTct == null ? "" : so(x.lechTct)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      <div className="ntk-to">
+        <BangToKhai
+          tk={tkHien}
+          sua={(ma, v) => setTk((cu) => ({ ...cu, [ma]: v }))}
+        />
+      </div>
+    </Modal>
   );
 }

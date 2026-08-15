@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
 import { Modal, Spin, Empty, Typography } from "antd";
+import "./html-hoa-don.css";
 
 interface Props {
   mo: boolean;
   onDong: () => void;
   nhan?: string;
-  tai: () => Promise<string | null>;
+  /**
+   * Trả nội dung HTML kèm ĐƯỜNG DẪN ĐẦY ĐỦ của file trên đĩa (từ ổ đĩa tới tên
+   * file). Đường dẫn hiện thành nhãn dưới tiêu đề để kế toán mở đúng file đó trong
+   * Explorer khi cần đối chiếu — mỗi đơn vị-kỳ một thư mục khác nhau, chỉ có tên
+   * file thì phải tự mò.
+   */
+  tai: () => Promise<{ html: string | null; duongDan?: string | null }>;
 }
 
 // MỘT state cho cả ba trạng thái thay vì ba cờ rời: ba cờ luôn đẻ ra những tổ
@@ -14,10 +21,10 @@ interface Props {
 type TrangThai =
   | { loai: "trong" }
   | { loai: "dangTai" }
-  | { loai: "xong"; html: string | null }   // null = không có bản gốc kèm theo
+  | { loai: "xong"; html: string | null; duongDan?: string | null }
   | { loai: "loi"; thongBao: string };
 
-export default function XemHtmlHoaDon({ mo, onDong, nhan, tai }: Props) {
+export default function HtmlHoaDon({ mo, onDong, nhan, tai }: Props) {
   const [tt, setTt] = useState<TrangThai>({ loai: "trong" });
 
   // Tải lại mỗi lần mở. Giữ lượt bằng biến cục bộ: đóng/mở nhanh hai hóa đơn
@@ -31,7 +38,10 @@ export default function XemHtmlHoaDon({ mo, onDong, nhan, tai }: Props) {
       if (!conHieuLuc) return;
       setTt({ loai: "dangTai" });
       tai()
-        .then((s) => { if (conHieuLuc) setTt({ loai: "xong", html: s }); })
+        .then((r) => {
+          if (conHieuLuc)
+            setTt({ loai: "xong", html: r.html, duongDan: r.duongDan });
+        })
         .catch((e: unknown) => {
           if (!conHieuLuc) return;
           setTt({ loai: "loi",
@@ -44,10 +54,20 @@ export default function XemHtmlHoaDon({ mo, onDong, nhan, tai }: Props) {
   }, [mo]);
 
   const html = tt.loai === "xong" ? tt.html : null;
+  const duongDan = tt.loai === "xong" ? tt.duongDan : null;
 
   return (
     <Modal
-      title={<>Bản gốc hóa đơn{nhan ? <> — <b>{nhan}</b></> : null}</>}
+      title={
+        <div className="xhd-tieude">
+          <div>Bản gốc hóa đơn{nhan ? <> — <b>{nhan}</b></> : null}</div>
+          {/* Đường dẫn ĐẦY ĐỦ từ ổ đĩa. Cho chọn được bằng chuột (user-select) để
+              kế toán copy dán thẳng vào Explorer; title để xem trọn khi bị cắt. */}
+          {duongDan && (
+            <div className="xhd-duongdan" title={duongDan}>{duongDan}</div>
+          )}
+        </div>
+      }
       open={mo}
       onCancel={onDong}
       width="min(840px, 96vw)"

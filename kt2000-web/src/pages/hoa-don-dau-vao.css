@@ -168,6 +168,11 @@
   overflow-y: auto !important;
 }
 
+.phieu-nhap.phieu-nhap .luoi-hang .ant-table-header > table,
+.phieu-nhap.phieu-nhap .luoi-hang .ant-table-body > table {
+  min-width: 1286px;
+}
+
 .phieu-nhap.phieu-nhap .luoi-hang .ant-table-placeholder > td {
   border-bottom: none;
 }
@@ -207,6 +212,11 @@
 .phieu-nhap.phieu-nhap .luoi-hang .ant-input-number-input {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.phieu-nhap.phieu-nhap .luoi-hang .o-giua .ant-input,
+.phieu-nhap.phieu-nhap .luoi-hang .o-giua .ant-input-number-input {
+  text-align: center;
 }
 
 .phieu-nhap.phieu-nhap .nut-vang  { background: #ffe08a; border-color: #d4b106; }

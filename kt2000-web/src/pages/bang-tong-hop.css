@@ -1,0 +1,29 @@
+
+
+.bth-bang .ant-table-thead > tr > th,
+.bth-bang .ant-table-tbody > tr > td {
+  padding: 3px 10px;
+  font-size: 13px;
+}
+
+.bth-bang .ant-table-thead > tr > th {
+  background: #e8e8e8;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bth-bang .ant-table-tbody > tr > td {
+  font-variant-numeric: tabular-nums;
+}
+
+.bth-bang .bth-chinh > td {
+  color: #cf1322;
+  font-weight: 600;
+}
+
+.bth-bang .bth-chinh:hover > td {
+  background: #fff1f0;
+}
+
+.bth-ten { color: #595959; font-weight: 400; }
+.bth-ky { color: #8c8c8c; font-weight: 400; }

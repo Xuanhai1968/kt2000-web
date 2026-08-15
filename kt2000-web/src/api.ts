@@ -445,12 +445,26 @@ export const importOne = (p: ImportOnePayload) =>
 
 // Bản HTML gốc. Phải tải qua axios chứ không mở thẳng bằng thẻ <a>: link trực tiếp
 // không đi qua interceptor nên không có Bearer token, backend sẽ trả 401.
-export const getRawHtml = (
+// Đọc ĐƯỜNG DẪN file trên đĩa từ header X-Duong-Dan (server mã hóa URL vì header
+// HTTP chỉ nhận ASCII mà đường dẫn có dấu cách và dấu tiếng Việt).
+// Giải mã hỏng thì trả nguyên bản chứ KHÔNG ném lỗi — đây chỉ là thông tin THÊM,
+// không được phép làm hỏng việc xem hóa đơn.
+const docDuongDan = (h: unknown): string | null => {
+  const tho = (h as Record<string, string> | undefined)?.["x-duong-dan"];
+  if (!tho) return null;
+  try { return decodeURIComponent(tho); } catch { return tho; }
+};
+
+// Trả HTML (y như cũ) KÈM đường dẫn đầy đủ trên đĩa để hiện nhãn nguồn.
+export const getRawHtml = async (
   tenantId: string, nam: number, thang: number, huong: string, tenFile: string
-) => api.get<string>("/admin/raw-html", {
-  params: { tenantId, nam, thang, huong, tenFile },
-  responseType: "text",
-});
+) => {
+  const r = await api.get<string>("/admin/raw-html", {
+    params: { tenantId, nam, thang, huong, tenFile },
+    responseType: "text",
+  });
+  return { html: r.data, duongDan: docDuongDan(r.headers) };
+};
 
 export const getLeftoverFiles = (
   tenantIds: string[], nam: number, thangBd: number, thangKt: number, huong: HuongLay
@@ -820,9 +834,11 @@ export interface HoaDonThue {
   ghiCo: string | null;
   maCtNo: string | null;
   maCtCo: string | null;
+  ghiNoVat: string | null;
+  ghiCoVat: string | null;
   ghiChu: string | null;
   tthaiHd: string | null;
-  vat: number | null;            // %VAT của cả HĐ (HOA_DON.vat); null thì suy từ dòng
+  vat: number | null;
   tichChatHdLienquan: string | null;
   loaiHdLienquan: string | null;
   mauSoHdLienquan: string | null;
@@ -888,6 +904,44 @@ export interface BaoCaoThue {
 export const thueBaoCao = (thang?: number) =>
   api.get<BaoCaoThue>("/thue/bao-cao", { params: { thang } });
 
+// ===== RÀ SOÁT CHÉO NHIỀU ĐƠN VỊ (chỉ MDN_NB) =====
+// Một đơn vị một dòng. Nguồn từng cột xem ToKhaiRaSoatService bên server.
+export interface DongRaSoatToKhai {
+  stt: number;
+  maDonVi: string;
+  tenDonVi: string | null;
+  mst: string | null;          // để màn Tạo tờ khai điền sẵn ô [05]
+  khaiQuy: boolean;
+  kyKeKhai: string | null;    // '07/2026' hoặc 'Q3/2026'
+  tonDau: number | null;
+  tonDauXml: number | null;
+  v1: number; r1: number;
+  v2: number; r2: number;
+  v3: number; r3: number;
+  tonCuoi: number | null;
+  tonXml: number | null;
+  lech: number | null;
+  coToKhai: boolean;
+  mau01: string | null;       // mã tờ khai đã nộp ('842' = mẫu 01/GTGT)
+  soHdSo: number;             // số hóa đơn đếm trong SỔ cả kỳ
+  lechTonDau: boolean;
+  lechTonCuoi: boolean;
+}
+
+export interface BangRaSoatCheo {
+  nam: number;
+  thang: number;
+  dong: DongRaSoatToKhai[];
+}
+
+export const thueRaSoatCheo = (nam?: number, thang?: number) =>
+  api.get<BangRaSoatCheo>("/thue/ra-soat-cheo", { params: { nam, thang } });
+
+// Báo cáo thuế của MỘT đơn vị bất kỳ — chỉ MDN_NB gọi được. Khác thueBaoCao ở chỗ
+// đơn vị lấy từ tham số chứ không từ claim của phiên đăng nhập.
+export const thueBaoCaoDonVi = (ma: string, nam?: number, thang?: number) =>
+  api.get<BaoCaoThue>("/thue/bao-cao-don-vi", { params: { ma, nam, thang } });
+
 // ===== RÀ SOÁT DỮ LIỆU TRƯỚC KHI KHAI THUẾ =====
 // Đối chiếu hóa đơn trong FILE với hóa đơn trong SỔ. Server CHỈ ĐỌC, không ghi.
 
@@ -936,8 +990,11 @@ export interface KetQuaRaSoat {
 }
 
 // Client tự đọc file rồi gửi danh sách lên
-export const thueRaSoat = (thang: number | undefined, hoaDon: HoaDonFile[]) =>
-  api.post<KetQuaRaSoat>("/thue/ra-soat", { hoaDon }, { params: { thang } });
+// maDonVi: chỉ MDN_NB truyền, để rà soát sổ của ĐƠN VỊ KHÁC. Bỏ trống = đơn vị
+// đang đăng nhập. Server tra lại Master trước khi dùng (luật 9).
+export const thueRaSoat = (thang: number | undefined, hoaDon: HoaDonFile[],
+                           maDonVi?: string) =>
+  api.post<KetQuaRaSoat>("/thue/ra-soat", { hoaDon }, { params: { thang, maDonVi } });
 
 // ===================== TỜ KHAI 01/GTGT =====================
 // Xem docs/NB/SPEC-TO-KHAI-01-GTGT.md
@@ -997,26 +1054,205 @@ export interface ToKhaiGtgt {
   tenFileXml: string;
 }
 
+// ===== BC LẤY TỜ KHAI XML — danh sách tờ khai đã lưu =====
+export interface DongBcToKhai {
+  stt: number;
+  maDonVi: string;
+  tenDonVi: string | null;
+  nam: number;
+  thang: number;
+  kyKeKhai: string;
+  lanNop: number;
+  // null = kỳ đó chưa khai chỉ tiêu này → ô TRỐNG, không hiện 0
+  tonDau: number | null;
+  gtMuaVao: number | null;
+  vatVao: number | null;
+  vatKhauTru: number | null;
+  gtBanRa: number | null;
+  vatRa: number | null;
+  vatPhaiNop: number | null;
+  tonCuoi: number | null;
+  // Số gộp từ SỔ HÓA ĐƠN (khác số trên TỜ KHAI ở trên)
+  gtHdVao: number | null;
+  gtVatVao: number | null;
+  gtHdRa: number | null;
+  gtVatRa: number | null;
+  // Lệch = TỜ KHAI − SỔ. null = kỳ đó chưa khai chỉ tiêu tương ứng.
+  lechGtHdVao: number | null;
+  lechVatVao: number | null;
+  lechGtHdRa: number | null;
+  lechVatRa: number | null;
+  xmlName: string | null;
+  // Đường dẫn VẬT LÝ nơi file cổng trả về đã được ghi (kho ScanDocRoot1).
+  // null = kỳ đó chưa nạp file nào.
+  xmlPath: string | null;
+  daNop: boolean;            // đã có file cổng trả về = nộp xong
+  ngayLap: string | null;
+  nguoiLap: string | null;
+  ghiChu: string | null;
+}
+
+export const thueBcToKhai = (nam?: number, ma?: string, thang?: number) =>
+  api.get<{ nam: number; dong: DongBcToKhai[] }>(
+    "/thue/bc-to-khai", { params: { nam, ma, thang } });
+
+// Đường dẫn thư mục lưu tờ khai của đơn vị-kỳ — hiện cho người dùng kiểm trước khi
+// bấm Lưu. Server TỰ SUY theo khuôn kho, không bắt chọn tay.
+export const thueDuongDanToKhai = (ma: string, thang: number, nam?: number) =>
+  api.get<{ maDonVi: string; nam: number; thang: number;
+            duongDan: string; daCo: boolean }>(
+    "/thue/duong-dan-to-khai", { params: { ma, thang, nam } });
+
+// ===== DUYỆT KHO TỜ KHAI =====
+// Xem tận mắt cây thư mục trên máy chủ trước khi chốt chỗ lưu. CHỈ ĐỌC, server
+// nhốt trong Paths:ScanDocRoot1. Bỏ trống `duong` = đứng ở gốc kho.
+export interface MucKho {
+  ten: string;
+  duongDan: string;
+  laThuMuc: boolean;
+  kich: number;              // byte; thư mục = 0
+  suaLuc: string | null;
+}
+
+// duongDan = chỗ mở ĐƯỢC THẬT; duongDanXin = chỗ đã xin. Hai cái khác nhau khi
+// thư mục kỳ chưa tồn tại — thieuTang liệt kê các tầng còn thiếu ở giữa.
+export interface KetQuaDuyetKho {
+  duongDan: string;
+  cha: string | null;
+  laGoc: boolean;
+  muc: MucKho[];
+  duongDanXin: string;
+  thieuTang: string[];
+}
+
+export const thueDuyetKhoToKhai = (duong?: string) =>
+  api.get<KetQuaDuyetKho>(
+    "/thue/duyet-kho-to-khai", { params: { duong: duong || undefined } });
+
+// LƯU file TCT trả về vào kho (tự tạo thư mục kỳ) + nạp 26 chỉ tiêu vào TOKHAI.
+export const thueLuuToKhaiTct = (
+  file: File, ma: string, thang: number, nam?: number, ghiChu?: string,
+  // Thư mục kế toán tự duyệt và chọn. Bỏ trống thì server suy theo khuôn kho.
+  thuMuc?: string
+) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post<{
+    duongDan: string; daNapSoLieu: boolean; soLech: number;
+    lech: { ma: string; tuLap: number | null; tct: number | null; lech: number | null }[];
+    canhBao: string[]; message: string;
+  }>("/thue/luu-to-khai-tct", fd,
+     // ghiChu bỏ trống thì KHÔNG gửi tham số: server phân biệt "không gửi" (giữ
+     // nguyên ghi chú cũ) với chuỗi rỗng — gửi "" là xin xóa ghi chú đang có.
+     { params: { ma, thang, nam, ghiChu: ghiChu?.trim() || undefined,
+                 thuMuc: thuMuc?.trim() || undefined },
+       headers: { "Content-Type": "multipart/form-data" } });
+};
+
+// Nạp file XML/zip cổng TCT trả về sau khi nộp. Khớp theo MST + kỳ ghi TRONG file.
+export const thueNapXmlDaNop = (file: File) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post<{
+    soFile: number; soOk: number;
+    ketQua: { tenFile: string; ok: boolean; message: string }[];
+  }>("/thue/bc-to-khai/nap-xml", fd,
+     { headers: { "Content-Type": "multipart/form-data" } });
+};
+
+// ===== TỜ KHAI GÕ TAY (lưu thẳng vào bảng TOKHAI ở KT2000_Base) =====
+// Dùng cho đơn vị chưa có hóa đơn trong sổ nhưng vẫn phải nộp tờ khai.
+export interface ToKhaiTay {
+  maDonVi: string;
+  nam: number;
+  thang: number;
+  lanNop: number;            // 0 = chính thức, 1+ = bổ sung lần thứ mấy
+  maCct?: string | null;
+  tenCct?: string | null;
+  mst?: string | null;
+  tenNnt?: string | null;
+  diaChiNnt?: string | null;
+  ghiChu?: string | null;
+  ct21: number; ct22: number; ct23: number; ct24: number;
+  ct25: number; ct26: number; ct27: number; ct28: number;
+  ct29: number; ct30: number; ct31: number; ct32: number;
+  ct33: number; ct32a: number; ct34: number; ct35: number;
+  ct36: number; ct37: number; ct38: number; ct39: number;
+  ct40a: number; ct40b: number; ct40: number; ct41: number;
+  ct42: number; ct43: number;
+}
+
+// Trả 204 (data rỗng) nếu kỳ đó chưa lưu lần nào — KHÔNG phải lỗi.
+export const thueDocToKhaiTay = (ma: string, thang: number, nam?: number,
+                                 lanNop = 0) =>
+  api.get<ToKhaiTay | "">("/thue/to-khai-tay",
+                          { params: { ma, thang, nam, lanNop } });
+
+// ===== ĐỐI CHIẾU BA NGUỒN: tờ khai · sổ hóa đơn · bản TCT trả về =====
+export interface DongDoiChieu {
+  ma: string;                // '22', '32a', '43'…
+  ten: string;
+  toKhai: number | null;     // số trên tờ khai đã lưu
+  so: number | null;         // TÍNH LẠI từ sổ; null = chỉ tiêu này sổ không suy ra được
+  tct: number | null;        // bản TCT trả về; null = chưa nạp
+  lechSo: number | null;
+  lechTct: number | null;
+  coLech: boolean;
+}
+
+export const thueDoiChieu = (ma: string, thang: number, nam?: number, lanNop = 0) =>
+  api.get<{
+    maDonVi: string; nam: number; thang: number; lanNop: number;
+    coSo: boolean; coTct: boolean; soLech: number; dong: DongDoiChieu[];
+  }>("/thue/doi-chieu", { params: { ma, thang, nam, lanNop } });
+
+export const thueLuuToKhaiTay = (tk: ToKhaiTay) =>
+  api.post<{ message: string }>("/thue/to-khai-tay", tk);
+
 // Đọc bảng kê Excel của cổng TCT (HD_VAO/HD_RA…xlsx) thành danh sách hóa đơn.
 // Đọc ở SERVER vì frontend không có thư viện đọc Excel — backend đã sẵn ClosedXML.
-export const thueDocBangKe = (file: File) => {
+// maDonVi: chỉ MDN_NB truyền, để đọc bảng kê CỦA ĐƠN VỊ KHÁC. Bỏ trống = đơn vị
+// đang đăng nhập. Cần vì hàm đọc suy hướng hóa đơn bằng MST của đơn vị.
+export const thueDocBangKe = (file: File, maDonVi?: string) => {
   const fd = new FormData();
   fd.append("file", file);
   return api.post<{ soDong: number; hoaDon: HoaDonFile[] }>(
     "/thue/doc-bang-ke", fd,
-    { headers: { "Content-Type": "multipart/form-data" } });
+    { params: { maDonVi }, headers: { "Content-Type": "multipart/form-data" } });
 };
 
 // Lập tờ khai để XEM TRƯỚC. xmlKyTruoc = nội dung file XML tờ khai kỳ liền trước,
 // server lấy ct43 trong đó làm ct22 của kỳ này (BR-TK-02).
-export const thueLapToKhai = (thang: number, xmlKyTruoc?: string) =>
-  api.post<ToKhaiGtgt>("/thue/to-khai", { xmlKyTruoc }, { params: { thang } });
+export const thueLapToKhai = (thang: number, xmlKyTruoc?: string,
+                              maDonVi?: string) =>
+  api.post<ToKhaiGtgt>("/thue/to-khai", { xmlKyTruoc },
+                       { params: { thang, maDonVi } });
 
 // Tải file XML tờ khai để nạp vào HTKK. Trả về blob.
-export const thueToKhaiXml = (thang: number, xmlKyTruoc?: string) =>
+export const thueToKhaiXml = (thang: number, xmlKyTruoc?: string,
+                              maDonVi?: string) =>
   api.post<Blob>("/thue/to-khai/xml", { xmlKyTruoc },
-                 { params: { thang }, responseType: "blob" });
+                 { params: { thang, maDonVi }, responseType: "blob" });
 
-export const thueHtmlHoaDon = (maHd: string) =>
-  api.get<string>(`/thue/hoa-don/${encodeURIComponent(maHd)}/html`,
-                  { responseType: "text" });
+// maDonVi: chỉ MDN_NB truyền, để xem ảnh hóa đơn của ĐƠN VỊ KHÁC từ màn Tờ khai.
+// Bỏ trống = đơn vị đang đăng nhập.
+// Xử lý hóa đơn THAY THẾ / ĐIỀU CHỈNH của một kỳ (BR-TK-06).
+// Cùng kỳ: engine tờ khai tự loại HĐ gốc, KHÔNG ghi gì vào sổ.
+// Khác kỳ: ghi chú vào HOA_DON.ghi_chu để kế toán sửa tay khi có dữ liệu kỳ gốc.
+export const thueXuLyTtDc = (thang: number, maDonVi?: string) =>
+  api.post<{
+    soCungKy: number; soKhacKy: number; chiTiet: string[]; message: string;
+  }>("/thue/xu-ly-tt-dc", null, { params: { thang, maDonVi } });
+
+// XÓA HẲN một hóa đơn khỏi sổ, kèm dòng hàng. KHÔNG đảo ngược được — muốn lấy lại
+// phải chạy nạp HĐĐT lần nữa. Server ghi ActivityLog để truy vết.
+export const thueXoaHoaDon = (maHd: string, maDonVi?: string) =>
+  api.delete<{ message: string }>(
+    `/thue/hoa-don/${encodeURIComponent(maHd)}`, { params: { maDonVi } });
+
+export const thueHtmlHoaDon = async (maHd: string, maDonVi?: string) => {
+  const r = await api.get<string>(
+    `/thue/hoa-don/${encodeURIComponent(maHd)}/html`,
+    { params: { maDonVi }, responseType: "text" });
+  return { html: r.data, duongDan: docDuongDan(r.headers) };
+};

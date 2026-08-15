@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -677,6 +677,9 @@ namespace KT2000.Api.Controllers
                 var path = _import.DuongDanFileRaw(t, nam, thang, huong, tenFile, ".html");
                 if (!System.IO.File.Exists(path))
                     return NotFound(new { message = "Hóa đơn này không có bản HTML kèm theo" });
+                Response.Headers["X-Duong-Dan"] = Uri.EscapeDataString(path);
+                Response.Headers["Access-Control-Expose-Headers"] = "X-Duong-Dan";
+
                 return PhysicalFile(path, "text/html; charset=utf-8");
             }
             catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }

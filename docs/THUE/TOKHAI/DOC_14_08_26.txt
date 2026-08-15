@@ -1,0 +1,41 @@
+Chức năng : Hoàn thiện phần lập tờ khai thuế cho 1 đơn vị
+Yêu cầu : 
+1 - Lấy dữ liệu từ TCT (Đã OK)
+2 - Đưa dữ liệu vào IN_VALUE và IN_VALUE_LINE đồng thời với việc đưa vào HOA_DON và HOA_DON_LINE
+3 - Hiệu chỉnh dữ liệu trong Database (Xóa các HĐ ngân hàng, xem còn HĐ nào bị lỗi thêm vào nốt bằng tay 
+4 - Tạo dữ liệu cho tờ khai (Đã có phần "Báo cáo thuê" cần hoàn thiện thêm )
+5 - Chưa có table ghi dữ liệu tờ khai đã nộp (tồn đầu thuế VAT khấu trừ đồng thời là tồn cuối của tờ khai kỳ trước)
+
+Lấy dữ liệu DAT_VIET_THANH làm mẫu vì đơn vị này nhiều loại thuế suất
+
+
+- Cho phép xóa các HĐ 
+- Chưa đọc Excel tổng hợp của TCT vào IN_VALUE và IN_VALUE_LINE (Ví dụ các file Excel trong E:\DEV_DATA_HDDT\DAT_VIET_THANH\NAM2026\T7_2026_DAT_VIET_THANH\raw\RA hoặc \VAO)
+- Chưa có table lưu trữ tờ khai đã nộp làm cơ sở cho kỳ sau 
+- Chưa cho phép xem ảnh HĐ trong báo cáo thuế
+- Sử lý các loại thuế khác nhau, loại không chịu thuế và thuế không phần trăm 
+- Form Báo cáo thuế cho phép ghi nhờ tháng tờ khai
+- Form Báo cáo thuế phải kết nối với table ghi tờ khai XML để lấy tồn đầu của tab "Bảng tổng hợp"
+- Form Báo cáo thuế tab "Bảng tổng hợp" số liệu đang sai (Đất việt thành tháng 7 Tổng DT và VAT chưa bằng các thuế suất cộng lại)
+
+Phát triển               <NutCho nhan="Xử lý HĐ TT-ĐC-XB" lop="nut-vang" />
+-khi bấm vào đây lần 1 nếu chưa tích chọn các hóa đơn thay thế, điều chỉnh trong tháng đó thì tự tích check bõ ở cột in
+- baam lần 2( = bấm 1 lần nếu đã tích rồi hoặc tích thiếu thì bấm tích đủ) cử lý các vấn đề sau:
++ trường hợp 1 nếu điều chỉnh và thay thế cùng trogng 1 tháng: dòng điều chỉnh  của hóa đơn điều chỉnh đưa về hóa đơn bị diều chỉnh( là hóa đơn ban đầu) và hóa đơn điều chinhr  viết vào dòng ghi chứ trong hóa đơn line là: Hóa đơn đã điều chỉnh. Thay thế là hủy hóa đơn gốc thay bằng hóa đơn mới(Thay thế = lấy hóa đơn mới làm căn cứ thay cho hóa đơn cũ.)
++ trường hợp 2:nếu điều chỉnh và thay thế khác tháng/ quý( hiện tại tôi chưa đủ  dữ liệu các thắng trước) cũng nên ghi vào cột ghi chú trong hóa đơn : có sự thay đổi tháng kê khai/ chưa kê khai lại/ Đã xử lý khác tháng. Làm sao để kê khai đúng ( tại sao cần ghi chú ,đê rtieejn sau này đủ dữ liêu jthif tôi làm lại kê khai của tháng  thay đổi đó) cần xác định rõ làm thay thế điều chỉnh. thay thế cho hóa đơn nào, ngày tháng, để có cơ sở tìm lại cho dễ)
+
+
+
+
+TRƯỜNG HỢP 1: CÙNG KỲ
+→ Áp dụng ngay
+→ HĐ gốc bị loại khỏi dữ liệu tính tờ khai
+→ HĐ thay thế được sử dụng
+→ Không sửa DB HĐ gốc
+
+TRƯỜNG HỢP 2: KHÁC KỲ
+→ Không cố truy ngược/tạo lại kỳ cũ
+→ Kiểm tra dữ liệu kỳ hiện tại
+→ Sửa dữ liệu để tờ khai hiện tại khớp
+→ Ghi NOTE
+→ Để kế toán sau này kiểm tra và sửa thủ công

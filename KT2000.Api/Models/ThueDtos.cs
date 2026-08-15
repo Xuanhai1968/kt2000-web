@@ -1,4 +1,4 @@
-namespace KT2000.Api.Models
+﻿namespace KT2000.Api.Models
 {
     // ============================ SỔ THUẾ: HÓA ĐƠN GTGT ============================
     // DTO của sổ THUẾ (bảng HOA_DON / HOA_DON_LINE trong DB đơn vị-năm), dùng cho màn
@@ -72,6 +72,12 @@ namespace KT2000.Api.Models
         public string? GhiCo { get; set; }
         public string? MaCtNo { get; set; }
         public string? MaCtCo { get; set; }
+        // Định khoản riêng phần THUẾ (cột ghi_no_vat / ghi_co_vat). Là SỐ HIỆU TÀI
+        // KHOẢN — RA ghi Nợ 131 / Có 3331, VAO ghi Nợ 1331 / Có 331 — nên kiểu string
+        // như GhiNo/GhiCo, dù cột dưới DB khai DECIMAL(18,2) theo lối VFP cũ.
+        // Đơn vị chưa định khoản VAT thì null (TUAN_NGA_2025 trống toàn bộ).
+        public string? GhiNoVat { get; set; }
+        public string? GhiCoVat { get; set; }
         public string? GhiChu { get; set; }
         public string? TthaiHd { get; set; }
         // %VAT của cả hóa đơn — cột vat nằm trên HEADER. Có đơn vị để trống ở đây mà
@@ -292,5 +298,178 @@ namespace KT2000.Api.Models
         // Có cảnh báo mức CHAN thì KHÔNG cho xuất XML
         public bool ChoXuat => !CanhBao.Any(x => x.Muc == "CHAN");
         public string TenFileXml { get; set; } = "";
+    }
+
+    // ============ TỜ KHAI GÕ TAY (lưu thẳng vào bảng TOKHAI) ============
+    //
+    // Dùng cho đơn vị CHƯA CÓ HÓA ĐƠN trong sổ nhưng vẫn phải nộp tờ khai — kế toán
+    // gõ tay chỉ tiêu rồi lưu, để kỳ sau tự lấy được ct22 (BR-TK-02).
+    //
+    // Khác ToKhaiGtgtDto ở chỗ đây là dữ liệu NGƯỜI DÙNG NHẬP, không kèm cảnh báo hay
+    // nhóm thuế suất — những thứ đó chỉ có nghĩa khi tờ khai được TÍNH từ sổ.
+    public class ToKhaiTayDto
+    {
+        public string MaDonVi { get; set; } = "";
+        public int Nam { get; set; }
+        public int Thang { get; set; }
+        /// <summary>0 = tờ khai chính thức, 1+ = bổ sung lần thứ mấy.</summary>
+        public int LanNop { get; set; }
+
+        public string? MaCct { get; set; }
+        public string? TenCct { get; set; }
+        public string? Mst { get; set; }
+        public string? TenNnt { get; set; }
+        public string? DiaChiNnt { get; set; }
+        public string? GhiChu { get; set; }
+
+        public decimal Ct21 { get; set; }
+        public decimal Ct22 { get; set; }
+        public decimal Ct23 { get; set; }
+        public decimal Ct24 { get; set; }
+        public decimal Ct25 { get; set; }
+        public decimal Ct26 { get; set; }
+        public decimal Ct27 { get; set; }
+        public decimal Ct28 { get; set; }
+        public decimal Ct29 { get; set; }
+        public decimal Ct30 { get; set; }
+        public decimal Ct31 { get; set; }
+        public decimal Ct32 { get; set; }
+        public decimal Ct33 { get; set; }
+        public decimal Ct32a { get; set; }
+        public decimal Ct34 { get; set; }
+        public decimal Ct35 { get; set; }
+        public decimal Ct36 { get; set; }
+        public decimal Ct37 { get; set; }
+        public decimal Ct38 { get; set; }
+        public decimal Ct39 { get; set; }
+        public decimal Ct40a { get; set; }
+        public decimal Ct40b { get; set; }
+        public decimal Ct40 { get; set; }
+        public decimal Ct41 { get; set; }
+        public decimal Ct42 { get; set; }
+        public decimal Ct43 { get; set; }
+
+        /// <summary>
+        /// Bộ 26 tham số SQL của các chỉ tiêu. Gom một chỗ để câu MERGE khỏi liệt kê
+        /// 26 dòng AddWithValue — thêm/bớt chỉ tiêu chỉ phải sửa đúng đây.
+        /// </summary>
+        public IEnumerable<(string Ten, object Gia)> ChiTieu() => new (string, object)[]
+        {
+            ("@ct21", Ct21), ("@ct22", Ct22), ("@ct23", Ct23), ("@ct24", Ct24),
+            ("@ct25", Ct25), ("@ct26", Ct26), ("@ct27", Ct27), ("@ct28", Ct28),
+            ("@ct29", Ct29), ("@ct30", Ct30), ("@ct31", Ct31), ("@ct32", Ct32),
+            ("@ct33", Ct33), ("@ct32a", Ct32a), ("@ct34", Ct34), ("@ct35", Ct35),
+            ("@ct36", Ct36), ("@ct37", Ct37), ("@ct38", Ct38), ("@ct39", Ct39),
+            ("@ct40a", Ct40a), ("@ct40b", Ct40b), ("@ct40", Ct40), ("@ct41", Ct41),
+            ("@ct42", Ct42), ("@ct43", Ct43),
+        };
+    }
+
+    // ============ MỘT DÒNG TRÊN LƯỚI "BC LẤY TỜ KHAI XML" ============
+    // Danh sách tờ khai ĐÃ LƯU của cả năm — mỗi kỳ của mỗi đơn vị một dòng.
+    // Tiền để nullable: kỳ chưa khai chỉ tiêu nào thì ô đó TRỐNG, không hiện 0.
+    public class DongBcToKhaiDto
+    {
+        public int Stt { get; set; }
+        public string MaDonVi { get; set; } = "";
+        public string? TenDonVi { get; set; }
+        public int Nam { get; set; }
+        public int Thang { get; set; }
+        public string KyKeKhai { get; set; } = "";
+        public int LanNop { get; set; }          // 0 = chính thức, 1+ = bổ sung
+
+        public decimal? TonDau { get; set; }      // ct22
+        public decimal? GtMuaVao { get; set; }    // ct23
+        public decimal? VatVao { get; set; }      // ct24
+        public decimal? VatKhauTru { get; set; }  // ct25
+        public decimal? GtBanRa { get; set; }     // ct34
+        public decimal? VatRa { get; set; }       // ct35
+        public decimal? VatPhaiNop { get; set; }  // ct40
+        public decimal? TonCuoi { get; set; }     // ct43
+
+        // ----- Số gộp từ SỔ HÓA ĐƠN (khác với số trên TỜ KHAI ở trên) -----
+        // null = đơn vị chưa mở sổ năm đó, hoặc kỳ đó không có hóa đơn nào.
+        public decimal? GtHdVao { get; set; }
+        public decimal? GtVatVao { get; set; }
+        public decimal? GtHdRa { get; set; }
+        public decimal? GtVatRa { get; set; }
+
+        // ----- Lệch = TỜ KHAI − SỔ -----
+        // Đây là cột đáng nhìn nhất của lưới: khác 0 nghĩa là tờ khai khai thiếu
+        // hoặc thừa so với hóa đơn thật trong sổ.
+        // null = kỳ đó CHƯA khai chỉ tiêu tương ứng, không phải "lệch bằng 0".
+        public decimal? LechGtHdVao { get; set; }
+        public decimal? LechVatVao { get; set; }
+        public decimal? LechGtHdRa { get; set; }
+        public decimal? LechVatRa { get; set; }
+
+        public string? XmlName { get; set; }
+        /// <summary>
+        /// Đường dẫn VẬT LÝ của file cổng trả về, đúng chỗ đã ghi trong kho
+        /// ScanDocRoot1. Hiện lên lưới để kế toán mở thẳng thư mục mà kiểm.
+        /// </summary>
+        /// <remarks>
+        /// Lấy từ cột xml_path chứ KHÔNG ghép lại từ (mã, năm, tháng): file cũ do
+        /// công cụ Python nạp có thể nằm ở cây phẳng, ghép lại là ra đường dẫn
+        /// không tồn tại — mà đường dẫn sai còn tệ hơn đường dẫn trống.
+        /// </remarks>
+        public string? XmlPath { get; set; }
+        /// <summary>Đã có file XML cổng trả về = đã nộp xong, không chỉ lập trong máy.</summary>
+        public bool DaNop { get; set; }
+        public DateTime? NgayLap { get; set; }
+        public string? NguoiLap { get; set; }
+        public string? GhiChu { get; set; }
+    }
+
+    // ============ MỘT DÒNG TRÊN LƯỚI RÀ SOÁT CHÉO CỦA MDN_NB ============
+    // Một đơn vị một dòng. Nguồn của từng cột xem đầu BangToKhaiService (ToKhai.cs).
+    //
+    // Tiền để decimal? (nullable) chứ không 0: đơn vị CHƯA lập tờ khai kỳ đó thì ô
+    // phải TRỐNG. Điền 0 là nói dối — "đã khai, số bằng 0" khác hẳn "chưa khai".
+    public class DongRaSoatToKhaiDto
+    {
+        public int Stt { get; set; }
+        public string MaDonVi { get; set; } = "";
+        public string? TenDonVi { get; set; }
+        /// <summary>MST — để màn tạo tờ khai điền sẵn ô [05], khỏi gọi lại Master.</summary>
+        public string? Mst { get; set; }
+
+        // Kiểu kỳ của đơn vị (Tenants.KhaiQuy). Quyết định lưới đếm 1 tháng hay 3
+        // tháng, và tra tờ khai ở tháng nào — xem ThangToKhai/ThangDau trong ToKhai.cs.
+        public bool KhaiQuy { get; set; }
+        public string? KyKeKhai { get; set; }     // '07/2026' hoặc 'Q3/2026' — hiện lên lưới
+
+        public decimal? TonDau { get; set; }      // ct22 kỳ này
+        public decimal? TonDauXml { get; set; }   // ct43 kỳ TRƯỚC — phải bằng TonDau
+
+        // Số hóa đơn vào/ra của 3 tháng trong kỳ (đơn vị khai quý dùng đủ cả ba)
+        public int V1 { get; set; }
+        public int R1 { get; set; }
+        public int V2 { get; set; }
+        public int R2 { get; set; }
+        public int V3 { get; set; }
+        public int R3 { get; set; }
+
+        public decimal? TonCuoi { get; set; }     // ct43 kỳ này, từ DB
+        public decimal? TonXml { get; set; }      // ct43 từ XML cổng trả — CHƯA CÓ
+        public decimal? Lech { get; set; }        // TonCuoi − TonXml, null khi chưa có XML
+
+        public bool CoToKhai { get; set; }        // kỳ này đã lập tờ khai chưa
+
+        // Cột "Mẫu 01" trên lưới: mã tờ khai đã nộp ('842' = mẫu 01/GTGT). Chưa có tờ
+        // khai thì null — bản VFP cũ hiện -1, ở đây để trống cho thống nhất với các
+        // cột tiền (xem chú thích đầu lớp).
+        public string? Mau01 { get; set; }
+
+        // Số hóa đơn đếm được trong SỔ của cả kỳ. Cột "Lệch SLHĐ" so số này với số
+        // hóa đơn ghi trên tờ khai — CHƯA đối chiếu được vì tờ khai 01/GTGT không khai
+        // số lượng hóa đơn, phải lấy từ bảng kê. Để dành cho lượt sau.
+        public int SoHdSo { get; set; }
+
+        // Hai chỗ cần bôi đỏ trên lưới, tính ở server để FE và mọi báo cáo khác
+        // dùng chung MỘT định nghĩa "thế nào là lệch".
+        public bool LechTonDau => TonDau != null && TonDauXml != null
+                               && TonDau != TonDauXml;
+        public bool LechTonCuoi => Lech != null && Lech != 0;
     }
 }
