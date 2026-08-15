@@ -22,18 +22,22 @@ namespace KT2000.Api.Controllers
         private readonly RaSoatService _raSoat;
         private readonly ToKhaiService _toKhai;
         private readonly BangToKhaiService _bangToKhai;
+        private readonly GhiChuHdLienQuan _ghiChuLq;
         private readonly IConfiguration _config;
         private readonly AppDbContext _db;
         private readonly ImportService _import;
         public ThueController(ThueService thue, RaSoatService raSoat, ToKhaiService toKhai,
                               IConfiguration config, AppDbContext db, ImportService import,
-                              BangToKhaiService bangToKhai
+                              BangToKhaiService bangToKhai,
+                              
+                               GhiChuHdLienQuan ghiChuLq
                               )
         {
             _thue = thue;
             _raSoat = raSoat;
             _toKhai = toKhai;
             _bangToKhai = bangToKhai;
+            _ghiChuLq = ghiChuLq;
             _config = config;
             _db = db;
             _import = import;
@@ -455,6 +459,101 @@ namespace KT2000.Api.Controllers
             { return NotFound(new { message = ex.Message }); }
             catch (Exception ex)
             { return BadRequest(new { message = $"Không đọc được thư mục: {ex.Message}" }); }
+        }
+
+        /// <summary>
+        /// POST api/thue/hd-lien-quan-khac-ky?thang=7&amp;nam=2026&amp;chiXem=true
+        /// — quét hóa đơn THAY THẾ/ĐIỀU CHỈNH có gốc thuộc kỳ KHÁC, ghi chú vào
+        /// HOA_DON.ghi_chu rồi xuất một file .txt tổng hợp ra Paths:JobsRoot.
+        /// </summary>
+        /// <remarks>
+        /// Bỏ trống `ma` = quét MỌI đơn vị khai thuế. Truyền `ma` = chỉ đơn vị đó.
+        ///
+        /// chiXem = true (mặc định): CHỈ LIỆT KÊ và xuất file, KHÔNG ghi vào sổ. Đây
+        /// là bước cho kế toán nhìn thấy phạm vi ảnh hưởng trước khi quyết định — cùng
+        /// tinh thần "bấm lần 1 không ghi gì" của spec §10.4.
+        /// chiXem = false: mới thật sự ghi ghi_chu.
+        ///
+        /// POST chứ không GET dù chiXem=true cũng chỉ đọc: cùng một địa chỉ mà GET thì
+        /// ghi, POST thì không, là thứ rất dễ gọi nhầm. Một địa chỉ một phương thức.
+        ///
+        /// Gate claim 'internal': đây là thao tác quét NHIỀU đơn vị và CÓ GHI vào sổ
+        /// của họ, chỉ quản trị nội bộ mới được (luật 2 + luật 9).
+        /// </remarks>
+        [HttpPost("hd-lien-quan-khac-ky")]
+        public async Task<IActionResult> HdLienQuanKhacKy(
+            [FromQuery] int thang, [FromQuery] int? nam,
+            [FromQuery] string? ma, [FromQuery] bool chiXem = true)
+        {
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+                return StatusCode(403, new
+                { message = "Chỉ đơn vị quản trị nội bộ mới chạy được chức năng này" });
+
+            if (thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
+
+            var year = nam is >= 2000 and <= 2100 ? nam.Value : FiscalYear();
+
+            // Một đơn vị hay tất cả. Truyền mã lạ thì DonViThaoTac trả null → 404,
+            // không cho lần sang database ngoài danh sách (luật 9).
+            List<string> dsMa;
+            if (!string.IsNullOrWhiteSpace(ma))
+            {
+                var code = await DonViThaoTac(ma);
+                if (code == null)
+                    return NotFound(new { message = $"Không có đơn vị khai thuế mã {ma}" });
+                dsMa = new List<string> { code };
+            }
+            else
+            {
+                dsMa = await _db.Tenants.AsNoTracking()
+                    .Where(t => t.TenantType != "internal" && t.TenantType != "noibo"
+                             && t.IsActive)
+                    .OrderBy(t => t.Code)
+                    .Select(t => t.Code)
+                    .ToListAsync(HttpContext.RequestAborted);
+            }
+
+            var kq = await _ghiChuLq.QuetNhieuDonVi(
+                dsMa, year, thang, CurrentUser(), chiXem, HttpContext.RequestAborted);
+
+            // Chỉ ghi nhật ký khi THẬT SỰ ghi vào sổ — xem trước thì không có gì để vết.
+            if (!chiXem && kq.SoDaGhi > 0)
+            {
+                try
+                {
+                    // TenantId để NULL: việc này quét nhiều đơn vị cùng lúc nên không
+                    // gắn được vào một đơn vị nào. Chi tiết nằm ở cột Detail.
+                    await _db.Database.ExecuteSqlRawAsync(
+                        @"INSERT INTO ActivityLog (UserName, TenantId, Nam, Action, Detail)
+                          VALUES ({0}, {1}, {2}, {3}, {4})",
+                        CurrentUser(), DBNull.Value, year, "GHI_CHU_HD_LIEN_QUAN",
+                        $"Kỳ {thang:00}/{year} — đánh dấu {kq.SoDaGhi} hóa đơn "
+                      + $"trên {kq.SoDonVi} đơn vị");
+                }
+                catch { /* mất một dòng nhật ký còn hơn báo hỏng việc đã xong */ }
+            }
+
+            return Ok(new
+            {
+                nam = year,
+                thang,
+                chiXem,
+                soDonVi = kq.SoDonVi,
+                soHoaDon = kq.SoHoaDon,
+                soDaGhi = kq.SoDaGhi,
+                soBoQua = kq.SoBoQua,
+                duongDanFile = kq.DuongDanFile,
+                loi = kq.Loi,
+                dong = kq.Dong,
+                message = kq.SoHoaDon == 0
+                    ? $"Kỳ {thang:00}/{year}: không có hóa đơn thay thế/điều chỉnh khác kỳ nào"
+                    : chiXem
+                        ? $"Tìm thấy {kq.SoHoaDon} hóa đơn trên {kq.SoDonVi} đơn vị — "
+                          + "mới chỉ XEM TRƯỚC, chưa ghi vào sổ"
+                        : $"Đã đánh dấu {kq.SoDaGhi} hóa đơn"
+                          + (kq.SoBoQua > 0 ? $", bỏ qua {kq.SoBoQua} (đã đánh dấu từ trước)" : ""),
+            });
         }
 
         /// <summary>

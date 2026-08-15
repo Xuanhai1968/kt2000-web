@@ -1,4 +1,4 @@
--- 019_base_tokhai.sql — bảng TOKHAI ở KT2000_Base + index (thang, huong) cho HOA_DON
+-- 022_base_tokhai.sql — bảng TOKHAI ở KT2000_Base + index (thang, huong) cho HOA_DON
 --
 -- ============================================================================
 -- SCRIPT NÀY CHẠY TRÊN HAI LOẠI DATABASE KHÁC NHAU — ĐỌC KỸ TRƯỚC KHI CHẠY:
@@ -15,8 +15,13 @@
 -- Cả hai phần đều có rào IF nên chạy lại nhiều lần vô hại, chạy nhầm chỗ cũng không
 -- hỏng gì — chỉ đơn giản là không làm gì.
 --
--- (Gộp từ 020_hoa_don_index_thang.sql — 14/08; và 022_tokhai_ct_xml.sql — 15/08.
---  Giữ nguyên nội dung, chỉ thêm phần rào để các phần không giẫm chân nhau.)
+-- (Gộp từ hai script nháp 14–15/08 — bảng index HOA_DON và cột ct*_xml. Giữ nguyên
+--  nội dung, chỉ thêm phần rào để các phần không giẫm chân nhau.)
+--
+-- ĐÁNH SỐ LẠI 019 → 022 (15/08): nhánh main đã có 019_hoa_don_dinh_khoan_kieu.sql,
+-- 020_hoa_don_line_pt_vat_int.sql và 021_in_value_bu_bang.sql lên trước. Hai script
+-- khác nhau cùng số là vi phạm luật 6 của repo và làm hỏng thứ tự chạy trên máy khác,
+-- nên script này lùi xuống số còn trống kế tiếp.
 -- ============================================================================
 --
 --
