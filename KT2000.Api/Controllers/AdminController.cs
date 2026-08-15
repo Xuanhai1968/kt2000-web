@@ -489,7 +489,9 @@ namespace KT2000.Api.Controllers
         // ========== BƯỚC 1: tài khoản cổng TCT + chạy bộ tải ==========
 
         // GET api/admin/tct-credential?tenantId= — CHỈ cho biết đã khai mật khẩu chưa.
-        // Không có và sẽ không bao giờ có API đọc ngược mật khẩu ra.
+        // Muốn xem nội dung thì gọi tct-credential/xem. Tách hai đường vì màn hình tự gọi
+        // đường này mỗi lần đổi đơn vị — gộp vào là nhật ký ngập chữ "đã xem mật khẩu"
+        // trong khi chẳng ai xem cả, mà vết nào cũng như nhau thì hết là vết.
         [HttpGet("tct-credential")]
         public async Task<IActionResult> TrangThaiMatKhauTct(Guid tenantId)
         {
@@ -505,6 +507,44 @@ namespace KT2000.Api.Controllers
                 }).FirstOrDefaultAsync();
             if (t == null) return BadRequest(new { message = "Không tìm thấy đơn vị" });
             return Ok(t);
+        }
+
+        // GET api/admin/tct-credential/xem?tenantId= — đọc ra mật khẩu cổng TCT.
+        //
+        // Trước đây cố ý KHÔNG có đường này. Trường bỏ (15/08): người trực phải mở cổng
+        // thuế bằng tay khi bộ tải hỏng, mà mật khẩu do người khác nhập thì không ai biết
+        // — hỏi vòng quanh hoặc đặt lại một cái mới, cái nào cũng tệ hơn là cho xem.
+        //
+        // Gate ở mức IsInternal() chứ KHÔNG thêm IsAdminUser: đúng chỗ này là điều Trường
+        // muốn — "ai cũng xem được" trong phạm vi người dùng nội bộ. Đổi mật khẩu thì vẫn
+        // phải là quản trị viên (xem LuuMatKhauTct bên dưới).
+        [HttpGet("tct-credential/xem")]
+        public async Task<IActionResult> XemMatKhauTct(Guid tenantId)
+        {
+            if (!IsInternal())
+                return StatusCode(403, new { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+
+            var t = await _db.Tenants.Where(x => x.Id == tenantId)
+                .Select(x => new { x.Code, x.MatKhauHddt }).FirstOrDefaultAsync();
+            if (t == null) return BadRequest(new { message = "Không tìm thấy đơn vị" });
+            if (string.IsNullOrEmpty(t.MatKhauHddt))
+                return BadRequest(new { message = $"Đơn vị {t.Code} chưa khai mật khẩu cổng TCT" });
+
+            // GiaiMa đọc được cả bản lưu thẳng lẫn bản mã hóa đời trước — đơn vị nào chưa
+            // ai đổi mật khẩu từ 15/08 thì vẫn đang giữ bản mã hóa.
+            string mk = _tct.GiaiMa(t.MatKhauHddt);
+            if (mk.Length == 0)
+                return BadRequest(new
+                {
+                    message = $"Mật khẩu của {t.Code} đang ở bản mã hóa cũ mà không giải mã "
+                            + "được — khóa dp-keys của máy này đã đổi. Nhập đè mật khẩu mới "
+                            + "là xong, từ nay lưu thẳng nên không vướng khóa nữa.",
+                });
+
+            // Luật #7. Xem mật khẩu cổng thuế của khách hàng là việc phải có vết, kể cả
+            // khi hoàn toàn hợp lệ — nội dung mật khẩu thì tuyệt đối không ghi vào đây.
+            await GhiNhatKy("XEM_MK_TCT", $"Xem mật khẩu cổng TCT của đơn vị {t.Code}", tenantId);
+            return Ok(new { code = t.Code, matKhau = mk });
         }
 
         // PUT api/admin/tct-credential — khai/đổi mật khẩu (nhập đè, không sửa từng phần)

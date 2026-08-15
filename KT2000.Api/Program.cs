@@ -23,6 +23,7 @@ builder.Services.AddSingleton<TenantDbResolver>();
 builder.Services.AddSingleton<VaCauTrucService>();
 builder.Services.AddScoped<AdminService>();
 builder.Services.AddScoped<DanhMucService>();  // DM_KH / DM_HANG trong KT2000_Base
+builder.Services.AddScoped<DoiChieuService>();  // bản gốc TCT: IN_VALUE / IN_VALUE_LINE
 builder.Services.AddScoped<ImportService>();
 builder.Services.AddScoped<NoiBoService>();   // phần nội bộ: danh mục + phiếu xuất/nhập
 builder.Services.AddScoped<ThueService>();    // sổ thuế: đọc HOA_DON của đơn vị đang đăng nhập

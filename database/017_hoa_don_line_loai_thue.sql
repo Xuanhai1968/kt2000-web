@@ -39,8 +39,15 @@ IF OBJECT_ID('SCHEMA_VERSION') IS NULL
 GO
 
 -- Chỉ đóng dấu phiên bản khi ĐÚNG là database đơn vị-năm và cột đã vào thật.
+--
+-- SỐ 12 chứ không phải 10 (sửa 14/08): bản đầu đặt 10 vì script 015 trong thư mục ghi
+-- version 9. Nhưng database THẬT đã có sẵn 10 và 11 từ trước — HOA_SANG_2026 mang
+-- {6,7,8,9,10,11} từ ngày 10–12/08. Đặt trùng thì Ver=10 mang hai nghĩa khác nhau tùy
+-- database, không tra ngược được bản vá nào đã chạy.
+-- Đặt số mới thì phải TRA DATABASE THẬT: SELECT Ver FROM SCHEMA_VERSION.
+-- Số này phải KHỚP với mảng CAC_BAN_VA trong VaCauTrucService.cs.
 IF OBJECT_ID('HOA_DON_LINE') IS NOT NULL
    AND COL_LENGTH('HOA_DON_LINE', 'loai_thue') IS NOT NULL
-   AND NOT EXISTS (SELECT 1 FROM SCHEMA_VERSION WHERE Ver = 10)
-    INSERT INTO SCHEMA_VERSION (Ver) VALUES (10);
+   AND NOT EXISTS (SELECT 1 FROM SCHEMA_VERSION WHERE Ver = 12)
+    INSERT INTO SCHEMA_VERSION (Ver) VALUES (12);
 GO
