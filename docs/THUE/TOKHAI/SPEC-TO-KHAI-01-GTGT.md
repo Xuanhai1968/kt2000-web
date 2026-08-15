@@ -520,6 +520,130 @@ Hai điểm của khung hiện hành đã kiểm chứng và ÁP DỤNG NGAY:
 
 ---
 
+## 10bis. ĐỐI CHIẾU ENGINE VỚI 4 TỜ KHAI THẬT (15/08/2026)
+
+> Trạng thái: **ĐÃ CHẠY ENGINE THẬT** — không phải chạy tay SQL. Bốn lỗi lộ ra, đã sửa.
+
+Chạy `POST api/thue/to-khai?thang=7` rồi so từng chỉ tiêu với XML cổng TCT trả về của
+**NHAT_TUAN, DAT_VIET_THANH, THAI_TUAN, HUY_THANH** (kỳ 07/2026).
+
+### 10bis.1. BR-TK-18 — Gom nhóm theo `pt_vat` CỦA DÒNG, không theo `h.vat`
+
+> **BR-TK-18.** Phân nhóm thuế suất phải gom theo `HOA_DON_LINE.pt_vat`, rồi **phân bổ
+> chiết khấu** của từng hóa đơn về các nhóm theo tỷ trọng tiền hàng. **KHÔNG** gom theo
+> `HOA_DON.vat` (header).
+
+`h.vat` là **%VAT bình quân** của cả hóa đơn. Hóa đơn trộn nhiều thuế suất thì bình quân
+ra con số **không tồn tại trong luật thuế**.
+
+Đo thật DAT_VIET_THANH T7 — dòng hàng chỉ có 0/5/8%, nhưng header cho:
+
+| `h.vat` | Số HĐ | Ghi chú |
+|---|---:|---|
+| 5% | 95 | thật |
+| **6%** | **3** | ← bình quân của HĐ trộn 5% và 8% |
+| **7%** | **1** | ← bình quân |
+| 8% | 12 | thật |
+
+Hậu quả: tờ khai mọc ra hai nhóm 6% và 7%, `ct32` tụt từ 47.642.515 xuống **20.365.798**,
+và BR-TK-03 **CHẶN HẲN** việc xuất tờ khai. §3.3 vốn đã ghi đúng cách làm — code làm sai.
+
+### 10bis.2. BR-TK-19 — Phân biệt THAY THẾ ('1') với ĐIỀU CHỈNH ('2')
+
+> **BR-TK-19.** Nhánh loại hóa đơn gốc **chỉ nhận `tich_chat_hd_lienquan = '1'`**
+> (thay thế). Mã `'2'` là điều chỉnh — hóa đơn gốc **VẪN CÒN HIỆU LỰC**, chỉ cộng thêm
+> phần chênh, loại gốc là mất luôn doanh thu của nó.
+
+Đúng như §10.3 đã phân biệt, nhưng code cũ gộp cả hai. Đo thật HUY_THANH T7: HĐ 1374
+điều chỉnh (`tc='2'`) trỏ về gốc 1334 ⇒ engine loại luôn 1334, **mất 368.406.608 đ**
+doanh thu, trong khi bảng kê cổng **vẫn tính** nó (368.406.585 / VAT 36.840.659).
+
+Giá trị `tich_chat_hd_lienquan` đo được: `'1'` thay thế, `'2'` điều chỉnh, `'5'` chưa rõ
+(8 hóa đơn THAI_TUAN, đều không có `ngay_lienquan`). **Không đoán mã '5'.**
+
+### 10bis.3. BR-TK-17 — `ct9` phụ lục là chênh lệch THUẾ
+
+> **BR-TK-17.** `ct9 = thueGTGTDuocGiam − thueGTGTHHDV` (hiệu **THUẾ**),
+> KHÔNG phải hiệu giá trị hàng.
+
+Bản cũ lấy hiệu giá trị hàng nên sai **cả dấu lẫn độ lớn**. Kiểm trên ba tờ khai thật:
+
+| Đơn vị | Thuế được giảm | Thuế mua vào | ct9 tính ra | ct9 thật |
+|---|---:|---:|---:|---:|
+| NHAT_TUAN | 59.595.118 | 268.421.207 | −208.826.089 | −208.826.089 ✔ |
+| DAT_VIET_THANH | 952.846 | 165.876.147 | −164.923.301 | −164.923.301 ✔ |
+| HUY_THANH | 6.853.487 | 55.979.377 | −49.125.890 | −49.125.890 ✔ |
+
+### 10bis.4. BR-TK-06b / 06c — Hóa đơn thay thế khác kỳ và "đã bị thay thế"
+
+> **BR-TK-06b.** Hóa đơn thay thế/điều chỉnh mà **gốc thuộc kỳ khác** thì KHÔNG kê vào
+> kỳ này (so theo `ngay_lienquan`). Bỏ trống `ngay_lienquan` thì **giữ lại** — không
+> biết gốc ở kỳ nào thì thà kê thừa còn hơn nuốt mất một hóa đơn có thật.
+>
+> **BR-TK-06c.** Hóa đơn mang trạng thái `'…bị thay thế…'` thì loại, **kể cả khi không
+> tìm thấy bản thay thế trong kỳ** (bản thay thế có thể ở kỳ khác hoặc chưa nạp).
+
+Đo thật DAT_VIET_THANH: bản cũ kê thừa **2,04 tỷ** doanh thu và **163 triệu** VAT.
+
+**Bằng chứng chốt** — bảng kê Excel của cổng ghi các hóa đơn bị thay thế với **tiền = 0**,
+tức cổng đã tự vô hiệu sẵn. Và tổng bảng kê **khớp XML tờ khai tuyệt đối** ở cả 4 đơn vị:
+
+| Đơn vị | Bảng kê cổng (tiền / thuế) | XML tờ khai |
+|---|---|---|
+| NHAT_TUAN | 2.994.779.892 / 239.882.875 | **giống hệt** |
+| DAT_VIET_THANH | 2.881.395.112 / 65.949.024 | **giống hệt** |
+| HUY_THANH | 34.178.614.820 / 3.411.008.007 | **giống hệt** |
+
+⇒ **Bảng kê Excel của cổng là nguồn đối chiếu chuẩn nhất**, hơn cả sổ.
+
+### 10bis.5. KT-09 — Cảnh báo trạng thái lạ
+
+BR-TK-06c lọc bằng **CHỮ** trong `tthai_hd` — văn bản tự do của cổng, đổi cách viết là
+phép lọc câm lặng bỏ sót (đúng rủi ro §10.2 đã cảnh báo). Bù lại bằng cảnh báo `KT-09`:
+gặp trạng thái chứa "thay thế"/"điều chỉnh" mà không khớp 4 mẫu đã biết thì **nói ra**.
+
+Bốn mẫu đã biết: `Hóa đơn mới`, `Hóa đơn thay thế`, `Hóa đơn đã bị thay thế`,
+`Hóa đơn điều chỉnh`. KT-09 bắt được ngay `Hóa đơn đã bị điều chỉnh` ở THAI_TUAN
+và HUY_THANH — mẫu thứ năm chưa từng gặp.
+
+### 10bis.6. Kết quả sau khi sửa
+
+| Đơn vị | Khớp TUYỆT ĐỐI | Lệch còn lại | Nguyên nhân |
+|---|---|---:|---|
+| NHAT_TUAN | ct22, ct24, ct25 | DT 8.472.414 | thiếu HĐ 1466, 1518 trong sổ |
+| DAT_VIET_THANH | ct22, ct26 | ct32 lệch 200 đ | làm tròn |
+| THAI_TUAN | ct22, **ct33, ct35** | ct32 lệch 15 đ | làm tròn |
+| HUY_THANH | ct22, ct24, ct25 | DT 206.182.968 | thiếu HĐ 1494 trong sổ |
+
+**`ct22` khớp tuyệt đối cả 4 đơn vị** ⇒ BR-TK-02 (nối kỳ) chạy đúng.
+
+Mọi khoản lệch còn lại đều **truy được nguyên nhân** và đều là **dữ liệu sổ thiếu**,
+không phải công thức sai. Ngoài ra DAT_VIET_THANH thiếu HĐ 1233 và hàng nhập khẩu
+`ct23a/ct24a` (sổ **không có cột** đánh dấu hàng nhập khẩu — xem §7 điểm cần chốt).
+
+### 10bis.7. BR-TK-20 — Ghi chú hóa đơn liên quan khác kỳ
+
+Hiện thực §10.4 trường hợp 2: `POST api/thue/hd-lien-quan-khac-ky?thang=&nam=&ma=&chiXem=`
+
+> **BR-TK-20.** Hóa đơn thay thế/điều chỉnh khác kỳ được **đánh dấu vào
+> `HOA_DON.ghi_chu`** với tiền tố `[TK-LQ]`, đủ **bốn thông tin** của §10.4, kèm một
+> file `.txt` tổng hợp xuất ra `Paths:JobsRoot\TO_KHAI_LIEN_QUAN\`.
+
+- `chiXem = true` (mặc định): **chỉ liệt kê và xuất file, KHÔNG ghi** — đúng tinh thần
+  "bấm lần 1 không ghi gì" của §10.4.
+- **NỐI THÊM** vào `ghi_chu`, không đè (luật 5). Kiểm độ dài trước khi nối, tràn 1000
+  ký tự thì bỏ qua và báo lỗi — chứ không để SQL cắt cụt âm thầm.
+- Tiền tố `[TK-LQ]` là dấu hiệu để lượt sau **bỏ qua**: chạy lại nhiều lần không nhân
+  đôi ghi chú (§10.6). Đã kiểm thật: lần 2 trả "bỏ qua 1", `ghi_chu` vẫn đúng 1 dấu hiệu.
+- Gói **transaction**, ghi **ActivityLog** `GHI_CHU_HD_LIEN_QUAN` (luật 7).
+- Một đơn vị hỏng (chưa mở sổ năm đó) thì ghi vào phần Lỗi của file rồi **chạy tiếp** —
+  dừng cả mẻ vì một đơn vị là phải chạy lại từ đầu.
+
+Đo thật kỳ 07/2026 trên 13 đơn vị: chỉ **NHAT_TUAN HĐ 1136** khác kỳ (gốc 25/06).
+THAI_TUAN và HUY_THANH có hóa đơn liên quan nhưng đều **cùng kỳ** nên không vào file.
+
+---
+
 ## 11. MÀN "BC LẤY TỜ KHAI XML" — LƯU FILE CỔNG TCT TRẢ VỀ
 
 > Trạng thái: **ĐÃ HIỆN THỰC 15/08/2026** — build PASS, chưa chạy thử trên kho thật.
@@ -719,27 +843,47 @@ công cụ Python nạp có thể nằm ở cây phẳng, ghép lại là ra đ�
 | Endpoint duyệt / lưu | `ThueController.DuyetKhoToKhai` / `LuuToKhaiTct` |
 | Panel + cửa sổ duyệt + cột mới | `kt2000-web/src/pages/BcToKhaiXml.tsx` |
 
+Bổ sung 15/08 (xem §10bis.7):
+
+| Phần | Chỗ code |
+|---|---|
+| Ghi chú HĐ liên quan khác kỳ + file .txt | `GhiChuHdLienQuan` (trong `ToKhai.cs`) |
+| Endpoint | `ThueController.HdLienQuanKhacKy` |
+
 **Chưa làm / còn nợ:**
 
-1. **Chưa chạy thử trên kho thật** — mới build PASS. Cần thử một kỳ **đã có** thư mục
-   và một kỳ **chưa có** (nhánh `thieuTang`).
-2. **Nút "Danh sách đơn vị"** của form VFP gốc — chưa rõ bản VFP mở ra cái gì
+1. **Nút "Danh sách đơn vị"** của form VFP gốc — chưa rõ bản VFP mở ra cái gì
    (popup chọn đơn vị? báo cáo riêng?). **Chờ chốt**, không đoán.
-3. **`lan_nop` cố định = 0** khi lưu: tờ khai **bổ sung** (BS 1, BS 2…) chưa có đường
+2. **`lan_nop` cố định = 0** khi lưu: tờ khai **bổ sung** (BS 1, BS 2…) chưa có đường
    nạp qua màn này. Lưới đã hiện được cột Lần khai nhưng luồng lưu chưa cho chọn.
-4. Mở Explorer thật trên máy trạm — xem §11.6, chỉ làm khi có yêu cầu rõ.
+3. Mở Explorer thật trên máy trạm — xem §11.6, chỉ làm khi có yêu cầu rõ.
+4. **Chưa có nút trên giao diện** cho `hd-lien-quan-khac-ky` — mới gọi được bằng API.
+5. **Mã `tich_chat_hd_lienquan = '5'`** (8 hóa đơn THAI_TUAN T7) chưa rõ nghĩa —
+   chờ gặp một ca có `ngay_lienquan` rồi mới suy được, **không đoán**.
+6. **Ba hóa đơn thiếu trong sổ** (NHAT_TUAN 1466/1518, HUY_THANH 1494) và **hàng nhập
+   khẩu** `ct23a/ct24a` — việc dữ liệu, không phải code. Xem §10bis.6.
 
 ### 11.11. Ràng buộc đã tuân (đối chiếu CLAUDE.md)
 
 | Luật | Cách tuân |
 |---|---|
-| 1 — Resolver-only | `_resolver.GetBaseConnection()`, không ghép tên DB |
-| 2 — Claim gates | `tenant_type = internal` cho cả hai endpoint |
+| 1 — Resolver-only | `_resolver.GetBaseConnection()` / `GetTenantConnection()`, không ghép tên DB |
+| 2 — Claim gates | `tenant_type = internal` cho cả ba endpoint (duyệt kho, lưu, ghi chú) |
 | 3 — SQL tham số hóa | Toàn bộ `@ma`, `@nam`, `@thang`, `@ghiChu`… |
-| 4 — Không path cứng | Mọi đường dẫn sinh từ `Paths:ScanDocRoot1` |
-| 5 — Không ghi đè `ghi_chu` | BR-TK-14 (`ISNULL`) |
-| 7 — ActivityLog | `LUU_TO_KHAI_TCT` ghi mỗi lượt lưu |
+| 4 — Không path cứng | Đường dẫn sinh từ `Paths:ScanDocRoot1` và `Paths:JobsRoot` |
+| 5 — Không ghi đè `ghi_chu` | BR-TK-14 (`ISNULL`) và BR-TK-20 (nối thêm, kiểm độ dài) |
+| 7 — ActivityLog | `LUU_TO_KHAI_TCT`, `GHI_CHU_HD_LIEN_QUAN` |
 | 8 — Comment BR | Mã `BR-TK-xx` tại chỗ hiện thực |
 
+> **Về `GhiChuHdLienQuan` nằm trong `ToKhai.cs`:** cả file mang luật "KHÔNG GHI", lớp
+> này là **ngoại lệ duy nhất** và đã ghi rõ ở đầu file. Nó chỉ đụng đúng MỘT cột
+> `HOA_DON.ghi_chu`, không chạm cột TIỀN hay ĐỊNH KHOẢN nào. Thêm lớp CÓ GHI thứ hai
+> vào đây thì **phải tách file** — nửa chỉ-đọc nửa có-ghi là rào chắn mất tác dụng.
+
 Bảng `TOKHAI` **không đổi schema** — `xml_name`, `xml_path`, `ghi_chu` đã có sẵn từ
-script `019_base_tokhai.sql`, nên **không cần script mới** (luật 6).
+script `022_base_tokhai.sql`, nên **không cần script mới** (luật 6).
+
+> Script này từng mang số **019**, đã đánh số lại thành **022** (15/08) vì nhánh main
+> có `019_hoa_don_dinh_khoan_kieu.sql`, `020_hoa_don_line_pt_vat_int.sql` và
+> `021_in_value_bu_bang.sql` lên trước. Hai script khác nhau cùng một số là vi phạm
+> luật 6 và làm hỏng thứ tự chạy trên máy khác.
