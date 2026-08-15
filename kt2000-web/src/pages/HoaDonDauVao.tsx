@@ -15,7 +15,7 @@ import type {
 } from "../api";
 import { useAuth } from "../AuthContext";
 import DanhSachHoaDon from "./DanhSachHoaDon";
-import XemHtmlHoaDon from "./XemHtmlHoaDon";
+import HtmlHoaDon from "./HtmlHoaDon";
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef } from "ag-grid-community";
 import { mauDonVi, damDonVi } from "../theme/donViColors";
@@ -288,16 +288,17 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
   const [htmlHd, setHtmlHd] = useState<HoaDonConLai | null>(null);
   const xemHtml = (hd: HoaDonConLai) => setHtmlHd(hd);
 
-  const taiHtmlRaw = async (): Promise<string | null> => {
-    if (!htmlHd || !modalDonVi) return null;
+  const taiHtmlRaw = async () => {
+    if (!htmlHd || !modalDonVi) return { html: null, duongDan: null };
     try {
-      const r = await getRawHtml(modalDonVi.id, namLamViec,
-                                 htmlHd.thang, htmlHd.huong, htmlHd.tenFile);
-      return r.data;
+      // Trả nguyên object { html, duongDan } — html vẫn đọc y như cũ, duongDan chỉ
+      // để hiện nhãn nguồn dưới tiêu đề.
+      return await getRawHtml(modalDonVi.id, namLamViec,
+                              htmlHd.thang, htmlHd.huong, htmlHd.tenFile);
     } catch (e: unknown) {
       const st = (e as { response?: { status?: number } })?.response?.status;
       // 404 = không có bản gốc kèm theo: modal hiện khung rỗng có giải thích
-      if (st === 404) return null;
+      if (st === 404) return { html: null, duongDan: null };
       throw new Error(loiApi(e, "Không mở được bản HTML"), { cause: e });
     }
   };
@@ -866,7 +867,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
         </div>
       </Modal>
 
-      <XemHtmlHoaDon
+      <HtmlHoaDon
         mo={htmlHd != null}
         onDong={() => setHtmlHd(null)}
         nhan={htmlHd ? `${htmlHd.khHd}/${htmlHd.soHd}` : undefined}
@@ -1152,6 +1153,8 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
       nguoiGiaoDich: "", soPtc: "", maTv: "", tenTv: "",
       tienHang: 0, tienVat: 0, tienCk: 0, tongTien: 0, soDongHang: 0,
       ghiNo: "", ghiCo: "", maCtNo: "", maCtCo: "",
+      // HĐ nhập tay chưa định khoản phần thuế — để null, ImportService/kế toán gán sau.
+      ghiNoVat: null, ghiCoVat: null,
       ghiChu: "", tthaiHd: null, vat: null,
       tichChatHdLienquan: null, loaiHdLienquan: null, mauSoHdLienquan: null,
       khhdLienquan: null, sohdLienquan: null, ngayLienquan: null,
@@ -1178,16 +1181,15 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
   const [htmlMaHd, setHtmlMaHd] = useState<string | null>(null);
   const xemHtml = (maHd: string) => { if (maHd) setHtmlMaHd(maHd); };
 
-  const taiHtmlHoaDon = async (): Promise<string | null> => {
-    if (!htmlMaHd) return null;
+  const taiHtmlHoaDon = async () => {
+    if (!htmlMaHd) return { html: null, duongDan: null };
     try {
-      const r = await thueHtmlHoaDon(htmlMaHd);
-      return r.data;
+      return await thueHtmlHoaDon(htmlMaHd);
     } catch (e: unknown) {
       const st = (e as { response?: { status?: number } })?.response?.status;
       // 404 = hóa đơn không kèm bản gốc: chuyện thường, để modal hiện khung rỗng
       // với lời giải thích chứ không phải lỗi đỏ.
-      if (st === 404) return null;
+      if (st === 404) return { html: null, duongDan: null };
       throw new Error(loiApi(e, "Không mở được bản HTML"), { cause: e });
     }
   };
@@ -1546,7 +1548,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             rowKey="sttLine" size="small" pagination={false}
             dataSource={hd?.lines ?? []}
             loading={tai}
-            scroll={{ x: 1228, y: 210 }}
+            scroll={{ x: 1286, y: 210 }}
             locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
                                         description="Hóa đơn không có dòng hàng" /> }}
             onRow={(m: HoaDonLine) => ({
@@ -1555,13 +1557,15 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
               style: { cursor: "pointer" },
             })}
             columns={[
-              { title: "STT", dataIndex: "sttLine", width: 46, fixed: "left" },
+              { title: "STT", dataIndex: "sttLine", width: 36, fixed: "left" },
               { title: "Tên hàng hoá dịch vụ", dataIndex: "tenHang", width: 230,
                 render: (v: string, m: HoaDonLine) => (
                   <Input size="small" value={v} title={v}
                          onChange={(e) => suaDongHang(m.sttLine, { tenHang: e.target.value })} />
                 ) },
+              // o-giua: căn giữa chữ TRONG ô nhập, xem hoa-don-dau-vao.css.
               { title: "ĐVT", dataIndex: "dvt", width: 54, align: "center",
+                onCell: () => ({ className: "o-giua" }),
                 render: (v: string | null, m: HoaDonLine) => (
                   <Input size="small" value={v ?? ""}
                          onChange={(e) => suaDongHang(m.sttLine, { dvt: e.target.value })} />
@@ -1583,16 +1587,19 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                // Để trống thì lấy định khoản chung của hóa đơn (dk.ghiNo/ghiCo) làm
               // giá trị gợi ý — gõ vào là ghi đè riêng cho dòng này.
               { title: "Nợ", dataIndex: "ghiNo", width: 56, align: "center",
+                onCell: () => ({ className: "o-giua" }),
                 render: (v: string | null, m: HoaDonLine) => (
                   <Input size="small" value={v ?? ""} placeholder={dk.ghiNo}
                          onChange={(e) => suaDongHang(m.sttLine, { ghiNo: e.target.value })} />
                 ) },
               { title: "Có", dataIndex: "ghiCo", width: 56, align: "center",
+                onCell: () => ({ className: "o-giua" }),
                 render: (v: string | null, m: HoaDonLine) => (
                   <Input size="small" value={v ?? ""} placeholder={dk.ghiCo}
                          onChange={(e) => suaDongHang(m.sttLine, { ghiCo: e.target.value })} />
-                ) },  
-              { title: "% VAT", dataIndex: "ptVat", width: 56, align: "right",
+                ) },
+              { title: "% VAT", dataIndex: "ptVat", width: 56, align: "center",
+                onCell: () => ({ className: "o-giua" }),
                 onHeaderCell: () => ({ style: { textAlign: "center" as const } }),
                 render: (v: number, m: HoaDonLine) => (
                   <InputNumber size="small" controls={false}
@@ -1725,7 +1732,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
         dangTai={tai}
       />
 
-      <XemHtmlHoaDon
+      <HtmlHoaDon
         mo={htmlMaHd != null}
         onDong={() => setHtmlMaHd(null)}
         nhan={htmlMaHd ?? undefined}

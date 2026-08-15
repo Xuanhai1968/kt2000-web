@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using KT2000.Api.Data;
@@ -21,14 +21,17 @@ namespace KT2000.Api.Controllers
         private readonly ThueService _thue;
         private readonly RaSoatService _raSoat;
         private readonly ToKhaiService _toKhai;
+        private readonly BangToKhaiService _bangToKhai;
         private readonly IConfiguration _config;
         private readonly AppDbContext _db;
         public ThueController(ThueService thue, RaSoatService raSoat, ToKhaiService toKhai,
+                              BangToKhaiService bangToKhai,
                               IConfiguration config, AppDbContext db)
         {
             _thue = thue;
             _raSoat = raSoat;
             _toKhai = toKhai;
+            _bangToKhai = bangToKhai;
             _config = config;
             _db = db;
         }
@@ -142,18 +145,646 @@ namespace KT2000.Api.Controllers
             return Ok(await _thue.BaoCaoThue(TenantCode(), FiscalYear(), ky));
         }
 
+        /// <summary>
+        /// GET api/thue/ra-soat-cheo?nam=2026&amp;thang=7 — lưới rà soát MỌI đơn vị
+        /// của một kỳ, mỗi đơn vị một dòng. Bàn làm việc của kế toán dịch vụ (MDN_NB).
+        /// </summary>
+        /// <remarks>
+        /// KHÔNG gọi ChanNeuLaNoiBo: endpoint này DÀNH RIÊNG cho tenant nội bộ quản trị.
+        /// Ngược lại phải chặn tenant THƯỜNG — đơn vị khách hàng không có quyền nhìn số
+        /// khấu trừ của các đơn vị khác (ranh giới hai sổ, luật 9).
+        ///
+        /// Danh sách đơn vị lấy từ Master ngay tại đây rồi truyền xuống service: service
+        /// không được biết bảng Tenants (xem chú thích tham số dsDonVi).
+        ///
+        /// CHỈ ĐƠN VỊ KHAI THUẾ. Loại cả hai loại tenant không có tờ khai:
+        ///   'internal' — MDN_NB, chính là đơn vị đang đăng nhập, không khai thuế
+        ///   'noibo'    — TUAN_NGA_NB, USA_MEVA_NB: sổ ĐƠN HÀNG/GIAO HÀNG của khách,
+        ///                không phải sổ thuế (ranh giới hai sổ, luật 9). Sổ thuế của
+        ///                họ nằm ở đơn vị mẹ TUAN_NGA / USA_MEVA đã có dòng riêng rồi
+        ///                — để lại thì lưới có hai dòng cho cùng một doanh nghiệp.
+        /// </remarks>
+        [HttpGet("ra-soat-cheo")]
+        public async Task<IActionResult> RaSoatCheo([FromQuery] int? nam, [FromQuery] int? thang)
+        {
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+                return StatusCode(403, new
+                { message = "Chỉ đơn vị quản trị nội bộ mới xem được bảng rà soát chéo" });
+
+            var ky = thang is >= 1 and <= 12 ? thang.Value : DateTime.Today.Month;
+            var year = nam is >= 2000 and <= 2100 ? nam.Value : FiscalYear();
+
+            // Sắp theo MÃ để thứ tự dòng cố định giữa các lần mở — kế toán nhớ vị trí
+            // đơn vị trên lưới, thứ tự nhảy mỗi lần tải là rất khó dùng.
+            // KhaiQuy quyết định nhịp kỳ của từng đơn vị (đo thật 14/08: 7 đơn vị khai
+            // quý, 11 khai tháng) — service cần biết để tra tờ khai đúng kỳ và đếm
+            // đúng số tháng.
+            // AsNoTracking: chỉ ĐỌC để dựng lưới, không sửa gì — bật change tracking
+            // chỉ tổ bắt EF giữ snapshot của từng dòng cho một truy vấn dùng một lần.
+            var donVi = await _db.Tenants
+                .AsNoTracking()
+                .Where(t => t.TenantType != "internal" && t.TenantType != "noibo"
+                         && t.IsActive)
+                .OrderBy(t => t.Code)
+                .Select(t => new { t.Code, t.Name, t.KhaiQuy, t.TaxCode })
+                .ToListAsync(HttpContext.RequestAborted);
+
+            var ds = await _bangToKhai.Lap(
+                donVi.Select(x => new BangToKhaiService.DonViKy
+                      { Ma = x.Code, KhaiQuy = x.KhaiQuy }).ToList(),
+                year, ky, HttpContext.RequestAborted);
+
+            // Tên đơn vị ghép ở đây chứ không truy vấn trong service: service chỉ làm
+            // việc với số, tên là thứ của Master.
+            var hoSo = donVi.ToDictionary(x => x.Code, x => x, StringComparer.OrdinalIgnoreCase);
+            foreach (var d in ds)
+                if (hoSo.TryGetValue(d.MaDonVi, out var t))
+                { d.TenDonVi = t.Name; d.Mst = t.TaxCode; }
+
+            return Ok(new { nam = year, thang = ky, dong = ds });
+        }
+
+        /// <summary>
+        /// GET api/thue/bc-to-khai?nam=2026 — danh sách tờ khai ĐÃ LƯU của cả năm,
+        /// lưới của màn "BC lấy tờ khai XML". Lọc thêm theo đơn vị/tháng nếu cần.
+        /// </summary>
+        [HttpGet("bc-to-khai")]
+        public async Task<IActionResult> BcToKhai(
+            [FromQuery] int? nam, [FromQuery] string? ma, [FromQuery] int? thang)
+        {
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+                return StatusCode(403, new
+                { message = "Chỉ đơn vị quản trị nội bộ mới xem được danh sách tờ khai" });
+
+            var year = nam is >= 2000 and <= 2100 ? nam.Value : FiscalYear();
+            var ds = await _bangToKhai.DsToKhai(year, ma, thang, HttpContext.RequestAborted);
+
+            // Tên đơn vị ghép ở đây — service chỉ làm việc với số, tên là của Master.
+            var ten = await _db.Tenants.AsNoTracking()
+                .Select(t => new { t.Code, t.Name })
+                .ToDictionaryAsync(x => x.Code, x => x.Name,
+                                   StringComparer.OrdinalIgnoreCase,
+                                   HttpContext.RequestAborted);
+            foreach (var d in ds)
+                if (ten.TryGetValue(d.MaDonVi, out var n)) d.TenDonVi = n;
+
+            return Ok(new { nam = year, dong = ds });
+        }
+
+        /// <summary>
+        /// POST api/thue/bc-to-khai/nap-xml — nạp file XML (hoặc .zip chứa XML) do
+        /// CỔNG TCT trả về sau khi nộp, gắn vào tờ khai đã lưu.
+        /// </summary>
+        /// <remarks>
+        /// Đọc ct43 trong file để làm cột "Tồn XML" — số ĐÃ NỘP THẬT. Lệch với ct43
+        /// mình tự lập nghĩa là bản nộp khác bản lập, phải soi lại.
+        ///
+        /// Nhận .zip vì cổng trả về gói nhiều file một lượt; mở ra lấy MỌI file .xml
+        /// bên trong rồi khớp từng cái theo MST + kỳ ghi TRONG file, không dựa vào
+        /// tên file (tên do cổng đặt, mỗi đợt một kiểu).
+        /// </remarks>
+        [HttpPost("bc-to-khai/nap-xml")]
+        [RequestSizeLimit(50 * 1024 * 1024)]
+        public async Task<IActionResult> NapXmlDaNop(IFormFile? file)
+        {
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+                return StatusCode(403, new
+                { message = "Chỉ đơn vị quản trị nội bộ mới nạp được tờ khai đã nộp" });
+
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "Chưa chọn file" });
+
+            var duoi = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (duoi is not (".xml" or ".zip"))
+                return BadRequest(new { message = "Chỉ nhận file .xml hoặc .zip" });
+
+            // MST → mã đơn vị, để biết file thuộc về ai. Tra một lần cho cả gói.
+            var theoMst = await _db.Tenants.AsNoTracking()
+                .Where(t => t.TaxCode != null && t.IsActive
+                         && t.TenantType != "internal" && t.TenantType != "noibo")
+                .Select(t => new { t.Code, t.TaxCode })
+                .ToListAsync(HttpContext.RequestAborted);
+
+            var ketQua = new List<object>();
+            var nguoi = CurrentUser();
+
+            async Task XuLyMot(string tenFile, string noiDung)
+            {
+                var (mst, thang, nam, ct43) = ToKhaiService.DocTomTatXmlToKhai(noiDung);
+                var ct = ToKhaiService.DocChiTieuXml(noiDung);
+                if (mst == null || thang == null || nam == null)
+                {
+                    ketQua.Add(new { tenFile, ok = false,
+                                     message = "Không đọc được MST/kỳ trong file" });
+                    return;
+                }
+
+                // So phần SỐ của MST: cổng có thể khai chi nhánh dạng "0100686174-634".
+                var goc = RaSoatService.GocMst(mst);
+                var dv = theoMst.FirstOrDefault(
+                    x => RaSoatService.GocMst(x.TaxCode) == goc);
+                if (dv == null)
+                {
+                    ketQua.Add(new { tenFile, ok = false,
+                                     message = $"Không có đơn vị nào mang MST {mst}" });
+                    return;
+                }
+
+                var gan = await _bangToKhai.GanXmlDaNop(
+                    dv.Code, nam.Value, thang.Value, 0, tenFile, null, ct, nguoi,
+                    HttpContext.RequestAborted);
+
+                if (!gan)
+                {
+                    ketQua.Add(new { tenFile, ok = false,
+                        message = $"{dv.Code} chưa có tờ khai kỳ {thang:00}/{nam} "
+                                + "trong hệ thống — hãy tạo tờ khai trước" });
+                    return;
+                }
+
+                // Đối chiếu NGAY sau khi nạp: báo luôn lệch ở chỉ tiêu nào thay vì
+                // bắt người dùng mở màn khác ra dò.
+                var lech = await _bangToKhai.SoSanhVoiTct(
+                    dv.Code, nam.Value, thang.Value, 0, HttpContext.RequestAborted);
+
+                ketQua.Add(new { tenFile, ok = true,
+                    message = lech.Count == 0
+                        ? $"{dv.Code} kỳ {thang:00}/{nam} — KHỚP hoàn toàn "
+                          + $"(chỉ tiêu 43: {ct43:N0})"
+                        : $"{dv.Code} kỳ {thang:00}/{nam} — LỆCH {lech.Count} chỉ tiêu: "
+                          + string.Join(", ", lech.Take(6).Select(
+                              x => $"[{x.Ma}] tự lập {x.TuLap:N0} ≠ TCT {x.Tct:N0}")),
+                    lech });
+            }
+
+            try
+            {
+                if (duoi == ".xml")
+                {
+                    using var doc = new StreamReader(file.OpenReadStream());
+                    await XuLyMot(file.FileName, await doc.ReadToEndAsync());
+                }
+                else
+                {
+                    using var luong = file.OpenReadStream();
+                    using var zip = new System.IO.Compression.ZipArchive(
+                        luong, System.IO.Compression.ZipArchiveMode.Read);
+                    foreach (var muc in zip.Entries)
+                    {
+                        if (!muc.Name.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        using var d = new StreamReader(muc.Open());
+                        await XuLyMot(muc.Name, await d.ReadToEndAsync());
+                    }
+                    if (ketQua.Count == 0)
+                        return BadRequest(new { message = "File .zip không có file .xml nào" });
+                }
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = $"Không đọc được file: {ex.Message}" });
+            }
+
+            var soOk = ketQua.Count(x => (bool)x.GetType().GetProperty("ok")!.GetValue(x)!);
+            return Ok(new { soFile = ketQua.Count, soOk, ketQua });
+        }
+
+        /// <summary>
+        /// GET api/thue/duong-dan-to-khai?ma=USA_MEVA&amp;thang=6 — đường dẫn thư mục
+        /// lưu tờ khai của đơn vị-kỳ, để màn hình hiện cho người dùng kiểm trước.
+        /// </summary>
+        [HttpGet("duong-dan-to-khai")]
+        public async Task<IActionResult> DuongDanToKhai(
+            [FromQuery] string? ma, [FromQuery] int thang, [FromQuery] int? nam)
+        {
+            var code = await DonViThaoTac(ma);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {ma}" });
+            if (thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
+
+            var year = nam is >= 2000 and <= 2100 ? nam.Value : FiscalYear();
+            var duong = _bangToKhai.ThuMucToKhai(code, year, thang);
+            if (duong == null)
+                return BadRequest(new
+                { message = "Chưa khai Paths:ScanDocRoot1 trong cấu hình máy chủ" });
+
+            return Ok(new
+            {
+                maDonVi = code, nam = year, thang,
+                duongDan = duong,
+                daCo = Directory.Exists(duong),   // chưa có thì lúc lưu sẽ tự tạo
+            });
+        }
+
+        /// <summary>
+        /// GET api/thue/duyet-kho-to-khai?duong=… — duyệt cây thư mục KHO TỜ KHAI để
+        /// người dùng nhìn tận mắt trước khi chốt chỗ lưu.
+        /// </summary>
+        /// <remarks>
+        /// CHỈ ĐỌC và bị nhốt trong Paths:ScanDocRoot1 (rào nằm trong DuyetKho).
+        /// Bỏ trống tham số duong = đứng ở gốc kho.
+        ///
+        /// Gate claim y như luu-to-khai-tct: đây là cửa sổ nhìn vào ổ đĩa máy chủ,
+        /// không phải số liệu nghiệp vụ — chỉ quản trị nội bộ mới được mở.
+        /// </remarks>
+        [HttpGet("duyet-kho-to-khai")]
+        public IActionResult DuyetKhoToKhai([FromQuery] string? duong)
+        {
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+                return StatusCode(403, new
+                { message = "Chỉ đơn vị quản trị nội bộ mới duyệt được kho tờ khai" });
+
+            try
+            {
+                return Ok(_bangToKhai.DuyetKho(duong));
+            }
+            catch (ArgumentException ex)
+            { return BadRequest(new { message = ex.Message }); }
+            catch (UnauthorizedAccessException ex)
+            { return StatusCode(403, new { message = ex.Message }); }
+            catch (DirectoryNotFoundException ex)
+            { return NotFound(new { message = ex.Message }); }
+            catch (Exception ex)
+            { return BadRequest(new { message = $"Không đọc được thư mục: {ex.Message}" }); }
+        }
+
+        /// <summary>
+        /// POST api/thue/luu-to-khai-tct — LƯU file tờ khai TCT trả về vào kho, rồi
+        /// nạp số liệu vào bảng TOKHAI của đúng kỳ đó.
+        /// </summary>
+        /// <remarks>
+        /// Làm HAI việc trong một lượt bấm (đúng luồng kế toán mô tả 15/08):
+        ///   1. Chép file vào thư mục kỳ trong kho — TỰ TẠO thư mục nếu chưa có.
+        ///   2. Đọc 26 chỉ tiêu trong file, ghi vào cột ct*_xml rồi đối chiếu ngay
+        ///      với bản tự lập.
+        ///
+        /// Kỳ và đơn vị lấy từ THAM SỐ người dùng chọn, KHÔNG suy từ nội dung file —
+        /// nhưng vẫn KIỂM CHÉO với MST/kỳ ghi trong file và báo nếu lệch. Người dùng
+        /// chọn nhầm kỳ là chuyện thường, mà lưu nhầm thì số kỳ này đè lên kỳ khác.
+        /// </remarks>
+        [HttpPost("luu-to-khai-tct")]
+        [RequestSizeLimit(50 * 1024 * 1024)]
+        public async Task<IActionResult> LuuToKhaiTct(
+            IFormFile? file, [FromQuery] string? ma,
+            [FromQuery] int thang, [FromQuery] int? nam,
+            [FromQuery] string? ghiChu = null, [FromQuery] string? thuMuc = null)
+        {
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+                return StatusCode(403, new
+                { message = "Chỉ đơn vị quản trị nội bộ mới lưu được tờ khai TCT" });
+
+            var code = await DonViThaoTac(ma);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {ma}" });
+            if (thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "Chưa chọn file" });
+
+            var duoi = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (duoi is not (".xml" or ".zip"))
+                return BadRequest(new { message = "Chỉ nhận file .xml hoặc .zip" });
+
+            var year = nam is >= 2000 and <= 2100 ? nam.Value : FiscalYear();
+
+            // ---------- 1. Đọc nội dung XML (mở .zip nếu cần) để KIỂM CHÉO ----------
+            string noiDung;
+            try
+            {
+                if (duoi == ".xml")
+                {
+                    using var doc = new StreamReader(file.OpenReadStream());
+                    noiDung = await doc.ReadToEndAsync();
+                }
+                else
+                {
+                    using var luong = file.OpenReadStream();
+                    using var zip = new System.IO.Compression.ZipArchive(
+                        luong, System.IO.Compression.ZipArchiveMode.Read);
+                    var muc = zip.Entries.FirstOrDefault(
+                        e => e.Name.EndsWith(".xml", StringComparison.OrdinalIgnoreCase));
+                    if (muc == null)
+                        return BadRequest(new { message = "File .zip không có file .xml nào" });
+                    using var d = new StreamReader(muc.Open());
+                    noiDung = await d.ReadToEndAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = $"Không đọc được file: {ex.Message}" });
+            }
+
+            var (mstFile, thangFile, namFile, _) =
+                ToKhaiService.DocTomTatXmlToKhai(noiDung);
+
+            // KIỂM CHÉO — cảnh báo chứ không chặn: để người dùng tự quyết. Nhưng phải
+            // nói ra, lưu nhầm kỳ là số đè lên kỳ khác.
+            var canhBao = new List<string>();
+            var (mstDv, _, _) = await HoSoDonVi(code);
+            if (mstFile != null && !string.IsNullOrWhiteSpace(mstDv)
+                && RaSoatService.GocMst(mstFile) != RaSoatService.GocMst(mstDv))
+                canhBao.Add($"MST trong file ({mstFile}) khác MST của {code} ({mstDv})");
+            if (thangFile != null && namFile != null
+                && (thangFile != thang || namFile != year))
+                canhBao.Add($"Kỳ trong file ({thangFile:00}/{namFile}) khác kỳ đang chọn "
+                          + $"({thang:00}/{year})");
+
+            // ---------- 2. Lưu file vào kho ----------
+            string duongDan;
+            try
+            {
+                using var luong = file.OpenReadStream();
+                duongDan = await _bangToKhai.LuuFileToKhai(
+                    code, year, thang, file.FileName, luong, HttpContext.RequestAborted,
+                    thuMuc);
+            }
+            catch (ArgumentException ex)
+            { return BadRequest(new { message = ex.Message }); }
+            // Đường dẫn ra ngoài kho — chỉ tới được bằng request nặn tay, màn hình
+            // không cho chọn. Trả 403 chứ không 400: đây là chặn quyền, không phải
+            // dữ liệu sai.
+            catch (UnauthorizedAccessException ex)
+            { return StatusCode(403, new { message = ex.Message }); }
+            catch (Exception ex)
+            { return BadRequest(new { message = $"Không ghi được file vào kho: {ex.Message}" }); }
+
+            // ---------- 3. Nạp 26 chỉ tiêu vào TOKHAI + đối chiếu ----------
+            var ct = ToKhaiService.DocChiTieuXml(noiDung);
+            // Ghi chú cắt 500 ký tự cho vừa cột ghi_chu — chuỗi dài hơn thì SQL ném
+            // lỗi truncate và HỎNG CẢ lượt lưu, trong khi file đã nằm trong kho rồi.
+            var chuThich = string.IsNullOrWhiteSpace(ghiChu)
+                ? null
+                : ghiChu.Trim()[..Math.Min(ghiChu.Trim().Length, 500)];
+
+            var gan = await _bangToKhai.GanXmlDaNop(
+                code, year, thang, 0, Path.GetFileName(duongDan), duongDan, ct,
+                CurrentUser(), HttpContext.RequestAborted, chuThich);
+
+            var lech = new List<BangToKhaiService.ChiTieuLech>();
+            if (gan)
+                lech = await _bangToKhai.SoSanhVoiTct(
+                    code, year, thang, 0, HttpContext.RequestAborted);
+
+            try
+            {
+                var tid = await _db.Tenants.AsNoTracking()
+                    .Where(t => t.Code == code).Select(t => t.Id)
+                    .FirstOrDefaultAsync(HttpContext.RequestAborted);
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"INSERT INTO ActivityLog (UserName, TenantId, Nam, Action, Detail)
+                      VALUES ({0}, {1}, {2}, {3}, {4})",
+                    CurrentUser(), tid, year, "LUU_TO_KHAI_TCT",
+                    $"Kỳ {thang:00}/{year} — lưu {Path.GetFileName(duongDan)}");
+            }
+            catch { /* mất một dòng nhật ký còn hơn báo hỏng việc đã xong */ }
+
+            return Ok(new
+            {
+                duongDan,
+                daNapSoLieu = gan,
+                soLech = lech.Count,
+                lech,
+                canhBao,
+                message = !gan
+                    ? $"Đã lưu file vào kho, nhưng kỳ {thang:00}/{year} chưa có tờ khai "
+                      + "trong hệ thống nên chưa nạp được số liệu"
+                    : lech.Count == 0
+                        ? "Đã lưu và nạp số liệu — KHỚP hoàn toàn với bản tự lập"
+                        : $"Đã lưu và nạp số liệu — LỆCH {lech.Count} chỉ tiêu so với bản tự lập",
+            });
+        }
+
+        /// <summary>
+        /// GET api/thue/to-khai-tay?ma=AK_GLOBAL&amp;thang=7 — đọc tờ khai GÕ TAY đã
+        /// lưu của một kỳ, để mở ra sửa tiếp. Trả 204 nếu kỳ đó chưa lưu lần nào.
+        /// </summary>
+        [HttpGet("to-khai-tay")]
+        public async Task<IActionResult> DocToKhaiTay(
+            [FromQuery] string? ma, [FromQuery] int thang,
+            [FromQuery] int? nam, [FromQuery] int lanNop = 0)
+        {
+            var code = await DonViThaoTac(ma);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {ma}" });
+            if (thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
+
+            var year = nam is >= 2000 and <= 2100 ? nam.Value : FiscalYear();
+            var tk = await _bangToKhai.DocToKhaiTay(code, year, thang, lanNop,
+                                                    HttpContext.RequestAborted);
+
+            // TỒN ĐẦU TỰ ĐIỀN TỪ KỲ TRƯỚC (BR-TK-02): ct22 kỳ này = ct43 kỳ liền
+            // trước, ưu tiên bản TCT trả về vì đó là số ĐÃ NỘP THẬT.
+            // Lập tờ khai T7 thì lấy từ T6 — kế toán khỏi phải mở tờ khai cũ ra chép
+            // tay, và chép tay là chỗ hay sai nhất của cả quy trình.
+            var khaiQuy = await _db.Tenants.AsNoTracking()
+                .Where(t => t.Code == code).Select(t => t.KhaiQuy)
+                .FirstOrDefaultAsync(HttpContext.RequestAborted);
+            var (ct22Truoc, nguon) = await _bangToKhai.TonDauTuKyTruoc(
+                code, year, thang, khaiQuy, HttpContext.RequestAborted);
+
+            // Chưa lưu lần nào → trả khung rỗng CÓ SẴN ct22, thay vì 204 để form
+            // trắng trơn rồi người dùng tự đi tìm số.
+            if (tk == null)
+            {
+                if (ct22Truoc == null) return NoContent();
+                return Ok(new
+                {
+                    maDonVi = code, nam = year, thang, lanNop,
+                    ct22 = ct22Truoc, nguonCt22 = nguon,
+                });
+            }
+
+            // Đã lưu rồi nhưng ct22 còn trống → điền hộ; đã có số thì GIỮ NGUYÊN,
+            // không ghi đè thứ kế toán đã chủ động nhập.
+            if ((tk.Ct22 == 0m) && ct22Truoc != null) tk.Ct22 = ct22Truoc.Value;
+            return Ok(new { tk, nguonCt22 = nguon });
+        }
+
+        /// <summary>
+        /// GET api/thue/doi-chieu?ma=THUAN_AN&amp;thang=7 — ĐỐI CHIẾU BA NGUỒN cho
+        /// một kỳ: tờ khai đã lưu · sổ hóa đơn · bản TCT trả về.
+        /// </summary>
+        /// <remarks>
+        /// Trả về TỪNG chỉ tiêu kèm số của cả ba nguồn và hai cột lệch, để kế toán
+        /// thấy ngay "lệch ở đâu và lệch với cái gì" thay vì mở ba màn tự so.
+        ///
+        /// Dùng được cho CẢ tờ khai tự lập lẫn tờ khai gõ tay — cùng một bảng TOKHAI,
+        /// cùng bộ chỉ tiêu, nên không cần hai đường riêng.
+        /// </remarks>
+        [HttpGet("doi-chieu")]
+        public async Task<IActionResult> DoiChieu(
+            [FromQuery] string? ma, [FromQuery] int thang,
+            [FromQuery] int? nam, [FromQuery] int lanNop = 0)
+        {
+            var code = await DonViThaoTac(ma);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {ma}" });
+            if (thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
+
+            var year = nam is >= 2000 and <= 2100 ? nam.Value : FiscalYear();
+            var khaiQuy = await _db.Tenants.AsNoTracking()
+                .Where(t => t.Code == code).Select(t => t.KhaiQuy)
+                .FirstOrDefaultAsync(HttpContext.RequestAborted);
+
+            // TÍNH LẠI TỪ SỔ để có cột "Sổ". Đơn vị chưa mở năm/chưa có bảng thì bỏ
+            // qua cột đó chứ không làm hỏng cả lời gọi — vẫn còn hai nguồn kia.
+            Models.ToKhaiGtgtDto? tuSo = null;
+            try
+            {
+                var (mst, ten, diaChi) = await HoSoDonVi(code);
+                tuSo = await _toKhai.Lap(code, year, thang, mst, ten, diaChi);
+            }
+            catch (SoChuaMoException) { }
+            catch (Microsoft.Data.SqlClient.SqlException) { }
+
+            var ds = await _bangToKhai.DoiChieuBaNguon(
+                code, year, thang, khaiQuy, lanNop, tuSo, HttpContext.RequestAborted);
+
+            return Ok(new
+            {
+                maDonVi = code, nam = year, thang, lanNop,
+                coSo = tuSo != null,
+                coTct = ds.Any(x => x.Tct != null),
+                soLech = ds.Count(x => x.CoLech),
+                dong = ds,
+            });
+        }
+
+        /// <summary>
+        /// POST api/thue/to-khai-tay — lưu tờ khai gõ tay vào bảng TOKHAI (KT2000_Base).
+        /// </summary>
+        /// <remarks>
+        /// Đây là endpoint DUY NHẤT trong controller này có GHI. Ghi vào TOKHAI ở Base
+        /// thôi — KHÔNG đụng sổ hóa đơn của đơn vị (luật 5: hàm nguồn ngoài không được
+        /// ghi đè dữ liệu sổ).
+        /// </remarks>
+        [HttpPost("to-khai-tay")]
+        public async Task<IActionResult> LuuToKhaiTay([FromBody] Models.ToKhaiTayDto? tk)
+        {
+            if (tk == null)
+                return BadRequest(new { message = "Thiếu nội dung tờ khai" });
+            if (tk.Thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
+            if (tk.LanNop is < 0 or > 99)
+                return BadRequest(new { message = "Lần nộp phải trong khoảng 0..99" });
+
+            // CHẶN TỜ KHAI RỖNG: mọi chỉ tiêu đều 0 nghĩa là người dùng mở form ra rồi
+            // bấm Lưu mà chưa gõ gì. Cho lưu thì lưới hiện một dòng toàn số 0 — trông
+            // y như "đã khai và bằng 0", trong khi thực ra chưa khai; tệ hơn là kỳ sau
+            // lấy ct43 = 0 đó làm tồn đầu và sai dây chuyền.
+            //
+            // Trừ ct21 ra khỏi phép kiểm: đó là ô đánh dấu "không phát sinh mua bán",
+            // đúng là tờ khai hợp lệ mà mọi chỉ tiêu tiền đều 0.
+            if (tk.Ct21 != 1 && tk.ChiTieu().All(x => (decimal)x.Gia == 0m))
+                return BadRequest(new
+                {
+                    message = "Tờ khai chưa có số liệu — nhập ít nhất một chỉ tiêu, "
+                            + "hoặc đánh dấu [21] nếu kỳ này không phát sinh mua bán",
+                });
+
+            // Mã đơn vị trong THÂN request cũng phải qua cửa quyền y như tham số query
+            // — không kiểm thì tenant thường gửi mã đơn vị khác là ghi được vào tờ
+            // khai của họ (luật 9).
+            var code = await DonViThaoTac(tk.MaDonVi);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {tk.MaDonVi}" });
+            tk.MaDonVi = code;
+
+            if (tk.Nam is < 2000 or > 2100) tk.Nam = FiscalYear();
+
+            // MST/tên lấy từ Master nếu client không gửi — hồ sơ đơn vị là nguồn chuẩn,
+            // để client tự khai thì mỗi lần lưu một kiểu.
+            if (string.IsNullOrWhiteSpace(tk.Mst) || string.IsNullOrWhiteSpace(tk.TenNnt))
+            {
+                var (mst, ten, diaChi) = await HoSoDonVi(code);
+                if (string.IsNullOrWhiteSpace(tk.Mst)) tk.Mst = mst;
+                if (string.IsNullOrWhiteSpace(tk.TenNnt)) tk.TenNnt = ten;
+                if (string.IsNullOrWhiteSpace(tk.DiaChiNnt)) tk.DiaChiNnt = diaChi;
+            }
+
+            await _bangToKhai.LuuToKhai(tk, CurrentUser(), HttpContext.RequestAborted);
+            return Ok(new { message = $"Đã lưu tờ khai {tk.Thang:00}/{tk.Nam} của {code}" });
+        }
+
+        /// <summary>
+        /// GET api/thue/bao-cao-don-vi?ma=THAI_TUAN&amp;thang=7 — báo cáo thuế của MỘT
+        /// đơn vị bất kỳ, xem từ bàn làm việc của kế toán dịch vụ (MDN_NB).
+        /// </summary>
+        /// <remarks>
+        /// Khác /bao-cao ở chỗ đơn vị lấy từ THAM SỐ chứ không từ claim — đó chính là
+        /// lý do phải gate riêng: chỉ 'internal' mới được chỉ định đơn vị. Với tenant
+        /// thường thì tham số ma là lỗ hổng đọc sổ đơn vị khác (luật 9), nên chặn thẳng.
+        ///
+        /// Mã đơn vị vẫn phải TRA LẠI Master trước khi dùng: hợp lệ theo BR-DB-01 không
+        /// có nghĩa là đơn vị có thật, và mã 'internal'/'noibo' thì không có sổ thuế.
+        /// Không tra thì người dùng sửa query gọi sang database bất kỳ trên server.
+        /// </remarks>
+        [HttpGet("bao-cao-don-vi")]
+        public async Task<IActionResult> BaoCaoDonVi(
+            [FromQuery] string? ma, [FromQuery] int? nam, [FromQuery] int? thang)
+        {
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+                return StatusCode(403, new
+                { message = "Chỉ đơn vị quản trị nội bộ mới xem được sổ của đơn vị khác" });
+
+            if (string.IsNullOrWhiteSpace(ma))
+                return BadRequest(new { message = "Thiếu mã đơn vị" });
+
+            if (await DonViThaoTac(ma) == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {ma}" });
+
+            var ky = thang is >= 1 and <= 12 ? thang : null;
+            var year = nam is >= 2000 and <= 2100 ? nam.Value : FiscalYear();
+            return Ok(await _thue.BaoCaoThue(ma, year, ky));
+        }
+
         // ===================== TỜ KHAI 01/GTGT =====================
         // Spec: docs/NB/SPEC-TO-KHAI-01-GTGT.md
 
         // Thông tin đơn vị lấy từ Master để điền phần NNT của tờ khai.
-        private async Task<(string Mst, string Ten, string? DiaChi)> HoSoDonVi()
+        /// <param name="maDonVi">
+        /// Lấy hồ sơ của ĐƠN VỊ NÀO. Bỏ trống = đơn vị đang đăng nhập.
+        ///
+        /// Có tham số này vì MDN_NB lập tờ khai HỘ đơn vị khác: bản thân MDN_NB không
+        /// khai thuế nên TaxCode để NULL, đọc theo claim thì tờ khai nào cũng chặn ở
+        /// "Đơn vị chưa khai mã số thuế" (gặp thật 14/08 với NHAT_TUAN).
+        /// </param>
+        private async Task<(string Mst, string Ten, string? DiaChi)> HoSoDonVi(
+            string? maDonVi = null)
         {
-            var code = TenantCode();
+            var code = string.IsNullOrWhiteSpace(maDonVi) ? TenantCode() : maDonVi;
             var t = await _db.Tenants
+                .AsNoTracking()
                 .Where(x => x.Code == code)
                 .Select(x => new { x.TaxCode, x.Name, x.Address })
-                .FirstOrDefaultAsync();
+                .FirstOrDefaultAsync(HttpContext.RequestAborted);
             return (t?.TaxCode ?? "", t?.Name ?? code, t?.Address);
+        }
+
+        /// <summary>
+        /// Đơn vị mà lời gọi này thao tác lên: MDN_NB được chỉ định đơn vị khác qua
+        /// tham số, tenant thường luôn là chính mình.
+        /// </summary>
+        /// <remarks>
+        /// Tra lại Master chứ không tin thẳng tham số: mã hợp lệ theo BR-DB-01 không
+        /// có nghĩa là đơn vị có thật, và không tra thì người dùng sửa query là đọc
+        /// được database bất kỳ trên server (luật 9 — ranh giới hai sổ).
+        /// Trả null nếu mã không hợp lệ; tầng gọi đổi thành 404.
+        /// </remarks>
+        private async Task<string?> DonViThaoTac(string? maDonVi)
+        {
+            if (User.FindFirst("tenant_type")?.Value != "internal"
+                || string.IsNullOrWhiteSpace(maDonVi))
+                return TenantCode();
+
+            var hopLe = await _db.Tenants.AsNoTracking()
+                .AnyAsync(t => t.Code == maDonVi && t.IsActive
+                            && t.TenantType != "internal" && t.TenantType != "noibo",
+                          HttpContext.RequestAborted);
+            return hopLe ? maDonVi : null;
         }
 
         /// <summary>
@@ -227,12 +858,28 @@ namespace KT2000.Api.Controllers
         /// thêm SheetJS vào bundle chỉ để đọc vài file là không đáng — backend đã sẵn
         /// ClosedXML dùng cho ImportService.
         /// </remarks>
+        /// <param name="maDonVi">
+        /// Đọc bảng kê CỦA ĐƠN VỊ NÀO — chỉ 'internal' (MDN_NB) được truyền, để soi
+        /// bảng kê của đơn vị khác từ màn Tờ khai. Bỏ trống thì lấy đơn vị đang đăng
+        /// nhập như cũ.
+        ///
+        /// Vì sao PHẢI có tham số này: hàm đọc Excel suy HƯỚNG hóa đơn bằng cách so
+        /// MST người bán với MST đơn vị (RaSoatService.SuyHuong). Lấy nhầm MST của
+        /// MDN_NB thì MỌI dòng đều thành "VAO" — đối chiếu ra sai toàn bộ.
+        /// </param>
         [HttpPost("doc-bang-ke")]
         [RequestSizeLimit(30 * 1024 * 1024)]
-        public async Task<IActionResult> DocBangKe(IFormFile? file)
+        public async Task<IActionResult> DocBangKe(IFormFile? file, [FromQuery] string? maDonVi)
         {
-            var chan = ChanNeuLaNoiBo();
-            if (chan != null) return chan;
+            var laNoiBoQuanTri = User.FindFirst("tenant_type")?.Value == "internal";
+            if (!laNoiBoQuanTri)
+            {
+                var chan = ChanNeuLaNoiBo();
+                if (chan != null) return chan;
+                // Tenant thường KHÔNG được chỉ định đơn vị khác — bỏ qua tham số thay
+                // vì báo lỗi, để URL cũ vẫn chạy y như trước.
+                maDonVi = null;
+            }
 
             if (file == null || file.Length == 0)
                 return BadRequest(new { message = "Chưa chọn file bảng kê" });
@@ -249,7 +896,13 @@ namespace KT2000.Api.Controllers
 
             try
             {
-                var mstDv = await MstDonVi();
+                // MST của đơn vị được chỉ định (MDN_NB soi đơn vị khác), không thì
+                // của chính đơn vị đang đăng nhập.
+                var code = await DonViThaoTac(maDonVi);
+                if (code == null)
+                    return NotFound(new { message = $"Không có đơn vị khai thuế mã {maDonVi}" });
+                var (mstDv, _, _) = await HoSoDonVi(code);
+
                 using var luong = file.OpenReadStream();
                 var ds = RaSoatService.DocBangKeExcel(luong, file.FileName, mstDv);
                 return Ok(new { soDong = ds.Count, hoaDon = ds });
@@ -274,20 +927,29 @@ namespace KT2000.Api.Controllers
 
         [HttpPost("to-khai")]
         public async Task<IActionResult> ToKhai([FromQuery] int thang,
+                                                [FromQuery] string? maDonVi,
                                                 [FromBody] LapToKhaiRequest? req)
         {
-            var chan = ChanNeuLaNoiBo();
-            if (chan != null) return chan;
+            // MDN_NB lập tờ khai HỘ đơn vị khác nên không chặn ở đây — DonViThaoTac
+            // đã lo phần quyền: tenant thường luôn trả về chính nó, mã lạ trả null.
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+            {
+                var chan = ChanNeuLaNoiBo();
+                if (chan != null) return chan;
+            }
 
             if (thang is < 1 or > 12)
                 return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
 
-            var (mst, ten, diaChi) = await HoSoDonVi();
+            var code = await DonViThaoTac(maDonVi);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {maDonVi}" });
+
+            var (mst, ten, diaChi) = await HoSoDonVi(code);
             if (string.IsNullOrWhiteSpace(mst))
                 return BadRequest(new
-                { message = "Đơn vị chưa khai mã số thuế — không lập được tờ khai" });
+                { message = $"Đơn vị {code} chưa khai mã số thuế — không lập được tờ khai" });
 
-            var code = TenantCode();
             var nam = FiscalYear();
 
             // ===== PHẢI CÓ TỜ KHAI KỲ TRƯỚC MỚI CHO LẬP =====
@@ -320,20 +982,27 @@ namespace KT2000.Api.Controllers
         /// </summary>
         [HttpPost("to-khai/xml")]
         public async Task<IActionResult> ToKhaiXml([FromQuery] int thang,
+                                                   [FromQuery] string? maDonVi,
                                                    [FromBody] LapToKhaiRequest? req)
         {
-            var chan = ChanNeuLaNoiBo();
-            if (chan != null) return chan;
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+            {
+                var chan = ChanNeuLaNoiBo();
+                if (chan != null) return chan;
+            }
 
             if (thang is < 1 or > 12)
                 return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
 
-            var (mst, ten, diaChi) = await HoSoDonVi();
+            var code = await DonViThaoTac(maDonVi);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {maDonVi}" });
+
+            var (mst, ten, diaChi) = await HoSoDonVi(code);
             if (string.IsNullOrWhiteSpace(mst))
                 return BadRequest(new
-                { message = "Đơn vị chưa khai mã số thuế — không lập được tờ khai" });
+                { message = $"Đơn vị {code} chưa khai mã số thuế — không lập được tờ khai" });
 
-            var code = TenantCode();
             var nam = FiscalYear();
 
             // Chặn y như bước lập — endpoint này gọi thẳng được nên không dựa vào việc
@@ -381,10 +1050,18 @@ namespace KT2000.Api.Controllers
 
         [HttpPost("ra-soat")]
         public async Task<IActionResult> RaSoat([FromQuery] int? thang,
+                                                [FromQuery] string? maDonVi,
                                                 [FromBody] RaSoatRequest req)
         {
-            var chan = ChanNeuLaNoiBo();
-            if (chan != null) return chan;
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+            {
+                var chan = ChanNeuLaNoiBo();
+                if (chan != null) return chan;
+            }
+
+            var code = await DonViThaoTac(maDonVi);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {maDonVi}" });
 
             var ds = req?.HoaDon ?? new List<Models.HoaDonFileDto>();
             // Chặn payload phi lý — một kỳ nhiều nhất vài nghìn hóa đơn
@@ -394,7 +1071,10 @@ namespace KT2000.Api.Controllers
             // Rà soát CẢ HAI CHIỀU trong một lượt: hướng suy từ MST người bán trong
             // file, không bắt người dùng chọn trước. Client gửi Huong rỗng; nếu nó có
             // gửi (bản cũ) thì giữ nguyên giá trị đó.
-            var mstDv = await MstDonVi();
+            //
+            // MST phải là của ĐƠN VỊ ĐANG SOI, không phải của người đăng nhập: MDN_NB
+            // có TaxCode NULL nên suy hướng bằng nó thì mọi hóa đơn đều thành "VAO".
+            var (mstDv, _, _) = await HoSoDonVi(code);
             foreach (var f in ds)
             {
                 if (!string.IsNullOrWhiteSpace(f.Huong)) continue;
@@ -402,7 +1082,7 @@ namespace KT2000.Api.Controllers
             }
 
             var ky = thang is >= 1 and <= 12 ? thang : null;
-            return Ok(await _raSoat.Soat(TenantCode(), FiscalYear(), ky, ds));
+            return Ok(await _raSoat.Soat(code, FiscalYear(), ky, ds));
         }
 
         /// <summary>
@@ -486,17 +1166,152 @@ namespace KT2000.Api.Controllers
         }
 
         /// <summary>
+        /// POST api/thue/xu-ly-tt-dc?thang=7 — xử lý hóa đơn THAY THẾ / ĐIỀU CHỈNH.
+        /// </summary>
+        /// <remarks>
+        /// Spec: docs/THUE/TOKHAI/SPEC-TO-KHAI-01-GTGT.md §10 (BR-TK-06).
+        ///
+        /// CÙNG KỲ: không làm gì ở đây — engine tờ khai tự loại hóa đơn gốc lúc tính
+        /// (ToKhai.cs / LocHdBiThayThe), sổ giữ nguyên số liệu.
+        ///
+        /// KHÁC KỲ: ghi chú vào HOA_DON.ghi_chu để kế toán truy lại và sửa tay khi có
+        /// dữ liệu kỳ gốc. Đây là phần CÓ GHI, nên ghi ActivityLog (luật 7).
+        /// </remarks>
+        [HttpPost("xu-ly-tt-dc")]
+        public async Task<IActionResult> XuLyThayTheDieuChinh(
+            [FromQuery] int thang, [FromQuery] string? maDonVi)
+        {
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+            {
+                var chan = ChanNeuLaNoiBo();
+                if (chan != null) return chan;
+            }
+
+            var code = await DonViThaoTac(maDonVi);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {maDonVi}" });
+            if (thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
+
+            var nam = FiscalYear();
+            var kq = await _thue.XuLyThayTheDieuChinh(code, nam, thang, CurrentUser());
+
+            if (kq.SoKhacKy > 0)
+            {
+                try
+                {
+                    var tid = await _db.Tenants.AsNoTracking()
+                        .Where(t => t.Code == code).Select(t => t.Id)
+                        .FirstOrDefaultAsync(HttpContext.RequestAborted);
+                    await _db.Database.ExecuteSqlRawAsync(
+                        @"INSERT INTO ActivityLog (UserName, TenantId, Nam, Action, Detail)
+                          VALUES ({0}, {1}, {2}, {3}, {4})",
+                        CurrentUser(), tid, nam, "XU_LY_TT_DC",
+                        $"Kỳ {thang:00}/{nam} — {kq.SoCungKy} HĐ cùng kỳ (engine tự loại), "
+                        + $"{kq.SoKhacKy} HĐ khác kỳ (đã ghi chú)");
+                }
+                catch { /* mất một dòng nhật ký còn hơn báo hỏng việc đã xong */ }
+            }
+
+            return Ok(new
+            {
+                soCungKy = kq.SoCungKy,
+                soKhacKy = kq.SoKhacKy,
+                chiTiet = kq.ChiTiet,
+                message = kq.SoCungKy + kq.SoKhacKy == 0
+                    ? $"Kỳ {thang:00}/{nam} không có hóa đơn thay thế/điều chỉnh nào"
+                    : $"{kq.SoCungKy} HĐ cùng kỳ — tờ khai tự loại hóa đơn gốc; "
+                      + $"{kq.SoKhacKy} HĐ khác kỳ — đã ghi chú để xử lý tay",
+            });
+        }
+
+        /// <summary>
+        /// DELETE api/thue/hoa-don/{maHd} — XÓA HẲN một hóa đơn khỏi sổ (kèm dòng hàng).
+        /// </summary>
+        /// <remarks>
+        /// Endpoint GHI duy nhất trên sổ hóa đơn của controller này. Dùng khi cổng trả
+        /// về hóa đơn sai/trùng/không thuộc kỳ (HĐ ngân hàng…) — phải bỏ trước khi lên
+        /// tờ khai.
+        ///
+        /// KHÔNG ĐẢO NGƯỢC ĐƯỢC: xóa xong muốn lấy lại phải chạy nạp HĐĐT lần nữa. Vì
+        /// vậy ghi ActivityLog (luật 7) để còn truy được ai xóa cái gì, lúc nào.
+        /// </remarks>
+        [HttpDelete("hoa-don/{maHd}")]
+        public async Task<IActionResult> XoaHoaDon(string maHd, [FromQuery] string? maDonVi)
+        {
+            if (User.FindFirst("tenant_type")?.Value != "internal")
+            {
+                var chan = ChanNeuLaNoiBo();
+                if (chan != null) return chan;
+            }
+
+            var code = await DonViThaoTac(maDonVi);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {maDonVi}" });
+
+            if (string.IsNullOrWhiteSpace(maHd))
+                return BadRequest(new { message = "Thiếu mã hóa đơn" });
+
+            var nam = FiscalYear();
+            var xong = await _thue.XoaHoaDon(code, nam, maHd);
+            if (!xong)
+                return NotFound(new { message = $"Không tìm thấy hóa đơn {maHd}" });
+
+            // Ghi vết SAU khi xóa thành công. Lỗi ghi nhật ký KHÔNG được làm hỏng kết
+            // quả đã xong — mất một dòng log còn hơn báo lỗi cho việc đã chạy rồi.
+            try
+            {
+                var tid = await _db.Tenants.AsNoTracking()
+                    .Where(t => t.Code == code).Select(t => t.Id)
+                    .FirstOrDefaultAsync(HttpContext.RequestAborted);
+                await _db.Database.ExecuteSqlRawAsync(
+                    @"INSERT INTO ActivityLog (UserName, TenantId, Nam, Action, Detail)
+                      VALUES ({0}, {1}, {2}, {3}, {4})",
+                    CurrentUser(), tid, nam, "XOA_HOA_DON",
+                    $"Xóa hóa đơn {maHd} khỏi sổ {code}_{nam}");
+            }
+            catch { /* mất một dòng nhật ký còn hơn báo hỏng thao tác đã xong */ }
+
+            return Ok(new { message = $"Đã xóa hóa đơn {maHd}" });
+        }
+
+        /// <summary>
         /// GET api/thue/hoa-don/{maHd}/html — bản HTML gốc của hóa đơn (ảnh HĐ).
         /// </summary>
+        /// <param name="maDonVi">
+        /// Xem hóa đơn CỦA ĐƠN VỊ NÀO — chỉ 'internal' (MDN_NB) được truyền, để mở
+        /// ảnh hóa đơn từ màn Tờ khai của đơn vị khác. Bỏ trống = đơn vị đang đăng
+        /// nhập, giữ nguyên hành vi cũ cho tenant thường.
+        /// </param>
         [HttpGet("hoa-don/{maHd}/html")]
-        public async Task<IActionResult> XemHtml(string maHd)
+        public async Task<IActionResult> XemHtml(string maHd, [FromQuery] string? maDonVi)
         {
-            var chan = ChanNeuLaNoiBo();
-            if (chan != null) return chan;
-            var (html, _) = await _thue.LayHtmlGoc(TenantCode(), FiscalYear(), maHd);
-            return html == null
-                ? NotFound(new { message = "Hóa đơn này không có bản HTML kèm theo" })
-                : Content(html, "text/html; charset=utf-8");
+            var laNoiBoQuanTri = User.FindFirst("tenant_type")?.Value == "internal";
+            if (!laNoiBoQuanTri)
+            {
+                var chan = ChanNeuLaNoiBo();
+                if (chan != null) return chan;
+                maDonVi = null;      // tenant thường không được chỉ định đơn vị khác
+            }
+
+            var code = await DonViThaoTac(maDonVi);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {maDonVi}" });
+
+            var (html, duongDan) = await _thue.LayHtmlGoc(code, FiscalYear(), maHd);
+            if (html == null)
+                return NotFound(new { message = "Hóa đơn này không có bản HTML kèm theo" });
+
+            // Đường dẫn đi qua HEADER, KHÔNG bọc thân response thành JSON: thân vẫn
+            // là HTML thuần y như cũ để client nhét thẳng vào iframe — cách đọc đang
+            // chạy giữ nguyên, header chỉ là thông tin THÊM về nguồn file.
+            //
+            // Mã hóa URL vì header HTTP chỉ nhận ASCII, mà đường dẫn có dấu cách và
+            // dấu tiếng Việt — để nguyên là hỏng response.
+            Response.Headers["X-Duong-Dan"] = Uri.EscapeDataString(duongDan ?? "");
+            Response.Headers["Access-Control-Expose-Headers"] = "X-Duong-Dan";
+
+            return Content(html, "text/html; charset=utf-8");
         }
     }
 }

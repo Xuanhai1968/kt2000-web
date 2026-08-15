@@ -1,5 +1,6 @@
-using Microsoft.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using System.Globalization;
 using KT2000.Api.Models;
 
 namespace KT2000.Api.Services
@@ -86,16 +87,16 @@ namespace KT2000.Api.Services
                    h.ghi_no, h.ghi_co, h.ma_ct_no, h.ma_ct_co, h.ghi_chu, h.tthai_hd,
                    h.tich_chat_hd_lienquan, h.loai_hd_lienquan, h.mau_so_hd_lienquan,
                    h.khhd_lienquan, h.sohd_lienquan, h.ngay_lienquan,
-                   -- Cột cuối của khối HĐ liên quan, trước đây chưa trả về nên lưới
-                   -- không có gì để hiện ở cột TT HĐLQ.
                    h.trang_thai_hd_lien_quan,
-                   -- %VAT của cả hóa đơn. HAI ĐƠN VỊ GHI HAI CHỖ KHÁC NHAU — đã đối
-                   -- chiếu dữ liệu thật 12/08/2026:
-                   --   THAI_TUAN_2026 : h.vat có 60/65,  line.pt_vat rỗng  0/104
-                   --   HOA_SANG_2026  : h.vat có 134/170, line.pt_vat rỗng 0/461
-                   --   TUAN_NGA_2025  : h.vat RỖNG 0/60,  line.pt_vat có   187/196
-                   -- Nên phải trả cả hai và để FE ưu tiên header rồi lùi về dòng; chỉ
-                   -- đọc một chỗ thì luôn có đơn vị bị trắng ô Thuế suất.
+                   -- Định khoản phần THUẾ, cho hai cột Nợ VAT / Có VAT của lưới.
+                   -- Là TÀI KHOẢN chứ không phải tiền, dù cột khai DECIMAL(18,2) —
+                   -- di sản VFP. Đo dữ liệu thật 14/08/2026: RA ghi 131/3331, VAO ghi
+                   -- 1331/331; THAI_TUAN_2026 có 1184/1258 dòng, còn TUAN_NGA_2025
+                   -- trống sạch 0/60 (sổ cũ chưa định khoản phần thuế).
+                   --
+                   -- Trả DECIMAL nguyên bản, KHÔNG ép sang chuỗi ở SQL: CAST ra varchar
+                   -- kéo theo cả phần thập phân (3331.00) rồi lại phải cắt đuôi.
+                   h.ghi_no_vat, h.ghi_co_vat,
                    h.vat
               FROM HOA_DON h
               OUTER APPLY (
@@ -138,8 +139,22 @@ namespace KT2000.Api.Services
             SohdLienquan       = r.IsDBNull(28) ? null : r.GetString(28),
             NgayLienquan       = r.IsDBNull(29) ? null : r.GetDateTime(29),
             TrangThaiHdLienQuan = r.IsDBNull(30) ? null : r.GetString(30),
-            Vat                = r.IsDBNull(31) ? null : r.GetInt32(31),
+            // Số hiệu tài khoản, đọc từ cột DECIMAL — cắt phần thập phân rồi mới đổi
+            // sang chuỗi, nếu không cột hiện "3331.00" thay vì "3331".
+            GhiNoVat            = TaiKhoan(r, 31),
+            GhiCoVat            = TaiKhoan(r, 32),
+            Vat                = r.IsDBNull(33) ? null : r.GetInt32(33),
         };
+
+        // Tài khoản định khoản lưu trong cột DECIMAL (di sản VFP) — xem chú thích ở
+        // SqlChonHoaDon. NULL và 0 đều coi là CHƯA định khoản: sổ cũ để trống bằng 0,
+        // mà "0" không phải số hiệu tài khoản nào cả.
+        private static string? TaiKhoan(SqlDataReader r, int cot)
+        {
+            if (r.IsDBNull(cot)) return null;
+            var v = decimal.Truncate(r.GetDecimal(cot));
+            return v == 0 ? null : v.ToString(CultureInfo.InvariantCulture);
+        }
 
         /// <summary>
         /// Danh sách hóa đơn, mới nhất trước. Lọc theo hướng (VAO/RA), tháng và từ khóa.
@@ -488,7 +503,7 @@ namespace KT2000.Api.Services
             };
         }
 
-        public async Task<(string? Html, string? TenFile)> LayHtmlGoc(
+        public async Task<(string? Html, string? DuongDan)> LayHtmlGoc(
             string code, int year, string maHd)
         {
             var root = _config["Paths:ScanDocRoot"];
@@ -527,7 +542,7 @@ namespace KT2000.Api.Services
                 if (!duongDanChuan.StartsWith(thuMucChuan, StringComparison.OrdinalIgnoreCase))
                     continue;   // chặn ../ vượt thư mục
                 if (File.Exists(duongDanChuan))
-                    return (await File.ReadAllTextAsync(duongDanChuan), ten);
+                    return (await File.ReadAllTextAsync(duongDanChuan), duongDanChuan);
             }
             return (null, null);
         }
@@ -563,6 +578,172 @@ namespace KT2000.Api.Services
                 if (!ten.StartsWith(dau, StringComparison.OrdinalIgnoreCase)) continue;
                 if (BoSoKhongDau(ten[dau.Length..]) == duoiGon)
                     yield return Path.GetFileName(f);
+            }
+        }
+
+        // ============ BR-TK-06: XỬ LÝ HÓA ĐƠN THAY THẾ / ĐIỀU CHỈNH ============
+        //
+        // Spec: docs/THUE/TOKHAI/SPEC-TO-KHAI-01-GTGT.md §10
+        //
+        // HAI TRƯỜNG HỢP, xử lý khác hẳn nhau:
+        //
+        //   CÙNG KỲ  — engine tờ khai TỰ LOẠI hóa đơn gốc lúc tính (xem
+        //              ToKhai.cs / LocHdBiThayThe). KHÔNG ghi gì ở đây.
+        //
+        //   KHÁC KỲ  — hóa đơn gốc thuộc kỳ khác, có thể chưa nạp vào sổ (đo thật
+        //              15/08: HĐ 0001052 ngày 25/06 không có trong sổ). Không tự
+        //              động sửa tờ khai kỳ cũ — kỳ đó có thể đã nộp rồi, sửa tự
+        //              động là đụng vào tờ khai đã nộp, việc đó phải do người
+        //              quyết định. Ở đây chỉ GHI CHÚ đủ để kế toán truy lại và
+        //              sửa tay khi có dữ liệu.
+        public sealed class KetQuaXuLyTtDc
+        {
+            public int SoCungKy { get; set; }        // engine tự loại, không ghi
+            public int SoKhacKy { get; set; }        // đã ghi chú
+            public List<string> ChiTiet { get; set; } = new();
+        }
+
+        /// <summary>
+        /// Quét hóa đơn thay thế/điều chỉnh của một kỳ, ghi chú cho những cái KHÁC KỲ.
+        /// </summary>
+        /// <remarks>
+        /// CHẠY LẠI NHIỀU LẦN KHÔNG ĐỔI KẾT QUẢ: trước khi nối ghi chú thì kiểm xem
+        /// đã có dấu hiệu ghi rồi chưa (chuỗi mốc "[BR-TK-06]"). Kế toán bấm nhầm hai
+        /// lần là chuyện thường, không được nhân đôi ghi chú.
+        ///
+        /// Luật 5: NỐI THÊM vào ghi_chu, không xóa nội dung cũ. Cột rộng 1000 ký tự —
+        /// kiểm độ dài trước khi nối, tràn thì SQL cắt cụt âm thầm mất cả phần cũ.
+        /// </remarks>
+        public async Task<KetQuaXuLyTtDc> XuLyThayTheDieuChinh(
+            string code, int year, int thang, string nguoiGhi)
+        {
+            const string sql = @"
+                SELECT h.ma_hd, h.khhd, h.so_hd, h.ngay, h.tthai_hd,
+                       h.khhd_lienquan, h.sohd_lienquan, h.ngay_lienquan,
+                       ISNULL(h.ghi_chu, '')
+                  FROM HOA_DON h
+                 WHERE h.thang = @thang
+                   AND ISNULL(h.tich_chat_hd_lienquan, '') <> ''";
+
+            var kq = new KetQuaXuLyTtDc();
+            var canGhi = new List<(string MaHd, string GhiChu)>();
+
+            using var conn = await OpenAsync(code, year);
+            using (var cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@thang", thang);
+                using var r = await cmd.ExecuteReaderAsync();
+                while (await r.ReadAsync())
+                {
+                    var maHd = r.GetString(0);
+                    var ngayLq = r.IsDBNull(7) ? (DateTime?)null : r.GetDateTime(7);
+                    var ghiCu = r.GetString(8);
+
+                    // Không có ngày HĐ gốc thì không biết cùng hay khác kỳ — bỏ qua,
+                    // thà không xử lý còn hơn đoán sai.
+                    if (ngayLq == null) continue;
+
+                    // CÙNG KỲ: engine tờ khai đã tự loại, ở đây không làm gì.
+                    if (ngayLq.Value.Month == thang && ngayLq.Value.Year == year)
+                    { kq.SoCungKy++; continue; }
+
+                    kq.SoKhacKy++;
+
+                    // Đã ghi rồi thì bỏ qua — chạy lại không nhân đôi.
+                    if (ghiCu.Contains("[BR-TK-06]")) continue;
+
+                    var loai = (r.IsDBNull(4) ? "" : r.GetString(4))
+                               .Contains("điều chỉnh", StringComparison.OrdinalIgnoreCase)
+                               ? "Điều chỉnh" : "Thay thế";
+                    var kyGoc = $"{ngayLq.Value.Month:00}/{ngayLq.Value.Year}";
+                    var moi = $"[BR-TK-06] {loai} cho HĐ "
+                            + $"{(r.IsDBNull(5) ? "?" : r.GetString(5))}/"
+                            + $"{(r.IsDBNull(6) ? "?" : r.GetString(6))} "
+                            + $"ngày {ngayLq.Value:dd/MM/yyyy} — KHÁC KỲ "
+                            + $"(gốc thuộc kỳ {kyGoc}, xử lý tại kỳ {thang:00}/{year}) "
+                            + "— chưa kê khai lại kỳ gốc, kế toán tự cập nhật khi có dữ liệu";
+
+                    var gop = string.IsNullOrWhiteSpace(ghiCu) ? moi : ghiCu + " | " + moi;
+                    // Tràn 1000 ký tự thì SQL cắt cụt âm thầm — thà giữ nguyên ghi chú
+                    // cũ và báo ra ngoài còn hơn mất cả hai.
+                    if (gop.Length > 1000)
+                    {
+                        kq.ChiTiet.Add($"{maHd}: ghi chú đã đầy, không nối thêm được");
+                        continue;
+                    }
+                    canGhi.Add((maHd, gop));
+                    kq.ChiTiet.Add($"{maHd}: {moi}");
+                }
+            }
+
+            if (canGhi.Count == 0) return kq;
+
+            // MỘT giao dịch cho cả mẻ: đứt giữa chừng thì nửa số hóa đơn có ghi chú,
+            // nửa không — chạy lại lần sau không biết đã tới đâu.
+            using var tran = conn.BeginTransaction();
+            try
+            {
+                foreach (var (maHd, gc) in canGhi)
+                {
+                    using var up = new SqlCommand(
+                        @"UPDATE HOA_DON SET ghi_chu = @gc, updated_by = @nguoi,
+                                             updated_at = SYSDATETIME()
+                           WHERE ma_hd = @ma", conn, tran);
+                    up.Parameters.AddWithValue("@gc", gc);
+                    up.Parameters.AddWithValue("@nguoi", nguoiGhi);
+                    up.Parameters.AddWithValue("@ma", maHd);
+                    await up.ExecuteNonQueryAsync();
+                }
+                tran.Commit();
+            }
+            catch { tran.Rollback(); throw; }
+
+            return kq;
+        }
+
+        // ===================== XÓA HÓA ĐƠN =====================
+        //
+        // Đây là hàm GHI DUY NHẤT của ThueService — cả lớp còn lại chỉ đọc. Đặt ở đây
+        // chứ không nhét vào ImportService vì đó là luồng NẠP theo mẻ, còn đây là thao
+        // tác một hóa đơn do kế toán chủ động bấm.
+        //
+        // Vì sao cần: hóa đơn cổng trả về có cái sai/trùng/không thuộc kỳ (HĐ ngân
+        // hàng chẳng hạn — xem DOC_14_08_26 mục "Cho phép xóa các HĐ"), phải bỏ đi
+        // trước khi lên tờ khai.
+        //
+        // XÓA HẲN chứ không đánh dấu ẩn: bảng HOA_DON không có cột trạng thái xóa, mà
+        // thêm cột đó thì mọi câu đọc trong repo (tờ khai, báo cáo, rà soát) đều phải
+        // thêm điều kiện lọc — sót một chỗ là số liệu sai âm thầm.
+        public async Task<bool> XoaHoaDon(string code, int year, string maHd)
+        {
+            using var conn = await OpenAsync(code, year);
+            using var tran = conn.BeginTransaction();
+            try
+            {
+                // HOA_DON_LINE KHÔNG có ON DELETE CASCADE (khuôn 010) — phải xóa tay
+                // dòng hàng trước, nếu không khóa ngoại chặn và để lại dòng mồ côi.
+                using (var d1 = new SqlCommand(
+                    "DELETE FROM HOA_DON_LINE WHERE ma_hd = @ma", conn, tran))
+                {
+                    d1.Parameters.AddWithValue("@ma", maHd);
+                    await d1.ExecuteNonQueryAsync();
+                }
+
+                using var d2 = new SqlCommand(
+                    "DELETE FROM HOA_DON WHERE ma_hd = @ma", conn, tran);
+                d2.Parameters.AddWithValue("@ma", maHd);
+                var n = await d2.ExecuteNonQueryAsync();
+
+                // MỘT giao dịch cho cả hai lệnh: đứt giữa chừng mà không có transaction
+                // thì dòng hàng mất còn header ở lại — hóa đơn rỗng, tiền hàng bằng 0,
+                // và tờ khai lặng lẽ thiếu tiền.
+                tran.Commit();
+                return n > 0;
+            }
+            catch
+            {
+                tran.Rollback();
+                throw;
             }
         }
     }

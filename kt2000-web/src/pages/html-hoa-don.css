@@ -1,0 +1,23 @@
+/* Modal xem bản gốc hóa đơn — tiêu đề hai dòng: tên hóa đơn + ĐƯỜNG DẪN đầy đủ. */
+
+.xhd-tieude { line-height: 1.35; }
+
+/* Đường dẫn: cỡ chữ 12px — nhỏ hơn tiêu đề để không tranh chỗ, nhưng vẫn đọc rõ
+   từng ký tự (11px trở xuống thì dấu tiếng Việt bắt đầu dính vào nhau).
+   Font đơn cách: đường dẫn có nhiều dấu \ và _, chữ đều bề rộng thì dò mắt theo
+   từng đoạn thư mục dễ hơn hẳn.
+   user-select: cho bôi đen copy dán thẳng vào Explorer — đó là việc chính của nhãn
+   này, mà tiêu đề Modal của antd mặc định chặn chọn chữ.
+   Cắt một dòng khi quá dài; xem trọn ở tooltip. */
+.xhd-duongdan {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  font-family: Consolas, "Courier New", monospace;
+  color: #8c8c8c;
+  user-select: text;
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

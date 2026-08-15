@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Modal, Button, Input, Select, Checkbox, Radio, Typography,
+  Modal, Button, Input, Select, Checkbox, Radio, Typography, message,
 } from "antd";
+import { EyeOutlined, DeleteOutlined, ExclamationCircleFilled } from "@ant-design/icons";
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef } from "ag-grid-community";
 import type { HoaDonThue, HoaDonLine } from "../api";
+import { thueXoaHoaDon, thueXuLyTtDc, loiApi } from "../api";
 import { MAU_HD_RA, MAU_HD_VAO } from "../AppShell";
 import {
   themeVfp, luoiVfpProps, colVfp, dinhDangPhanTramVat, nhoDoRongCot,
@@ -225,10 +227,130 @@ export default function DanhSachHoaDon({
 
   // Cầu nối cho cell renderer của cột In: xem chú thích tại colId "in".
   const luoiTrenRef = useRef<AgGridReact<HoaDonThue> | null>(null);
-  const hamRef = useRef({ laDanhDauIn, datIn });
+  // XÓA HÓA ĐƠN — thao tác GHI và KHÔNG ĐẢO NGƯỢC ĐƯỢC, nên phải hỏi lại trước.
+  // Hộp xác nhận nêu rõ ký hiệu/số hóa đơn và tên đối tác: chỉ hiện "mã hóa đơn"
+  // thì kế toán không đối chiếu được mình đang xóa cái gì (mã dạng
+  // RA_0101415995_C26TNT_0001120 nhìn na ná nhau cả trăm dòng).
+  const xoaHoaDon = (hd: HoaDonThue) => {
+    Modal.confirm({
+      title: "Xóa hóa đơn khỏi sổ?",
+      icon: <ExclamationCircleFilled style={{ color: "#cf1322" }} />,
+      width: 520,
+      content: (
+        <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+          <div><b>{hd.khhd ?? ""}/{hd.soHd ?? ""}</b>{hd.tenKh ? ` — ${hd.tenKh}` : ""}</div>
+          <div style={{ color: "#8c8c8c" }}>{hd.maHd}</div>
+          <div style={{ marginTop: 8, color: "#cf1322" }}>
+            Xóa cả dòng hàng của hóa đơn này và <b>không lấy lại được</b> —
+            muốn có lại phải chạy nạp HĐĐT lần nữa.
+          </div>
+        </div>
+      ),
+      okText: "Xóa",
+      okButtonProps: { danger: true },
+      cancelText: "Hủy",
+      onOk: async () => {
+        try {
+          await thueXoaHoaDon(hd.maHd);
+          message.success(`Đã xóa ${hd.khhd ?? ""}/${hd.soHd ?? ""}`);
+          // Nạp lại sổ từ server chứ không tự bỏ dòng khỏi mảng: màn cha sở hữu
+          // dsHd, sửa cục bộ thì hai bên lệch nhau ngay lượt sau.
+          await onLamMoi?.();
+        } catch (e) {
+          message.error(loiApi(e, "Không xóa được hóa đơn"));
+        }
+      },
+    });
+  };
+
+  // ===== BR-TK-06: XỬ LÝ HÓA ĐƠN THAY THẾ / ĐIỀU CHỈNH =====
+  // Spec: docs/THUE/TOKHAI/SPEC-TO-KHAI-01-GTGT.md §10
+  //
+  // HAI BƯỚC, cố ý tách rời:
+  //   Lần 1 — TỰ TÍCH các hóa đơn liên quan vào cột In. KHÔNG ghi gì vào sổ.
+  //           Đây là bước cho kế toán NHÌN THẤY phạm vi ảnh hưởng trước khi quyết.
+  //   Lần 2 — Xử lý thật (đã tích đủ rồi thì bấm một lần là chạy luôn).
+  const [dangXuLy, setDangXuLy] = useState(false);
+
+  // Hóa đơn "liên quan" = HĐ thay thế/điều chỉnh VÀ hóa đơn gốc nó trỏ tới.
+  // Ký hiệu hai bên ghi khác nhau: sổ '1C26TNT', liên kết 'C26TNT' — bỏ chữ số đầu
+  // để so (đo thật 15/08).
+  const boMauSo = (kh: string | null) =>
+    (kh ?? "").replace(/^\d+/, "");
+
+  const dsLienQuan = useMemo(() => {
+    const tt = dsLoc.filter((x) => (x.tichChatHdLienquan ?? "").trim() !== "");
+    const goc = new Set(tt.map((x) =>
+      `${(x.khhdLienquan ?? "").trim()}|${(x.sohdLienquan ?? "").trim()}`));
+    return dsLoc.filter((x) =>
+      (x.tichChatHdLienquan ?? "").trim() !== ""
+      || goc.has(`${boMauSo(x.khhd)}|${(x.soHd ?? "").trim()}`));
+  }, [dsLoc]);
+
+  const xuLyTtDc = async () => {
+    if (dsLienQuan.length === 0) {
+      message.info("Kỳ đang lọc không có hóa đơn thay thế/điều chỉnh nào");
+      return;
+    }
+
+    // LẦN 1 — chưa tích đủ thì tích rồi dừng, KHÔNG ghi gì.
+    const chuaTich = dsLienQuan.filter((x) => !laDanhDauIn(x));
+    if (chuaTich.length > 0) {
+      setInGhiDe((cu) => {
+        const moi = { ...cu };
+        for (const x of chuaTich) moi[x.maHd] = true;
+        return moi;
+      });
+      message.info(
+        `Đã tích ${chuaTich.length} hóa đơn liên quan (${dsLienQuan.length} tất cả) — `
+        + "xem lại rồi bấm lần nữa để xử lý");
+      return;
+    }
+
+    // LẦN 2 — xử lý thật. Hỏi lại vì có GHI vào sổ.
+    Modal.confirm({
+      title: "Xử lý hóa đơn thay thế / điều chỉnh?",
+      icon: <ExclamationCircleFilled style={{ color: "#d46b08" }} />,
+      width: 560,
+      content: (
+        <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+          <div>{dsLienQuan.length} hóa đơn liên quan trong kỳ đang lọc.</div>
+          <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+            <li><b>Cùng kỳ</b>: tờ khai tự loại hóa đơn gốc khi tính —
+              sổ <b>giữ nguyên</b>, không sửa gì.</li>
+            <li><b>Khác kỳ</b>: ghi chú vào cột Ghi chú của hóa đơn để kế toán
+              tự cập nhật kỳ gốc khi có dữ liệu.</li>
+          </ul>
+        </div>
+      ),
+      okText: "Xử lý",
+      cancelText: "Hủy",
+      onOk: async () => {
+        setDangXuLy(true);
+        try {
+          // Tháng KT là kỳ kê khai — đúng trục mà tờ khai dùng.
+          const ky = thangKT !== "all" ? thangKT
+                   : thang !== "all" ? thang : null;
+          if (ky == null) {
+            message.warning("Chọn một tháng cụ thể ở ô lọc trước khi xử lý");
+            return;
+          }
+          const r = await thueXuLyTtDc(ky);
+          message.success(r.data.message);
+          await onLamMoi?.();
+        } catch (e) {
+          message.error(loiApi(e, "Không xử lý được"));
+        } finally {
+          setDangXuLy(false);
+        }
+      },
+    });
+  };
+
+  const hamRef = useRef({ laDanhDauIn, datIn, xemHtml: onXemHtml, xoaHoaDon });
 
   useEffect(() => {
-    hamRef.current = { laDanhDauIn, datIn };
+    hamRef.current = { laDanhDauIn, datIn, xemHtml: onXemHtml, xoaHoaDon };
     luoiTrenRef.current?.api?.refreshCells({ columns: ["in"], force: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inGhiDe, dsLoc]);
@@ -240,6 +362,51 @@ export default function DanhSachHoaDon({
   const cotTren = useMemo<ColDef<HoaDonThue>[]>(() => [
     { colId: "stt", headerName: "STT", width: 48, pinned: "left",
       valueGetter: (p) => (p.node?.rowIndex ?? 0) + 1 },
+    // THAO TÁC + IN — hai cột thao tác đứng CẠNH NHAU ngay sau STT, ghim TRÁI.
+    // Gom một chỗ vì cùng là thứ NGƯỜI DÙNG BẤM, khác hẳn các cột còn lại chỉ để
+    // đọc; ghim trái nên cuộn ngang bao nhiêu vẫn bấm được ngay.
+    //
+    // stopPropagation ở cả hai nút: bấm icon KHÔNG được kéo theo việc chọn dòng —
+    // chọn dòng làm bảng dòng hàng bên dưới tải lại, thừa một lượt gọi API.
+    { colId: "thaoTac", headerName: "Thao tác", width: 84, pinned: "left",
+      sortable: false, filter: false, resizable: false,
+      cellStyle: { textAlign: "center", padding: 0 },
+      cellRenderer: (p: { data?: HoaDonThue }) => p.data ? (
+        <span className="o-thao-tac">
+          <button type="button" className="nut-tt"
+                  title={`Xem ảnh gốc ${p.data.khhd ?? ""}/${p.data.soHd ?? ""}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (p.data) hamRef.current.xemHtml(p.data.maHd);
+                  }}>
+            <EyeOutlined />
+          </button>
+          <button type="button" className="nut-tt nut-xoa"
+                  title={`Xóa hóa đơn ${p.data.khhd ?? ""}/${p.data.soHd ?? ""}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (p.data) hamRef.current.xoaHoaDon(p.data);
+                  }}>
+            <DeleteOutlined />
+          </button>
+        </span>
+      ) : null },
+    { colId: "in", headerName: "In", width: 46, pinned: "left",
+      headerTooltip: "Tự đánh dấu: HĐ có chiết khấu và là HĐ điều chỉnh/thay thế",
+      valueGetter: (p) => (p.data ? hamRef.current.laDanhDauIn(p.data) : false),
+      cellStyle: { backgroundColor: "#f5f5f5", textAlign: "center" },
+      cellRenderer: (p: { data?: HoaDonThue }) => p.data ? (
+        <input type="checkbox"
+               checked={hamRef.current.laDanhDauIn(p.data)}
+               onClick={(e) => e.stopPropagation()}
+               onChange={(e) => p.data && hamRef.current.datIn(p.data, e.target.checked)} />
+      ) : null },
+    // THAO TÁC — ghim TRÁI cạnh STT: cuộn ngang bao nhiêu vẫn bấm được. Để cột cuối
+    // thì phải kéo hết sang phải mới thấy, đúng thứ hay dùng lại khó với tới nhất.
+    //
+    // stopPropagation ở cả hai nút: bấm icon KHÔNG được kéo theo việc chọn dòng —
+    // chọn dòng làm bảng dòng hàng bên dưới tải lại, thừa một lượt gọi API.
+    
     { colId: "maHd", headerName: "Mã HĐ", field: "maHd", width: 150,
       pinned: "left", tooltipField: "maHd" },
     { colId: "ngay", headerName: "Ngày", width: 74,
@@ -254,13 +421,10 @@ export default function DanhSachHoaDon({
     { colId: "ghiCo", headerName: "Có", field: "ghiCo", width: 44 },
     { colId: "ptVat", headerName: "%VAT", width: 56, type: "numericColumn",
       valueGetter: (p) => p.data?.vat != null ? String(p.data.vat) : "" },
-    { colId: "noVat", headerName: "Nợ VAT", width: 50, valueGetter: () => "" },
-    { colId: "coVat", headerName: "Có VAT", width: 46, valueGetter: () => "" },
-    // KT = tháng KÊ KHAI (cột thang của HOA_DON) — chính là cột mà ô lọc "Tháng KT"
-    // ở thanh trên đang lọc. Khác cột Ngày: HĐ ngày 28/6 về muộn vẫn kê khai tháng 7.
+    { colId: "noVat", headerName: "Nợ VAT", field: "ghiNoVat", width: 50 },
+    { colId: "coVat", headerName: "Có VAT", field: "ghiCoVat", width: 46 },
     { colId: "kt", headerName: "KT", width: 44, field: "thang",
-      type: "numericColumn",
-      headerTooltip: "Tháng kê khai (HOA_DON.thang) — lọc bằng ô 'Tháng KT'" },
+      type: "numericColumn" },
     { colId: "tienHang", headerName: "Tiền HĐ", field: "tienHang", width: 130,
       type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
     { colId: "tienCk", headerName: "Tiền CK", field: "tienCk", width: 110,
@@ -268,38 +432,24 @@ export default function DanhSachHoaDon({
     { colId: "tienVat", headerName: "Tiền VAT", field: "tienVat", width: 120,
       type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
     { colId: "maTv", headerName: "Thương vụ", field: "maTv", width: 90 },
-    { colId: "ghiChu", headerName: "Ghi chú", field: "ghiChu", width: 130,
-      tooltipField: "ghiChu" },
-    { colId: "in", headerName: "In", width: 46,
-      headerTooltip: "Tự đánh dấu: HĐ có chiết khấu và là HĐ điều chỉnh/thay thế",
-      valueGetter: (p) => (p.data ? hamRef.current.laDanhDauIn(p.data) : false),
-      cellStyle: { backgroundColor: "#f5f5f5", textAlign: "center" },
-      cellRenderer: (p: { data?: HoaDonThue }) => p.data ? (
-        <input type="checkbox"
-               checked={hamRef.current.laDanhDauIn(p.data)}
-               onClick={(e) => e.stopPropagation()}
-               onChange={(e) => p.data && hamRef.current.datIn(p.data, e.target.checked)} />
-      ) : null },
     { colId: "tongTien", headerName: "Tổng G.Vốn", field: "tongTien", width: 130,
       type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
     { colId: "loLai", headerName: "Lỗ - Lãi", width: 90, type: "numericColumn",
       valueGetter: () => 0, valueFormatter: (p) => soVn(p.value ?? 0) },
-    { colId: "ckGoc", headerName: "CK Gốc", width: 80, type: "numericColumn",
-      valueGetter: () => 0, valueFormatter: (p) => soVn(p.value ?? 0) },
-    { colId: "sohdLienquan", headerName: "Số HĐLQ", field: "sohdLienquan", width: 90 },
-    { colId: "tichChatHdLienquan", headerName: "Số HĐLCTC HĐ",
-      field: "tichChatHdLienquan", width: 110 },
-    { colId: "loaiHdLienquan", headerName: "Loại HĐ", field: "loaiHdLienquan", width: 80 },
-    { colId: "mauSoHdLienquan", headerName: "Mã Số HĐ", field: "mauSoHdLienquan", width: 90 },
-    { colId: "khhdLienquan", headerName: "KH HĐLQ", field: "khhdLienquan", width: 90 },
-    { colId: "ngayLienquan", headerName: "Ngày HĐLQ", width: 84,
+          { colId: "ngayLienquan", headerName: "Ngày HĐLQ", width: 84,
       valueGetter: (p) => ngayNgan(p.data?.ngayLienquan ?? null) },
+    { colId: "sohdLienquan", headerName: "Số HĐLQ", field: "sohdLienquan", width: 90 },
+    { colId: "tichChatHdLienquan", headerName: "TC HĐLQ",
+      field: "tichChatHdLienquan", width: 110 },
+    { colId: "loaiHdLienquan", headerName: "Loại HĐLQ", field: "loaiHdLienquan", width: 80 },
+    { colId: "mauSoHdLienquan", headerName: "Mã Số HĐLQ", field: "mauSoHdLienquan", width: 90 },
+    { colId: "khhdLienquan", headerName: "KH HĐLQ", field: "khhdLienquan", width: 90 },
     { colId: "trangThaiHdLienQuan", headerName: "TT HĐLQ",
       field: "trangThaiHdLienQuan", width: 100,
       tooltipField: "trangThaiHdLienQuan" },
     { colId: "khhd", headerName: "Ký hiệu HĐ", field: "khhd", width: 100 },
     { colId: "tthaiHd", headerName: "Trạng thái", field: "tthaiHd", width: 100 },
-    { colId: "ghiChu2", headerName: "Ghi chú", field: "ghiChu", width: 120,
+    { colId: "ghiChu", headerName: "Ghi chú", field: "ghiChu", width: 120,
       tooltipField: "ghiChu" },
   ], []);
 
@@ -618,7 +768,16 @@ export default function DanhSachHoaDon({
               <NutCho nhan="Kiểm tra tên trùng" lop="nut-xanhdg" />
             </div>
             <div className="hang-cong-cu">
-              <NutCho nhan="Xử lý HĐ TT-ĐC-XB" lop="nut-vang" />
+              {/* BR-TK-06 — bấm lần 1 tự tích, lần 2 xử lý. Xem xuLyTtDc(). */}
+              <Button size="small" className="nut-vang" loading={dangXuLy}
+                      onClick={() => void xuLyTtDc()}
+                      title={dsLienQuan.length === 0
+                        ? "Kỳ đang lọc không có hóa đơn thay thế/điều chỉnh"
+                        : `${dsLienQuan.length} hóa đơn liên quan — bấm để tích chọn, `
+                          + "bấm lần nữa để xử lý"}>
+                Xử lý HĐ TT-ĐC-XB
+                {dsLienQuan.length > 0 && ` (${dsLienQuan.length})`}
+              </Button>
               <NutCho nhan="Đổi thông tin HĐ" lop="nut-xanhdg" />
             </div>
             <div className="hang-cong-cu">

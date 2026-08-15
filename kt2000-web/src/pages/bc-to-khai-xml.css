@@ -1,0 +1,378 @@
+/* BC lấy tờ khai XML — dựng lại form VFP cùng tên (ảnh 14/08).
+   Ô thả file trải ngang trên cùng, lưới chiếm hết phần còn lại. */
+
+.bc-tkxml {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ----- Panel THÔNG TIN THƯ MỤC (dựng lại form VFP cùng tên) -----
+   Nằm TRƯỚC ô kéo thả, đúng thứ tự thao tác: chọn đơn vị/kỳ → xem thư mục → thả
+   file. Nhãn rộng cố định 76px để mọi ô nhập thẳng hàng nhau như form VFP gốc. */
+/* LƯỚI 3 CỘT × 3 DÒNG. Cột co giãn theo bề ngang màn hình (1fr) chứ không đặt
+   width cứng cho từng ô: modal trải 100vw nên trên màn rộng mà khóa cứng thì cả
+   panel dồn về mép trái, thừa một khoảng trống lớn bên phải.
+     Đơn vị  (2 cột)  | Tháng
+     Thư mục (2 cột)  | Dữ liệu năm
+     Ghi chú (3 cột) */
+.bc-tkxml .bc-tt {
+  display: grid;
+  grid-template-columns: 1fr 1fr minmax(200px, 0.8fr);
+  gap: 8px 14px;
+  align-items: center;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  background: #fafcff;
+  border: 1px solid #d6e4ff;
+  border-radius: 6px;
+}
+
+/* Mỗi ô = nhãn + control, nhãn rộng cố định để control thẳng hàng giữa các dòng. */
+.bc-tkxml .bc-tt-o {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;          /* cho phép ô co lại, nếu không đường dẫn dài đẩy vỡ lưới */
+}
+
+.bc-tkxml .bc-tt-rong2 { grid-column: span 2; }
+.bc-tkxml .bc-tt-rong3 { grid-column: span 3; }
+
+/* Control (Select/Input) ăn hết chỗ còn lại của ô. */
+.bc-tkxml .bc-tt-o .ant-select,
+.bc-tkxml .bc-tt-o .ant-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.bc-tkxml .bc-tt-nhan {
+  width: 76px;
+  flex: none;
+  text-align: right;
+  font-size: 13px;
+  color: #595959;
+  white-space: nowrap;
+}
+
+/* Dưới 1100px thì ba cột chật quá — xuống một cột, mỗi dòng một ô. */
+@media (max-width: 1100px) {
+  .bc-tkxml .bc-tt { grid-template-columns: 1fr; }
+  .bc-tkxml .bc-tt-rong2,
+  .bc-tkxml .bc-tt-rong3 { grid-column: span 1; }
+}
+
+/* Ô THƯ MỤC: chỉ đọc nhưng vẫn có viền như ô nhập thật — kế toán phải NHÌN THẤY
+   đây là một trường dữ liệu, không phải dòng chữ chú thích trôi nổi. */
+.bc-tkxml .bc-tt-duongo {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px;
+  background: #fff;
+  cursor: pointer;         /* bấm để chép */
+}
+
+.bc-tkxml .bc-tt-duongo input { cursor: pointer; }
+
+.bc-tkxml .bc-tt-chep { color: #8c8c8c; }
+.bc-tkxml .bc-tt-chep:hover { color: #1677ff; }
+
+/* Ô đường dẫn BẤM ĐƯỢC để chép — trình duyệt chặn file:// từ trang http nên
+   không mở thẳng thư mục được, chép để dán vào Explorer là đường ngắn nhất. */
+.bc-tkxml .bc-duong-bam { cursor: pointer; }
+.bc-tkxml .bc-duong-bam:hover { border-color: #1677ff; color: #0958d9; }
+
+/* ----- Dải đầu: ô thả file + nút Đọc lại -----
+   Bỏ khối lọc Đơn vị/Tháng (14/08) — lưới đã có sẵn cột Đơn vị và Kỳ nên khối đó
+   chỉ lặp lại việc lưới làm sẵn. Ô thả giờ trải hết bề ngang, nút Đọc lại nép phải. */
+.bc-tkxml .bc-dau {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.bc-tkxml .bc-tha.ant-upload-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+
+.bc-tkxml .bc-tha .ant-upload-drag {
+  background: #f7fbfe;
+  border: 1px dashed #91caff;
+  border-radius: 6px;
+  padding: 10px 0;
+}
+
+.bc-tkxml .bc-tha .ant-upload-drag:hover {
+  border-color: #1677ff;
+  background: #eff8ff;
+}
+
+.bc-tkxml .bc-tha-icon {
+  margin: 0;
+  font-size: 24px;
+  color: #1677ff;
+  line-height: 1.2;
+}
+
+.bc-tkxml .bc-tha-chu {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: #262626;
+}
+
+.bc-tkxml .bc-tha-phu {
+  margin: 0;
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+/* Nút "Chọn file…" trong ô thả — lối vào hộp thoại Open của Windows cho người
+   không quen kéo thả (và cho lúc file nằm sâu trong ổ mạng). */
+.bc-tkxml .bc-tha-nut { margin: 6px 0 0; }
+
+/* Ô thả ĐANG GIỮ một file chờ lưu — viền xanh lá để phân biệt với trạng thái rỗng:
+   file đã nằm trong tay trình duyệt nhưng CHƯA ghi vào kho, nhầm hai cái đó là
+   tưởng đã lưu xong rồi đóng màn hình. */
+.bc-tkxml .bc-tha-co-file .ant-upload-drag {
+  border-color: #52c41a;
+  background: #f6ffed;
+}
+
+/* ----- Hàng lưu: đơn vị + kỳ + đường dẫn + nút ----- */
+.bc-tkxml .bc-luu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-radius: 6px;
+}
+
+.bc-tkxml .bc-luu-nhan {
+  font-size: 13px;
+  color: #595959;
+  white-space: nowrap;
+}
+
+/* Đẩy hai nút Lưu/Bỏ sang mép phải, câu nhắc ở lại mép trái. */
+.bc-tkxml .bc-luu-day { flex: 1; }
+
+/* Đường dẫn chiếm hết chỗ còn lại và tự co — đường dẫn UNC dài hơn màn hình, để nó
+   đẩy hai cái nút ra ngoài là không bấm được nữa. */
+.bc-tkxml .bc-duong {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bc-tkxml .bc-duong-icon { color: #d48806; }
+
+/* Cắt ở cuối bằng ellipsis thường. KHÔNG dùng direction:rtl để cắt đầu chuỗi —
+   nó đảo chỗ dấu \ ở hai mép, đường dẫn hiện ra sai so với đường dẫn thật, mà cả
+   khối này sinh ra để người ta ĐỌC và đối chiếu. Xem đủ thì rê chuột có tooltip. */
+.bc-tkxml .bc-duong-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  background: #fff;
+  border: 1px solid #f0e0a0;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+/* Ô ĐƯỜNG DẪN TRÊN LƯỚI — khác .bc-duong-text ở hàng Lưu: ô này nằm trong một
+   ô bảng có bề ngang cố định, và BẤM ĐƯỢC (chép đường dẫn đầy đủ). */
+.bc-tkxml .bc-duong-o {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #0958d9;
+  cursor: pointer;
+}
+
+.bc-tkxml .bc-duong-o:hover { text-decoration: underline; }
+
+.bc-tkxml .bc-duong-trong {
+  flex: 1;
+  font-size: 12px;
+  color: #8c8c8c;
+  font-style: italic;
+}
+
+/* Nút Đọc lại: cao bằng ô thả để hai khối thẳng hàng trên dưới */
+.bc-tkxml .bc-doclai {
+  flex: 0 0 auto;
+  height: auto;
+}
+
+/* ===== CỬA SỔ DUYỆT KHO =====
+   KHÔNG lồng trong .bc-tkxml: antd render Modal ra cuối <body> qua portal, nên
+   selector con của .bc-tkxml không với tới được. */
+.bc-duyet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bc-duyet-thanh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Đường dẫn hiện tại: cắt ở cuối, không cho đẩy vỡ thanh công cụ. */
+.bc-duyet-duong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
+/* Cao cố định + cuộn riêng: thư mục gốc có 91 đơn vị, để nó đẩy dài modal thì
+   nút "Chọn thư mục này" trôi khỏi màn hình. */
+.bc-duyet-ds {
+  height: 320px;
+  overflow-y: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  padding: 4px;
+}
+
+.bc-duyet-muc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+/* Chỉ THƯ MỤC mới bấm được — file chỉ để nhìn cho biết trong đó có gì. */
+.bc-duyet-tm { cursor: pointer; }
+.bc-duyet-tm:hover { background: #e6f4ff; }
+
+.bc-duyet-icon-tm { color: #faad14; }
+.bc-duyet-icon-f { color: #8c8c8c; }
+
+.bc-duyet-ten {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bc-duyet-kich,
+.bc-duyet-ngay {
+  flex: none;
+  font-size: 12px;
+  color: #8c8c8c;
+  white-space: nowrap;
+}
+
+.bc-duyet-kich { width: 64px; text-align: right; }
+.bc-duyet-ngay { width: 80px; text-align: right; }
+
+.bc-duyet-trong {
+  padding: 24px;
+  text-align: center;
+  color: #8c8c8c;
+}
+
+.bc-duyet-chan {
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+/* ----- Kết quả nạp file ----- */
+.bc-tkxml .bc-kq { margin-bottom: 10px; }
+
+
+.bc-tkxml .bc-kq-ds {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 140px;
+  overflow: auto;
+  font-size: 12px;
+}
+
+.bc-tkxml .bc-ok { color: #389e0d; }
+.bc-tkxml .bc-loi { color: #cf1322; }
+
+/* ----- Lưới ----- */
+.bc-tkxml .bc-luoi { flex: 1; min-height: 0; }
+
+/* Thân lưới cao ĐÚNG phần còn lại. Con số --bc-tru do BcToKhaiXml.tsx đặt vào
+   style nội tuyến của .bc-tkxml, vì nó đổi theo việc hàng Lưu có hiện hay không;
+   antd cũng dựng chiều cao từ chính con số đó (scroll.y). Để hai nơi tự viết số
+   riêng là lệch nhau — thừa khoảng trắng dưới đáy hoặc cụt mất dòng cuối. */
+.bc-tkxml .bc-luoi .ant-table-body {
+  height: calc(100vh - var(--bc-tru, 255px));
+  max-height: calc(100vh - var(--bc-tru, 255px)) !important;
+}
+
+.bc-tkxml .bc-luoi .ant-table-thead > tr > th,
+.bc-tkxml .bc-luoi .ant-table-tbody > tr > td {
+  padding: 3px 8px;
+  font-size: 13px;
+}
+
+.bc-tkxml .bc-luoi .ant-table-thead > tr > th { white-space: nowrap; }
+
+.bc-tkxml .bc-luoi .ant-table-tbody > tr > td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dòng ĐÃ có XML cổng trả về: nền xanh nhạt — nhìn lướt là biết kỳ nào đã khép.
+   Tô nền chứ không đổi màu chữ: cột tiền vẫn phải đọc bình thường. */
+.bc-tkxml .bc-luoi .bc-da-nop > td {
+  background: #f6ffed;
+}
+
+.bc-tkxml .bc-luoi .bc-da-nop:hover > td,
+.bc-tkxml .bc-luoi .bc-da-nop:hover > td.ant-table-cell-row-hover {
+  background: #e6f7d9;
+}
+
+/* Cột ghim nằm trên nền riêng của antd — không tô lại thì hai cột đầu trắng giữa
+   dòng xanh, nhìn như lưới bị vỡ. */
+.bc-tkxml .bc-luoi .bc-da-nop > td.ant-table-cell-fix-left {
+  background: #f6ffed;
+}
+
+.bc-tkxml .bc-luoi .bc-da-nop:hover > td.ant-table-cell-fix-left {
+  background: #e6f7d9;
+}
+
+/* Cuộn ngang: lưới 24 cột nên luôn cần, vài theme đặt hidden */
+.bc-tkxml .bc-luoi .ant-table-body {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+
+/* Ô LỆCH khác 0 — tờ khai không khớp sổ, thứ đáng nhìn nhất của lưới */
+.bc-tkxml .bc-lech {
+  color: #cf1322;
+  font-weight: 700;
+}
+
+/* Lệch bằng 0 = đã đối chiếu và khớp — để mờ, không hút mắt */
+.bc-tkxml .bc-khop { color: #bfbfbf; }

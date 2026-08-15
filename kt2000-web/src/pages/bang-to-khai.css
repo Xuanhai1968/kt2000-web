@@ -1,28 +1,19 @@
-/* Xem trước tờ khai 01/GTGT — dùng chung cho màn hình và bản IN (PDF).
-   Spec: docs/NB/SPEC-TO-KHAI-01-GTGT.md */
 
-/* ----- Thanh chân modal: luôn nhìn thấy nút Tạo tờ khai -----
-   Nằm ở footer của antd Modal nên KHÔNG cuộn theo thân. Trước đây nút nằm trong
-   thân, cuộn xuống xem bảng kết quả là nút trôi mất khỏi màn hình. */
 .chan-to-khai {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: nowrap;
-  /* antd canh phải nội dung footer bằng text-align — trả về trái, nếu không cả
-     dải bị dồn cục sang phải và nhãn dính sát vào nút. */
   text-align: left;
   width: 100%;
 }
 
-/* Nhãn NUỐT hết chỗ thừa, đẩy các nút về sát mép phải */
 .chan-nhan {
   flex: 1 1 auto;
   min-width: 0;
   color: rgba(0, 0, 0, 0.55);
   font-size: 13px;
   line-height: 1.4;
-  /* Nhãn dài không được phép đội nút ra khỏi footer */
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -35,9 +26,7 @@
   font-weight: 600;
 }
 
-/* ----- Danh sách kỳ đã nhận file -----
-   Thay cho bảng chi tiết hàng trăm dòng: kế toán chỉ cần thấy mỗi kỳ có bao nhiêu
-   hóa đơn và TỔNG TIỀN là bao nhiêu, để đối chiếu thẳng với chỉ tiêu tờ khai. */
+
 .ds-ky {
   margin-top: 14px;
   border: 1px solid #d9d9d9;
@@ -56,7 +45,6 @@
 
 .ky-dong:last-of-type { border-bottom: none; }
 
-/* Kỳ đang lập tờ khai: tô nền để tách khỏi các kỳ chỉ dùng đối soát */
 .ky-hientai { background: #e6f4ff; }
 
 .ky-ten {
@@ -95,7 +83,6 @@
   font-size: 13px;
 }
 
-/* Dòng tóm tắt cuối: chỉ nêu SỐ điểm lệch, không liệt kê từng dòng */
 .ky-tomtat {
   padding: 7px 12px;
   background: #fafafa;
@@ -107,14 +94,6 @@
 .ky-loi { color: #cf1322; font-weight: 600; }
 .ky-bo  { color: #d46b08; }
 
-/* ============================================================
-   TỜ KHAI 01/GTGT — KHUÔN GIẤY
-   Dựng theo bản in thật docs/NB/TKGTGT_T7_2026_DVT.pdf
-
-   Toàn bộ khối này dùng chung cho MÀN HÌNH và BẢN IN: xem sao thì in ra vậy, không
-   có hai bộ style song song để lệch nhau. Font Times New Roman và cỡ 13px vì tờ
-   khai giấy dùng chữ có chân — in bằng font khác là nhìn ra ngay không phải bản gốc.
-   ============================================================ */
 .to-khai {
   font-family: "Times New Roman", Times, serif;
   font-size: 13px;
@@ -122,9 +101,6 @@
   color: #000;
 }
 
-/* Mỗi trang giấy A4: nền trắng, bề rộng cố định để bố cục không co theo cửa sổ.
-   Bề rộng đặt theo TỶ LỆ A4 (210×297mm trừ lề 10mm mỗi bên = 190×277mm) để bản chụp
-   PDF ăn trọn một tờ, không phải cắt đôi giữa bảng. */
 .tk-trang {
   background: #fff;
   width: 780px;
@@ -149,7 +125,6 @@
 
 .tk-apdung { font-style: italic; font-size: 12.5px; margin: 2px 24px 0; }
 
-/* Khung "Mẫu số" góc trên phải — dấu hiệu nhận dạng của tờ khai HTKK */
 .tk-khungmau {
   position: absolute;
   top: 0;
@@ -176,8 +151,6 @@
 
 .tk-donvitien { text-align: right; margin: 4px 0 3px; font-size: 12.5px; }
 
-/* ----- Bảng chỉ tiêu -----
-   border-collapse để đường kẻ liền một nét như bảng in, không bị nhân đôi ở mép ô. */
 .tk-bang {
   width: 100%;
   border-collapse: collapse;
@@ -198,12 +171,9 @@
 }
 
 .c-stt  { width: 40px;  text-align: center; font-weight: 700; }
-.c-ten  { }
 .c-gt   { width: 190px; }
 .c-thue { width: 190px; }
 
-/* Ô MÃ chỉ tiêu ([21], [22]…) và ô GIÁ TRỊ luôn đi thành cặp: mã căn giữa trong ô
-   hẹp, số căn phải — đúng cách tờ khai giấy trình bày. */
 .o-ma {
   width: 42px;
   text-align: center;
@@ -259,11 +229,6 @@
 .tk-ky-ngay { margin-bottom: 4px; }
 .tk-ky-mo  { font-size: 12px; margin-top: 2px; }
 
-/* ============ BẢN IN / PDF ============
-   Bấm "In / Lưu PDF" → window.print(). Trình duyệt tự sinh PDF, nên không phải kéo
-   thư viện PDF vào server chỉ để in một tờ khai.
-
-   Ẩn hết vỏ ứng dụng, chỉ chừa đúng khối tờ khai. */
 @media print {
   body * { visibility: hidden; }
   .to-khai, .to-khai * { visibility: visible; }
@@ -277,11 +242,7 @@
     font-size: 12.5pt;
   }
 
-  /* Cảnh báo và nút chỉ có nghĩa trên màn hình, in ra là rác giấy */
   .khong-in { display: none !important; }
-
-  /* Modal antd dựng nhiều lớp bọc có bóng đổ và giới hạn chiều cao — bỏ hết, nếu
-     không bản in bị cắt cụt đúng chỗ khung cuộn kết thúc. */
   .ant-modal-mask,
   .ant-modal-header,
   .ant-modal-footer,
@@ -305,15 +266,163 @@
     padding: 0;
   }
 
-  /* Phụ lục sang trang mới — đúng như bản gốc: tờ khai chính và phụ lục là hai tờ */
   .tk-trang-moi { page-break-before: always; }
 
-  /* Không cắt đôi một dòng giữa hai trang giấy */
   .tk-bang tr { page-break-inside: avoid; }
 
-  /* Khối chữ ký phải nằm trọn một trang, không tách đôi */
   .tk-chuky { page-break-inside: avoid; }
 
   @page { size: A4; margin: 12mm 10mm; }
 }
 
+
+.o-gt.o-sua {
+  padding: 0;
+  background: #f0f7ff;
+}
+
+.o-gt.o-sua:focus-within {
+  background: #e0efff;
+  box-shadow: inset 0 0 0 1px #1677ff;
+}
+
+.o-gt.o-sua .ant-input-number {
+  width: 100%;
+  background: transparent;
+}
+
+.o-gt.o-sua .ant-input-number-input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: inherit;
+  height: 18px;
+  padding: 0 5px;
+}
+
+.o-gt.o-tinh {
+  background: #fffbe6;
+  font-weight: 700;
+}
+
+.ntk-ghichu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 7px 12px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.ntk-ghichu > span { flex: 0 0 auto; color: #595959; }
+
+.ntk-chan {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ntk-nhac {
+  flex: 1;
+  text-align: left;
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+.ntk-ten { color: #595959; font-weight: 400; }
+.ntk-ky { color: #8c8c8c; font-weight: 400; }
+
+/* In ra giấy: ô nhập trở lại như ô thường — không viền màu, không nền */
+@media print {
+  .o-gt.o-sua,
+  .o-gt.o-tinh {
+    background: transparent;
+    box-shadow: none;
+  }
+  .o-gt.o-sua .ant-input-number-input { font-size: inherit; }
+}
+
+
+.o-gt.o-danhdau {
+  text-align: center;
+  font-weight: 700;
+}
+
+.o-gt.o-danhdau.o-sua { cursor: pointer; }
+
+.o-gt.o-danhdau.o-sua:hover { background: #e6f4ff; }
+
+.ntk-to {
+  background: #fff;
+  padding: 20px 24px;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.09);
+}
+
+
+.ntk-to .tk-bang td,
+.ntk-to .tk-bang th { padding: 3px 6px; }
+
+.ntk-to-ngoai .dc-khoi,
+.dc-khoi {
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.dc-dau {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 13px;
+}
+
+.dc-dau .dc-day { flex: 1; }
+.dc-mo { color: #8c8c8c; font-size: 12px; }
+
+.dc-khop {
+  padding: 10px 12px;
+  color: #389e0d;
+  font-size: 13px;
+}
+
+.dc-bang {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.dc-bang th {
+  padding: 4px 8px;
+  background: #f5f5f5;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.dc-bang td {
+  padding: 3px 8px;
+  border-bottom: 1px solid #fafafa;
+}
+
+.dc-ma { font-weight: 600; color: #0958d9; white-space: nowrap; }
+
+.dc-bang .dc-so {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dc-bang .dc-lech {
+  color: #cf1322;
+  font-weight: 700;
+  background: #fff1f0;
+}
