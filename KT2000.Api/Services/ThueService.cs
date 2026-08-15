@@ -139,20 +139,51 @@ namespace KT2000.Api.Services
             SohdLienquan       = r.IsDBNull(28) ? null : r.GetString(28),
             NgayLienquan       = r.IsDBNull(29) ? null : r.GetDateTime(29),
             TrangThaiHdLienQuan = r.IsDBNull(30) ? null : r.GetString(30),
-            // Số hiệu tài khoản, đọc từ cột DECIMAL — cắt phần thập phân rồi mới đổi
-            // sang chuỗi, nếu không cột hiện "3331.00" thay vì "3331".
+            // Số hiệu tài khoản — cột có thể là DECIMAL (sổ cũ) hoặc NVARCHAR (sổ đã
+            // chạy script 019_hoa_don_dinh_khoan_kieu). Xem TaiKhoan.
             GhiNoVat            = TaiKhoan(r, 31),
             GhiCoVat            = TaiKhoan(r, 32),
             Vat                = r.IsDBNull(33) ? null : r.GetInt32(33),
         };
 
-        // Tài khoản định khoản lưu trong cột DECIMAL (di sản VFP) — xem chú thích ở
-        // SqlChonHoaDon. NULL và 0 đều coi là CHƯA định khoản: sổ cũ để trống bằng 0,
-        // mà "0" không phải số hiệu tài khoản nào cả.
+        // Tài khoản định khoản — ĐỌC ĐƯỢC CẢ HAI KIỂU CỘT.
+        //
+        // Cột này vốn là DECIMAL (di sản VFP), script 019_hoa_don_dinh_khoan_kieu.sql
+        // đổi sang NVARCHAR(20) vì tài khoản kế toán là CHUỖI. Nhưng script chỉ chạy
+        // khi VaCauTrucService nạp database đó, nên tại một thời điểm bất kỳ trong sổ
+        // vẫn có DB đã vá lẫn DB chưa vá.
+        //
+        // Đo thật 15/08/2026: HUY_THANH_2026 đã là nvarchar, còn NHAT_TUAN_2026,
+        // DAT_VIET_THANH_2026, THAI_TUAN_2026 và 4 DB khác vẫn decimal. Gọi thẳng
+        // GetDecimal trên DB đã vá ném InvalidCastException làm chết cả màn Danh sách
+        // hóa đơn — đúng lỗi gặp phải trên HUY_THANH.
+        //
+        // Dùng GetValue rồi tự phân loại thay vì dò kiểu cột trước: dò kiểu tốn thêm
+        // một lượt hỏi metadata cho MỖI lần mở sổ, trong khi ở đây chỉ cần đọc giá trị.
+        //
+        // NULL và 0 đều coi là CHƯA định khoản: sổ cũ để trống bằng 0, mà "0" không
+        // phải số hiệu tài khoản nào cả.
         private static string? TaiKhoan(SqlDataReader r, int cot)
         {
             if (r.IsDBNull(cot)) return null;
-            var v = decimal.Truncate(r.GetDecimal(cot));
+
+            var o = r.GetValue(cot);
+            decimal v;
+            if (o is decimal d) v = d;
+            else if (o is string s)
+            {
+                // Cột đã đổi sang nvarchar. Giá trị chuyển đổi từ decimal có thể còn
+                // đuôi ".00" — cắt đi, vì số hiệu tài khoản luôn là số nguyên.
+                s = s.Trim();
+                if (s.Length == 0) return null;
+                if (!decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out v))
+                    return s;   // có chữ (tài khoản kiểu mới) — trả nguyên văn
+            }
+            else if (!decimal.TryParse(Convert.ToString(o, CultureInfo.InvariantCulture),
+                                       NumberStyles.Any, CultureInfo.InvariantCulture, out v))
+                return null;
+
+            v = decimal.Truncate(v);
             return v == 0 ? null : v.ToString(CultureInfo.InvariantCulture);
         }
 
