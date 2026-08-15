@@ -3,12 +3,13 @@ import {
   Card, Select, Table, Tabs, Space, Button, Typography, message,
 } from "antd";
 import { AuditOutlined, FileTextOutlined, FileDoneOutlined,
-         UnorderedListOutlined, TableOutlined } from "@ant-design/icons";
+         UnorderedListOutlined, TableOutlined, SwapOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import ToKhaiXml from "./ToKhaiXml";
 import { NhapToKhaiTay } from "./BangToKhai";
 import BcToKhaiXml from "./BcToKhaiXml";
 import BangTongHop from "./BangTongHop";
+import HdLienQuanKhacKy from "./HdLienQuanKhacKy";
 import { thueBaoCao, thueRaSoatCheo, loiApi } from "../api";
 import type { BaoCaoThue as BaoCaoThueDto, BangKeHoaDon, ChiTieuTongHop,
               DongRaSoatToKhai } from "../api";
@@ -199,6 +200,7 @@ export default function BaoCaoThue() {
   const [moNhapTay, setMoNhapTay] = useState(false);
   const [moBcXml, setMoBcXml] = useState(false);
   const [moTongHop, setMoTongHop] = useState(false);
+  const [moLienQuan, setMoLienQuan] = useState(false);
   const dongDangChon = useMemo(
     () => dvChon.length === 1
       ? cheo.find((d) => d.maDonVi === dvChon[0]) ?? null : null,
@@ -394,6 +396,15 @@ export default function BaoCaoThue() {
                   title="Danh sách tờ khai đã lưu + nạp XML cổng trả về">
             BC tờ khai XML
           </Button>
+
+          {/* HĐ thay thế/điều chỉnh KHÁC KỲ — không kê vào kỳ này, nhưng kỳ GỐC còn
+              treo. Quét MỌI đơn vị nên không đòi tích chọn dòng nào. */}
+          <Button icon={<SwapOutlined />}
+                  onClick={() => setMoLienQuan(true)}
+                  title={"Hóa đơn thay thế/điều chỉnh có hóa đơn gốc thuộc kỳ khác"
+                       + " — cần kê khai lại kỳ gốc"}>
+            HĐ khác kỳ
+          </Button>
         </>
       )}
     </Space>
@@ -503,6 +514,17 @@ export default function BaoCaoThue() {
           onDong={() => setMoTongHop(false)}
           maDonVi={dvChon[0]}
           tenDonVi={dongDangChon?.tenDonVi}
+          nam={namLamViec}
+          thang={thang === "all" ? thangMacDinh : thang}
+        />
+      )}
+
+      {/* HĐ thay thế/điều chỉnh khác kỳ — quét MỌI đơn vị nên KHÔNG đòi tích chọn
+          dòng nào, khác ba modal trên. */}
+      {laMdnNb && (
+        <HdLienQuanKhacKy
+          mo={moLienQuan}
+          onDong={() => setMoLienQuan(false)}
           nam={namLamViec}
           thang={thang === "all" ? thangMacDinh : thang}
         />

@@ -1100,6 +1100,49 @@ export const thueDuyetKhoToKhai = (duong?: string) =>
   api.get<KetQuaDuyetKho>(
     "/thue/duyet-kho-to-khai", { params: { duong: duong || undefined } });
 
+// ===== HÓA ĐƠN THAY THẾ / ĐIỀU CHỈNH KHÁC KỲ (BR-TK-20) =====
+// Quét, đánh dấu vào HOA_DON.ghi_chu và xuất một file .txt tổng hợp ra JobsRoot.
+export interface DongLienQuan {
+  maDonVi: string;
+  huong: string;
+  khhd: string;
+  soHd: string;
+  ngay: string | null;
+  tenKh: string;
+  loaiXuLy: string;          // Thay thế / Điều chỉnh / Gốc mồ côi
+  trangThai: string;         // tthai_hd nguyên văn của cổng
+  khhdGoc: string;
+  soHdGoc: string;
+  ngayGoc: string | null;
+  thangGoc: number;
+  namGoc: number;
+  tienHang: number;
+  tienVat: number;
+  ghiChuMoi: string;
+  daCoGhiChu: boolean;       // đã đánh dấu từ lượt trước
+}
+
+export interface KetQuaLienQuan {
+  nam: number;
+  thang: number;
+  chiXem: boolean;
+  soDonVi: number;
+  soHoaDon: number;
+  soDaGhi: number;
+  soBoQua: number;
+  duongDanFile: string | null;
+  loi: string[];
+  dong: DongLienQuan[];
+  message: string;
+}
+
+// chiXem = true (mặc định): CHỈ liệt kê + xuất file, KHÔNG ghi vào sổ.
+// Bỏ trống `ma` = quét mọi đơn vị khai thuế.
+export const thueHdLienQuanKhacKy = (
+  thang: number, nam?: number, ma?: string, chiXem = true
+) => api.post<KetQuaLienQuan>("/thue/hd-lien-quan-khac-ky", null,
+       { params: { thang, nam, ma: ma || undefined, chiXem } });
+
 // LƯU file TCT trả về vào kho (tự tạo thư mục kỳ) + nạp 26 chỉ tiêu vào TOKHAI.
 export const thueLuuToKhaiTct = (
   file: File, ma: string, thang: number, nam?: number, ghiChu?: string,

@@ -3001,7 +3001,9 @@ namespace KT2000.Api.Services
             public string SoHd { get; set; } = "";
             public DateTime? Ngay { get; set; }
             public string TenKh { get; set; } = "";
-            public string LoaiXuLy { get; set; } = "";     // Thay thế / Điều chỉnh
+            public string LoaiXuLy { get; set; } = "";     // Thay thế / Điều chỉnh / Gốc mồ côi
+            /// <summary>tthai_hd nguyên văn của cổng — để phân biệt ca gốc mồ côi.</summary>
+            public string TrangThai { get; set; } = "";
             public string KhhdGoc { get; set; } = "";
             public string SoHdGoc { get; set; } = "";
             public DateTime? NgayGoc { get; set; }
@@ -3045,7 +3047,8 @@ namespace KT2000.Api.Services
                    h.ngay_lienquan,
                    CAST(ISNULL(l.tien_hang,0) AS DECIMAL(18,2)),
                    CAST(ISNULL(h.tien_vat,0)  AS DECIMAL(18,2)),
-                   ISNULL(h.ghi_chu,'')
+                   ISNULL(h.ghi_chu,''),
+                   ISNULL(h.tthai_hd,'')
               FROM HOA_DON h
               OUTER APPLY (
                     SELECT SUM(CASE WHEN ISNULL(x.tinh_chat,'1') = '3' THEN 0
@@ -3054,10 +3057,42 @@ namespace KT2000.Api.Services
                       FROM HOA_DON_LINE x WHERE x.ma_hd = h.ma_hd
               ) l
              WHERE h.thang = @thang
-               AND ISNULL(h.tich_chat_hd_lienquan,'') <> ''
-               AND h.ngay_lienquan IS NOT NULL
-               -- KHÁC KỲ: gốc thuộc tháng/năm khác kỳ đang xét
-               AND (MONTH(h.ngay_lienquan) <> @thang OR YEAR(h.ngay_lienquan) <> @nam)
+               AND (
+                 -- ---- NHÓM 1: hóa đơn THAY THẾ/ĐIỀU CHỈNH, gốc thuộc kỳ KHÁC ----
+                 -- Phải CÓ hóa đơn gốc thì mới có chuyện 'khác kỳ'. Cổng có mã liên
+                 -- quan KHÔNG trỏ tới hóa đơn nào (đo thật 15/08: 8 hóa đơn THAI_TUAN
+                 -- mã '5', tthai_hd = 'Hóa đơn mới', bán lẻ cho hộ kinh doanh/cá nhân,
+                 -- cả ba cột khhd/sohd/ngay_lienquan đều trống). Chúng KHÔNG phải thay
+                 -- thế/điều chỉnh, cổng vẫn kê đủ — không được đánh dấu oan.
+                 (    ISNULL(h.tich_chat_hd_lienquan,'') <> ''
+                  AND ISNULL(h.sohd_lienquan,'') <> ''
+                  AND (
+                        (h.ngay_lienquan IS NOT NULL
+                         AND (MONTH(h.ngay_lienquan) <> @thang
+                              OR YEAR(h.ngay_lienquan) <> @nam))
+                        -- Có gốc mà THIẾU ngày: không biết gốc thuộc kỳ nào nên không
+                        -- kết luận được. Vẫn NÊU RA để kế toán tự tra — im lặng bỏ qua
+                        -- mới là bỏ sót. Dòng loại này ghi 'chưa rõ kỳ gốc', không bịa.
+                        OR h.ngay_lienquan IS NULL
+                      ))
+
+                 -- ---- NHÓM 2: hóa đơn GỐC MỒ CÔI ----
+                 -- LIÊN KẾT CHỈ CÓ MỘT CHIỀU: hóa đơn thay thế trỏ về gốc, nhưng hóa
+                 -- đơn GỐC không có cột nào trỏ ngược lại — nó chỉ biết mình 'đã bị
+                 -- thay thế' qua tthai_hd. Bình thường dò ngược được bằng cách tìm ai
+                 -- trỏ tới nó, nhưng bản thay thế có thể nằm ở KỲ KHÁC hoặc CHƯA NẠP,
+                 -- lúc đó hóa đơn gốc thành MỒ CÔI.
+                 --
+                 -- Đo thật 15/08: 9 hóa đơn mồ côi trên 4 đơn vị, tổng VAT > 30 triệu
+                 -- (HUY_THANH HĐ 1297 riêng nó đã 20,6 triệu). Engine vẫn tính ĐÚNG số
+                 -- nhờ BR-TK-06c lọc theo tthai_hd, nhưng kế toán KHÔNG THẤY chúng —
+                 -- mà đây đúng là loại cần nhìn: bản thay thế nằm ở kỳ nào, đã kê chưa.
+                 OR (    ISNULL(h.tthai_hd,'') LIKE N'%đã bị%'
+                     AND NOT EXISTS (
+                           SELECT 1 FROM HOA_DON tt
+                            WHERE tt.thang = h.thang
+                              AND ISNULL(tt.sohd_lienquan,'') = h.so_hd))
+               )
              ORDER BY h.huong, h.so_hd";
 
         /// <summary>
@@ -3085,6 +3120,7 @@ namespace KT2000.Api.Services
                     var ngayGoc = r.IsDBNull(9) ? (DateTime?)null : r.GetDateTime(9);
                     var loai = TenLoai(r.GetString(6));
                     var ghiChuCu = r.GetString(12);
+                    var tthai = r.GetString(13);
 
                     var d = new DongLienQuan
                     {
@@ -3095,6 +3131,7 @@ namespace KT2000.Api.Services
                         Ngay = r.IsDBNull(4) ? null : r.GetDateTime(4),
                         TenKh = r.GetString(5),
                         LoaiXuLy = loai,
+                        TrangThai = tthai,
                         KhhdGoc = r.GetString(7),
                         SoHdGoc = r.GetString(8),
                         NgayGoc = ngayGoc,
@@ -3107,11 +3144,37 @@ namespace KT2000.Api.Services
 
                     // Đủ BỐN thông tin bắt buộc của spec §10.4: loại xử lý, trỏ tới HĐ
                     // nào, kỳ của hóa đơn gốc, và trạng thái đã kê khai lại chưa.
-                    d.GhiChuMoi =
-                        $"{DauHieu} {loai} cho HĐ {d.KhhdGoc}/{d.SoHdGoc} "
-                      + $"ngày {ngayGoc:dd/MM/yyyy} — khác kỳ (gốc thuộc kỳ "
-                      + $"{d.ThangGoc:00}/{d.NamGoc}, xử lý tại kỳ {thang:00}/{nam}) "
-                      + "— Chưa kê khai lại";
+                    //
+                    // BA DẠNG CÂU khác nhau — mỗi dạng nói ĐÚNG cái mình biết, không
+                    // bịa phần không biết:
+                    if (string.IsNullOrWhiteSpace(d.SoHdGoc))
+                    {
+                        // Nhóm 2 — GỐC MỒ CÔI: chính nó bị thay thế/điều chỉnh, nhưng
+                        // không có bản nào trong kỳ trỏ tới. Bản kia ở kỳ khác hoặc
+                        // chưa nạp. Không biết số hóa đơn thay thế nên KHÔNG ghi bừa.
+                        d.LoaiXuLy = "Gốc mồ côi";
+                        d.GhiChuMoi =
+                            $"{DauHieu} Hóa đơn này ĐÃ BỊ thay thế/điều chỉnh "
+                          + $"(trạng thái cổng: {tthai}) nhưng KHÔNG tìm thấy hóa đơn "
+                          + $"thay thế trong kỳ {thang:00}/{nam} — bản thay thế có thể "
+                          + "ở kỳ khác hoặc chưa nạp về sổ. Cần tra lại";
+                    }
+                    else if (ngayGoc == null)
+                    {
+                        // Có gốc nhưng thiếu ngày ⇒ không suy được kỳ gốc.
+                        d.GhiChuMoi =
+                            $"{DauHieu} {loai} cho HĐ {d.KhhdGoc}/{d.SoHdGoc} "
+                          + "— CHƯA RÕ KỲ GỐC (sổ không có ngày hóa đơn gốc), "
+                          + $"xử lý tại kỳ {thang:00}/{nam} — Chưa kê khai lại";
+                    }
+                    else
+                    {
+                        d.GhiChuMoi =
+                            $"{DauHieu} {loai} cho HĐ {d.KhhdGoc}/{d.SoHdGoc} "
+                          + $"ngày {ngayGoc:dd/MM/yyyy} — khác kỳ (gốc thuộc kỳ "
+                          + $"{d.ThangGoc:00}/{d.NamGoc}, xử lý tại kỳ {thang:00}/{nam}) "
+                          + "— Chưa kê khai lại";
+                    }
 
                     ds.Add(d);
                     if (!d.DaCoGhiChu)
@@ -3230,12 +3293,24 @@ namespace KT2000.Api.Services
             sb.AppendLine($"Lập lúc    : {DateTime.Now:dd/MM/yyyy HH:mm:ss}");
             sb.AppendLine(new string('=', 100));
             sb.AppendLine();
-            sb.AppendLine("Ý NGHĨA: các hóa đơn dưới đây là hóa đơn thay thế/điều chỉnh mà HÓA ĐƠN GỐC");
-            sb.AppendLine("thuộc kỳ KHÁC. Engine KHÔNG kê chúng vào tờ khai kỳ này (BR-TK-06b) — đúng như");
-            sb.AppendLine("bản tờ khai cổng TCT trả về. Kỳ GỐC chưa được khai bổ sung tự động; kế toán");
-            sb.AppendLine("phải tự kiểm và kê khai lại kỳ đó khi đã đủ dữ liệu (spec §10.4 trường hợp 2).");
+            sb.AppendLine("File này gom HAI loại hóa đơn cần theo dõi, đều là loại KHÔNG tự xử lý trọn");
+            sb.AppendLine("trong kỳ này nên phải có người nhìn tới:");
             sb.AppendLine();
+            sb.AppendLine("  [1] THAY THẾ / ĐIỀU CHỈNH — GỐC THUỘC KỲ KHÁC");
+            sb.AppendLine("      Engine KHÔNG kê chúng vào tờ khai kỳ này (BR-TK-06b) — đúng như bản tờ");
+            sb.AppendLine("      khai cổng TCT trả về. Nhưng kỳ GỐC chưa được khai bổ sung tự động; kế");
+            sb.AppendLine("      toán phải tự kiểm và kê khai lại kỳ đó (spec §10.4 trường hợp 2).");
+            sb.AppendLine();
+            sb.AppendLine("  [2] GỐC MỒ CÔI — bị thay thế/điều chỉnh mà KHÔNG tìm thấy bản thay thế");
+            sb.AppendLine("      Liên kết trong sổ chỉ có MỘT CHIỀU: hóa đơn thay thế trỏ về gốc, còn");
+            sb.AppendLine("      hóa đơn gốc không có cột nào trỏ ngược lại — nó chỉ biết mình 'đã bị");
+            sb.AppendLine("      thay thế' qua trạng thái của cổng. Bản thay thế nằm ở kỳ khác hoặc chưa");
+            sb.AppendLine("      nạp về sổ. Số tờ khai vẫn ĐÚNG (BR-TK-06c đã loại), nhưng cần tra lại");
+            sb.AppendLine("      xem bản thay thế ở đâu và đã kê khai chưa.");
+            sb.AppendLine();
+            var soMoCoi = kq.Dong.Count(d => string.IsNullOrWhiteSpace(d.SoHdGoc));
             sb.AppendLine($"Tổng: {kq.SoDonVi} đơn vị · {kq.SoHoaDon} hóa đơn "
+                        + $"(khác kỳ {kq.SoHoaDon - soMoCoi} · gốc mồ côi {soMoCoi}) "
                         + $"· đã ghi chú {kq.SoDaGhi} · bỏ qua {kq.SoBoQua} (đã đánh dấu từ trước)");
             sb.AppendLine();
 
@@ -3247,17 +3322,37 @@ namespace KT2000.Api.Services
 
                 foreach (var d in nhom.OrderBy(x => x.Huong).ThenBy(x => x.SoHd))
                 {
+                    var moCoi = string.IsNullOrWhiteSpace(d.SoHdGoc);
                     sb.AppendLine(
-                        $"  {(d.Huong == "RA" ? "BÁN RA" : "MUA VÀO"),-8} "
+                        $"  {(moCoi ? "[2]" : "[1]")} "
+                      + $"{(d.Huong == "RA" ? "BÁN RA" : "MUA VÀO"),-8} "
                       + $"{d.Khhd}/{d.SoHd}  ngày {d.Ngay:dd/MM/yyyy}");
                     sb.AppendLine($"      Đối tác   : {d.TenKh}");
                     sb.AppendLine($"      Loại      : {d.LoaiXuLy}");
-                    sb.AppendLine($"      HĐ gốc    : {d.KhhdGoc}/{d.SoHdGoc} "
-                                + $"ngày {d.NgayGoc:dd/MM/yyyy}  ⇒ KỲ GỐC {d.ThangGoc:00}/{d.NamGoc}");
-                    sb.AppendLine($"      Tiền hàng : {d.TienHang,20:N0}");
-                    sb.AppendLine($"      Tiền VAT  : {d.TienVat,20:N0}");
-                    sb.AppendLine($"      Trạng thái: {(d.DaCoGhiChu ? "đã đánh dấu từ lượt trước" : "vừa đánh dấu")}"
-                                + " — CHƯA kê khai lại kỳ gốc");
+                    sb.AppendLine($"      Cổng ghi  : {d.TrangThai}");
+
+                    if (moCoi)
+                    {
+                        // Không có số hóa đơn gốc để in — in ra là bịa. Nói thẳng cái
+                        // phải làm thay vì để trống một dòng vô nghĩa.
+                        sb.AppendLine( "      HĐ gốc    : KHÔNG tìm thấy bản thay thế trong kỳ này");
+                        sb.AppendLine($"      Tiền hàng : {d.TienHang,20:N0}");
+                        sb.AppendLine($"      Tiền VAT  : {d.TienVat,20:N0}");
+                        sb.AppendLine( "      CẦN LÀM   : tra xem bản thay thế/điều chỉnh nằm ở kỳ nào, "
+                                     + "đã nạp về sổ chưa");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"      HĐ gốc    : {d.KhhdGoc}/{d.SoHdGoc}"
+                            + (d.NgayGoc == null
+                                ? "  ⇒ CHƯA RÕ KỲ GỐC (sổ không có ngày hóa đơn gốc)"
+                                : $" ngày {d.NgayGoc:dd/MM/yyyy}  ⇒ KỲ GỐC {d.ThangGoc:00}/{d.NamGoc}"));
+                        sb.AppendLine($"      Tiền hàng : {d.TienHang,20:N0}");
+                        sb.AppendLine($"      Tiền VAT  : {d.TienVat,20:N0}");
+                        sb.AppendLine( "      CẦN LÀM   : kê khai lại kỳ gốc khi đã đủ dữ liệu");
+                    }
+
+                    sb.AppendLine($"      Đánh dấu  : {(d.DaCoGhiChu ? "đã đánh dấu từ lượt trước" : "vừa đánh dấu")}");
                     sb.AppendLine();
                 }
 
