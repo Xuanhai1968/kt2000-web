@@ -907,7 +907,10 @@ interface DinhKhoan {
   ngayNhapHang: string; khaiThang: number; soPhieuTC: string; nguoiGD: string;
   ghiChu: string;
   hoaDonHuy: boolean; daIn: boolean; printPreview: boolean; chiInMotTrang: boolean;
-  soSanhDuLieu: boolean; khongKiemTraTen: boolean;
+  // soSanhDuLieu KHÔNG nằm ở đây: xem state cùng tên trong component. Bộ này lưu THEO
+  // TỪNG HÓA ĐƠN (dinhKhoanTheoFile[maHd]), nên cờ nào để nhầm vào đây sẽ bị đặt lại
+  // mỗi lần chọn hóa đơn khác.
+  khongKiemTraTen: boolean;
   coDuLieuGoc: boolean; dungTkNganHang: boolean; banHangQuaDienThoai: boolean;
   tenHangLaBangKe: boolean;
   suaTienCk: boolean; suaTienVat: boolean;
@@ -924,7 +927,7 @@ const dinhKhoanRong = (): DinhKhoan => ({
   maCtNo: "", maCtCo: "", dtkt: "", thuongVu: "",
   ngayNhapHang: "", khaiThang: 0, soPhieuTC: "", nguoiGD: "", ghiChu: "XML File-",
   hoaDonHuy: false, daIn: false, printPreview: true, chiInMotTrang: false,
-  soSanhDuLieu: false, khongKiemTraTen: true,
+  khongKiemTraTen: true,
   coDuLieuGoc: false, dungTkNganHang: false, banHangQuaDienThoai: false,
   tenHangLaBangKe: false,
   suaTienCk: false, suaTienVat: true,
@@ -944,6 +947,12 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
   const [moDanhSach, setMoDanhSach] = useState(false);
   const [dinhKhoanTheoFile, setDinhKhoanTheoFile] =
     useState<Record<string, DinhKhoan>>({});
+
+  // Chế độ ĐỐI CHIẾU của cả màn hình, KHÔNG phải thuộc tính của một hóa đơn — nên phải
+  // là state riêng, không nằm trong DinhKhoan. Trước đây để trong đó: bấm chọn hóa đơn
+  // khác là dk nhảy sang bộ của hóa đơn mới (mặc định tắt), lưới đang so sánh tự dựng
+  // lại về bảng thường ngay dưới tay người dùng.
+  const [soSanhDuLieu, setSoSanhDuLieu] = useState(false);
 
   const hd = dsHd.find((x) => x.maHd === tenFileChon) ?? null;
   const tenDoiTac = hd?.tenKh ?? "";
@@ -1461,8 +1470,11 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
 
               {/* Cụm nút giữa form */}
               <div className="hang" style={{ marginTop: 4, flexWrap: "wrap" }}>
-                <Checkbox checked={dk.soSanhDuLieu}
-                          onChange={(e) => suaDk({ soSanhDuLieu: e.target.checked })}>
+                {/* KHÔNG dùng suaDk: đây là chế độ xem của màn hình, mà suaDk ghi vào bộ
+                    định khoản của riêng hóa đơn đang chọn. Ô này cũng không cần chọn
+                    hóa đơn trước mới bấm được — suaDk thì return sớm khi chưa chọn. */}
+                <Checkbox checked={soSanhDuLieu}
+                          onChange={(e) => setSoSanhDuLieu(e.target.checked)}>
                   So sánh dữ liệu
                 </Checkbox>
                 {nutChuaNoi("Ghi lại HĐ lỗi", "nut-cam")}
@@ -1742,6 +1754,10 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
         onXemHtml={xemHtml}
         onLamMoi={() => napHoaDon(true)}
         dangTai={tai}
+        // Ô tích "So sánh dữ liệu" ở form quyết định danh sách mở ra ở chế độ nào.
+        // Đọc tại lúc render nên tích/bỏ tích rồi bấm Tìm lại là đổi ngay, không phải
+        // đóng mở lại màn hình.
+        soSanh={soSanhDuLieu}
       />
 
       <XemHtmlHoaDon

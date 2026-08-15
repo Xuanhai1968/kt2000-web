@@ -142,6 +142,82 @@ namespace KT2000.Api.Services
         };
 
         /// <summary>
+        /// Bản gốc TCT của từng hóa đơn (IN_VALUE_LINE) để màn danh sách đối chiếu.
+        /// </summary>
+        /// <remarks>
+        /// LƯỢT GỌI RIÊNG, cố ý KHÔNG ghép vào SqlChonHoaDon. Hai lý do:
+        ///   • IN_VALUE_LINE chưa tồn tại trên mọi database — bốn DB đời đầu chỉ có bảng
+        ///     này sau khi bản vá 021 chạy, mà bản vá chỉ chạy lúc NẠP. Ghép vào câu SQL
+        ///     chính là cả màn sổ thuế chết bằng "Invalid object name" ở đúng bốn đơn vị
+        ///     đó — cùng loại bẫy đã ghi ở đầu file với script 015.
+        ///   • Chỉ chế độ so sánh mới cần, mà phần lớn thời gian người dùng không bật.
+        /// Bảng chưa có thì trả danh sách RỖNG chứ không ném: màn hình hiện cột gốc trống,
+        /// đúng nghĩa "chưa có bản gốc để đối chiếu".
+        /// </remarks>
+        public async Task<List<DoiChieuHdDto>> LayDoiChieu(string code, int nam, string? huong)
+        {
+            using var conn = await OpenAsync(code, nam);
+
+            using (var doBang = new SqlCommand(
+                "SELECT CASE WHEN OBJECT_ID('IN_VALUE_LINE') IS NULL THEN 0 ELSE 1 END", conn))
+                if (Convert.ToInt32(await doBang.ExecuteScalarAsync()) == 0)
+                    return new List<DoiChieuHdDto>();
+
+            // Tiền hàng của SỔ tính lại bằng ĐÚNG công thức phép kiểm Σ lúc nạp:
+            //   • làm tròn về đồng ở TỪNG DÒNG rồi mới cộng (chốt Trường 14/08) — giữ
+            //     phần lẻ của mọi dòng rồi mới cộng là tự đẻ ra sai số bản gốc không có;
+            //   • dòng CHIẾT KHẤU (tinh_chat = 3) ghi số DƯƠNG trong sổ nhưng bản chất
+            //     là TRỪ, nên đảo dấu;
+            //   • trừ tiếp chiết khấu của từng dòng (tien_ck).
+            // NGOẠI LỆ hóa đơn chiết khấu thương mại đứng riêng — mọi dòng đều tinh_chat=3:
+            // cổng khai số dương và sổ cũng vậy, đảo dấu là sai gấp đôi.
+            // Đo 15/08 trên 49 hóa đơn tháng 8 HOA_SANG: công thức này lệch 0, còn lấy
+            // thẳng Σ(SL×ĐG) thì 6 hóa đơn lệch giả.
+            //
+            // Lọc hướng qua IN_VALUE.loai_ct (V/R) — một hóa đơn chỉ nằm ở đúng một chiều.
+            var ds = new List<DoiChieuHdDto>();
+            using var cmd = new SqlCommand(
+                @"SELECT g.ma_hd,
+                         CASE WHEN s.dong_khac_ck = 0 THEN ISNULL(s.tong_duong, 0)
+                                                      ELSE ISNULL(s.tong_co_dau, 0) END
+                             - ISNULL(s.ck, 0)                    AS tien_hang_so,
+                         ISNULL(h.tien_vat, 0)                    AS tien_vat_so,
+                         g.value1, g.tax, g.ghi_chu_m
+                    FROM IN_VALUE_LINE g
+                    JOIN IN_VALUE v ON v.ma_input = g.ma_input
+                    JOIN HOA_DON  h ON h.ma_hd    = g.ma_hd
+                    OUTER APPLY (
+                        SELECT SUM(ROUND(ISNULL(x.so_luong,0) * ISNULL(x.don_gia,0), 0))
+                                   AS tong_duong,
+                               SUM(ROUND(ISNULL(x.so_luong,0) * ISNULL(x.don_gia,0), 0)
+                                   * CASE WHEN x.tinh_chat = 3 THEN -1 ELSE 1 END)
+                                   AS tong_co_dau,
+                               SUM(ISNULL(x.tien_ck, 0)) AS ck,
+                               SUM(CASE WHEN ISNULL(x.tinh_chat,0) <> 3 THEN 1 ELSE 0 END)
+                                   AS dong_khac_ck
+                          FROM HOA_DON_LINE x WHERE x.ma_hd = h.ma_hd
+                    ) s
+                   WHERE g.ma_hd IS NOT NULL
+                     AND (@lc IS NULL OR v.loai_ct = @lc)", conn);
+            cmd.Parameters.AddWithValue("@lc",
+                huong == null ? DBNull.Value
+              : huong.Equals("RA", StringComparison.OrdinalIgnoreCase) ? "R" : "V");
+
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+                ds.Add(new DoiChieuHdDto
+                {
+                    MaHd        = r.GetString(0),
+                    TienHangSo  = r.GetDecimal(1),
+                    TienVatSo   = r.GetDecimal(2),
+                    TienHangGoc = r.GetDecimal(3),
+                    TienVatGoc  = r.GetDecimal(4),
+                    TthaiGoc    = r.IsDBNull(5) ? null : r.GetString(5),
+                });
+            return ds;
+        }
+
+        /// <summary>
         /// Danh sách hóa đơn, mới nhất trước. Lọc theo hướng (VAO/RA), tháng và từ khóa.
         /// Không kèm dòng hàng — gọi <see cref="LayChiTiet"/> khi cần.
         /// </summary>

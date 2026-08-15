@@ -250,6 +250,35 @@ export interface TctCredentialXem {
 export const xemTctCredential = (tenantId: string) =>
   api.get<TctCredentialXem>("/admin/tct-credential/xem", { params: { tenantId } });
 
+// Sổ so với bản gốc TCT (IN_VALUE_LINE — số của file Excel danh sách của cổng).
+// Chỉ gọi khi bật "So sánh dữ liệu": phần lớn thời gian không ai cần, mà đơn vị nào
+// chưa nạp lại thì bảng gốc còn trống nên gọi cũng chẳng ra gì.
+//
+// tienHangSo KHÔNG bằng cột tienHang của danh sách hóa đơn: cột kia là Σ(SL×ĐG) thuần,
+// còn cái này đã trừ chiết khấu và đảo dấu dòng chiết khấu — xem DoiChieuHdDto bên
+// backend. Đừng thay bằng x.tienHang cho tiện, mọi HĐ có chiết khấu sẽ báo lệch giả.
+export interface DoiChieuHd {
+  maHd: string;
+  tienHangSo: number;
+  tienVatSo: number;
+  tienHangGoc: number;
+  tienVatGoc: number;
+  tthaiGoc: string | null;
+}
+export const layDoiChieuHd = (huong: "vao" | "ra") =>
+  api.get<DoiChieuHd[]>("/thue/hoa-don/doi-chieu", { params: { huong } });
+
+// Dựng lại bản gốc từ file Excel danh sách đã có trên đĩa — KHÔNG vào mạng, KHÔNG đụng
+// sổ. Dành cho hóa đơn nạp trước 15/08 nên chưa có dòng trong IN_VALUE_LINE.
+export interface KetQuaDungGoc {
+  soFile: number;
+  them: number;
+  sua: number;
+  loi: string[];
+}
+export const dungBanGocTct = (huong: "vao" | "ra") =>
+  api.post<KetQuaDungGoc>("/thue/hoa-don/dung-ban-goc", null, { params: { huong } });
+
 export interface TienDoLay {
   tenantId: string;
   code: string;

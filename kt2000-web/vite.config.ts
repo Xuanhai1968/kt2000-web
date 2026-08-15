@@ -5,8 +5,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 5173,
-    strictPort: true,
+    // port: 5173,
+    // strictPort: true,
     // Backend chạy cổng 5000. Đổi ở đây thì phải đổi khớp cả "Urls" trong
     // appsettings.json và CORS trong Program.cs — lệch một chỗ là frontend gọi API
     // ra 404/CORS mà nhìn màn hình không đoán nổi vì sao.

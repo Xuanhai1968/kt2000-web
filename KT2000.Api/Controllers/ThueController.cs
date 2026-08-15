@@ -23,14 +23,16 @@ namespace KT2000.Api.Controllers
         private readonly ToKhaiService _toKhai;
         private readonly IConfiguration _config;
         private readonly AppDbContext _db;
+        private readonly ImportService _import;
         public ThueController(ThueService thue, RaSoatService raSoat, ToKhaiService toKhai,
-                              IConfiguration config, AppDbContext db)
+                              IConfiguration config, AppDbContext db, ImportService import)
         {
             _thue = thue;
             _raSoat = raSoat;
             _toKhai = toKhai;
             _config = config;
             _db = db;
+            _import = import;
         }
 
         // MST của đơn vị đang đăng nhập, đọc từ Master. Dùng để suy hướng hóa đơn khi
@@ -88,6 +90,51 @@ namespace KT2000.Api.Controllers
                                            ChuanHoaHuong(huong), thang,
                                            string.IsNullOrWhiteSpace(tu) ? null : tu,
                                            Math.Clamp(gioiHan, 1, 2000)));
+        }
+
+        /// <summary>
+        /// GET api/thue/hoa-don/doi-chieu?huong=VAO — sổ so với bản gốc TCT, cả năm, để màn
+        /// danh sách hiện cột lệch khi bật "So sánh dữ liệu".
+        ///
+        /// PHẢI đứng TRƯỚC hoa-don/{maHd}, không thì "doi-chieu" bị nuốt thành một mã hóa
+        /// đơn và endpoint này không bao giờ được gọi tới.
+        ///
+        /// Trả CẢ NĂM chứ không lọc tháng: màn danh sách tự lọc tháng ở phía nó, mà gọi lại
+        /// mỗi lần đổi bộ lọc thì vừa chậm vừa dễ lệch với lưới đang hiển thị.
+        /// </summary>
+        [HttpGet("hoa-don/doi-chieu")]
+        public async Task<IActionResult> DoiChieu([FromQuery] string? huong)
+        {
+            var chan = ChanNeuLaNoiBo();
+            if (chan != null) return chan;
+            return Ok(await _thue.LayDoiChieu(TenantCode(), FiscalYear(), ChuanHoaHuong(huong)));
+        }
+
+        /// <summary>
+        /// POST api/thue/hoa-don/dung-ban-goc?huong=VAO — dựng lại bản gốc TCT của cả năm
+        /// từ file Excel danh sách đã có trên đĩa. KHÔNG vào mạng, KHÔNG đụng sổ.
+        ///
+        /// Dành cho hóa đơn nạp TRƯỚC 15/08 (lúc IN_VALUE_LINE chưa được ghi) nên không có
+        /// gì để đối chiếu. Bấm một lần là đủ; chạy lại vô hại vì DoiChieuService chỉ thêm
+        /// dòng thiếu và thay dòng đổi số.
+        ///
+        /// PHẢI đứng TRƯỚC hoa-don/{maHd} — cùng lý do với doi-chieu ở trên.
+        /// </summary>
+        [HttpPost("hoa-don/dung-ban-goc")]
+        public async Task<IActionResult> DungBanGoc([FromQuery] string? huong)
+        {
+            var chan = ChanNeuLaNoiBo();
+            if (chan != null) return chan;
+
+            var code = TenantCode();
+            var tenantId = await _db.Tenants.Where(t => t.Code == code)
+                                            .Select(t => (Guid?)t.Id).FirstOrDefaultAsync();
+            if (tenantId == null)
+                return BadRequest(new { message = $"Không tìm thấy đơn vị {code}" });
+
+            return Ok(await _import.DungLaiBanGoc(
+                tenantId.Value, FiscalYear(), ChuanHoaHuong(huong) ?? "VAO",
+                User.Identity?.Name ?? "he_thong"));
         }
 
         /// <summary>
