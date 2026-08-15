@@ -32,6 +32,8 @@
                       LogicalName="KT2000.Api.va_019_dinh_khoan_kieu.sql" />
     <EmbeddedResource Include="..\database\020_hoa_don_line_pt_vat_int.sql"
                       LogicalName="KT2000.Api.va_020_pt_vat_int.sql" />
+    <EmbeddedResource Include="..\database\021_in_value_bu_bang.sql"
+                      LogicalName="KT2000.Api.va_021_in_value.sql" />
 
     <!-- Bộ tải HĐ của TCT đi kèm bản build: TctFetchService gọi nó bằng Process.Start
          theo đường dẫn <thư mục exe>\tools\. Copy chứ không nhúng, vì python.exe cần

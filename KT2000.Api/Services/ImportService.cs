@@ -40,9 +40,10 @@ namespace KT2000.Api.Services
         private readonly IConfiguration _config;
         private readonly VaCauTrucService _va;
         private readonly DanhMucService _dm;
+        private readonly DoiChieuService _dc;
         public ImportService(AppDbContext db, TenantDbResolver resolver, IConfiguration config,
-                             VaCauTrucService va, DanhMucService dm)
-        { _db = db; _resolver = resolver; _config = config; _va = va; _dm = dm; }
+                             VaCauTrucService va, DanhMucService dm, DoiChieuService dc)
+        { _db = db; _resolver = resolver; _config = config; _va = va; _dm = dm; _dc = dc; }
 
         public async Task<KetQuaNapJob> ImportJob(ImportJobRequest req, string userName)
         {
@@ -71,6 +72,9 @@ namespace KT2000.Api.Services
             // nằm trong Excel. Vẫn nạp bình thường, chỉ không có file để dời — đếm riêng
             // để khỏi bị hiểu nhầm là "thiếu file" (spec 1.3.4).
             int khongCoGoc = 0;
+            // Bảng đối chiếu bản gốc TCT (IN_VALUE_LINE): số dòng thêm mới và số dòng bị
+            // thay vì cổng khai lại khác đi.
+            int dongGocMoi = 0, dongGocSua = 0;
 
             // Số liệu tách theo hướng ("VAO" / "RA"). TheoH() tự tạo ô khi gặp hướng mới,
             // nên chỉ nạp một hướng thì từ điển chỉ có đúng một khóa — màn hình dựa vào
@@ -125,6 +129,11 @@ namespace KT2000.Api.Services
                     throw new ArgumentException(
                         $"File {huong}: NAM trong file ({namFile}) khác năm đích ({req.Nam}) — từ chối cả job");
 
+                // Bản gốc TCT của hướng này, gom lại để ghi MỘT lượt cuối vòng — mỗi kỳ kê
+                // khai chỉ mở một transaction thay vì mỗi hóa đơn một cái.
+                var dsGoc = new List<DoiChieuService.DongGoc>();
+                var maHdDaGhi = new HashSet<string>(StringComparer.Ordinal);
+
                 // ---- Gom LINE theo MA_HD ----
                 var linesByHd = new Dictionary<string, List<IXLRow>>();
                 foreach (var r in wsL.RowsUsed().Skip(1))
@@ -150,6 +159,11 @@ namespace KT2000.Api.Services
                         errors.Add(new LoiNap(maHd, huong, "KHONG_RO_NGAY",
                             "Không đọc được NGAY_HD/NGAY_HD_G")); continue; }
                     if (ngay.Value.Year != req.Nam) { skippedYear++; continue; }  // BR-IMP-01 lớp DÒNG
+
+                    // Bản gốc TCT: chép thẳng dòng Excel danh sách sang bảng đối chiếu,
+                    // TRƯỚC mọi phép kiểm. Hóa đơn bị đá ra vì lệch Σ vẫn phải nằm đây —
+                    // "cổng có mà sổ chưa có" chính là thứ đối chiếu sinh ra để thấy.
+                    dsGoc.Add(DongGocTuExcel(r, M, huong, maHd, ngay.Value));
 
                     var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
 
@@ -285,6 +299,10 @@ namespace KT2000.Api.Services
                         // hai con số không bao giờ lệch nhau.
                         if (existed) TheoH(huong).Updated++; else TheoH(huong).Inserted++;
                         ghiXong = true;
+                        // Chỉ hóa đơn THỰC SỰ vào được HOA_DON mới được mang ma_hd sang bảng
+                        // đối chiếu. Điền sẵn cho dòng bị đá ra là trỏ tới bản ghi không tồn
+                        // tại, mà cột đó quy ước NULL = chưa khớp.
+                        maHdDaGhi.Add(maHd);
                     }
                     catch (Exception ex)
                     {
@@ -309,13 +327,20 @@ namespace KT2000.Api.Services
                             $"Đã ghi DB nhưng không dời được file: {ex.Message}"));
                     }
                 }
+
+                var kqGoc = _dc.Ghi(conn, huong, tenant.KhaiQuy,
+                    dsGoc.Select(d => maHdDaGhi.Contains(d.MaHd!) ? d : d with { MaHd = null })
+                         .ToList(),
+                    userName);
+                dongGocMoi += kqGoc.Them; dongGocSua += kqGoc.Sua;
             }
 
             await UpsertTaskStatus(tenant.Id, req.Nam, req.Thang, "NAP_HD",
                 errors.Count == 0 ? "done" : "done_thieu",
                 inserted + updated,
                 $"Mới {inserted}, cập nhật {updated}, lệch năm {skippedYear}, không rõ ngày {skippedNoDate}, "
-              + $"không có gốc {khongCoGoc}, lỗi {errors.Count}",
+              + $"không có gốc {khongCoGoc}, đối chiếu +{dongGocMoi}/thay {dongGocSua}, "
+              + $"lỗi {errors.Count}",
                 userName);
 
             await LuuLoiNap(tenant.Id, req.Nam, req.Thang, errors, userName);
@@ -880,6 +905,37 @@ namespace KT2000.Api.Services
         // cBase: kết nối tới KT2000_Base để tra/cấp mã khách. Truyền kết nối chứ không
         // truyền sẵn ma_kh vì chính hàm này mới biết MST của đối tác là bên bán hay bên
         // mua — tùy hướng hóa đơn.
+        // Một dòng Excel danh sách → một dòng bản gốc TCT (IN_VALUE_LINE).
+        // Đọc THẲNG từ Excel, KHÔNG mượn lại masterVal của phép kiểm Σ: chỗ đó đã qua mấy
+        // lượt suy ngược (trừ thuế ra, đổi sang tổng đã gồm VAT cho HĐ không có gốc) để so
+        // cho đúng cặp. Bảng này phải là bản chép của cổng, suy diễn thì hết là bản gốc.
+        // khhd ghép KIEU_HD + ký hiệu, y hệt HOA_DON.khhd — hai bảng phải khớp được nhau.
+        private static DoiChieuService.DongGoc DongGocTuExcel(
+            IXLRow r, Dictionary<string,int> M, string huong, string maHd, DateTime ngay)
+        {
+            decimal value1    = N2(r, M, "TIEN_HANG", "TT_HD_G");
+            decimal tax       = N2(r, M, "TIEN_VAT",  "TVAT_HD_G");
+            decimal thanhToan = N(r, M, "TONG_TIEN");
+
+            // Hóa đơn HỘ KINH DOANH: cổng chỉ khai tổng thanh toán, không có dòng tiền
+            // trước thuế — vì loại này không có thuế GTGT (chốt Trường 15/08). Lấy tổng
+            // làm tiền hàng và ép thuế về 0; để value1 = 0 thì cả kỳ hụt đúng số tiền đó.
+            if (value1 == 0 && thanhToan != 0) { value1 = thanhToan; tax = 0; }
+
+            return new DoiChieuService.DongGoc(
+                S(r, M, "KIEU_HD") + S2(r, M, "KHHD", "KHHD_G"),
+                ChuanSoHd(S2(r, M, "SO_HD", "SO_HD_G")),
+                ngay,
+                huong == "VAO" ? S(r, M, "MST_BAN") : S(r, M, "MST_MUA"),
+                huong == "VAO" ? S(r, M, "TEN_BAN") : S(r, M, "TEN_MUA"),
+                value1, tax, N2(r, M, "TIEN_CK", "TIEN_CK_G"), maHd,
+                // Cột "Trạng thái hóa đơn" của Excel danh sách → ghi_chu_m. Cùng nguồn với
+                // HOA_DON.tthai_hd, nhưng bên đó là trạng thái MỚI NHẤT còn bên này ghi lại
+                // trạng thái từng lần nạp — chênh nhau chính là dấu hiệu hóa đơn bị thay
+                // thế hay điều chỉnh sau khi đã lên sổ.
+                S(r, M, "TTHAI_HD"));
+        }
+
         private bool UpsertMaster(SqlConnection c, SqlTransaction tx, IXLRow r,
                                   Dictionary<string,int> M, string huong, string maHd,
                                   string user, bool khaiQuy, decimal tienHang,

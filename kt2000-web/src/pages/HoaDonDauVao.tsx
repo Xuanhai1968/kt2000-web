@@ -5,7 +5,8 @@ import {
 } from "antd";
 import {
   getAdminTenants, getLeftoverFiles, getRawFiles, getRawHtml, importOne,
-  getTctCredential, saveTctCredential, fetchStart, fetchProgress, fetchStop,
+  getTctCredential, saveTctCredential, xemTctCredential,
+  fetchStart, fetchProgress, fetchStop,
   loiApi, thueDanhSachHoaDon, thueChiTietHoaDon, thueHtmlHoaDon,
   thueLinesNhieuHoaDon, thueLuuLinesHoaDon,
 } from "../api";
@@ -308,6 +309,22 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
   const [mkMo, setMkMo] = useState(false);
   const [mkGiaTri, setMkGiaTri] = useState("");
   const [mkDaCo, setMkDaCo] = useState<Record<string, boolean>>({});
+  const [mkDangTai, setMkDangTai] = useState(false);
+
+  // Mở hộp mật khẩu: đơn vị đã khai rồi thì đổ sẵn mật khẩu hiện tại vào ô, để người
+  // trực đọc được mà đăng nhập tay khi bộ tải hỏng — kể cả mật khẩu do người khác đổi.
+  // Lấy bằng lượt gọi RIÊNG (có ghi nhật ký) chứ không lấy sẵn lúc dựng màn hình.
+  const moHopMatKhau = () => {
+    setMkGiaTri("");
+    setMkMo(true);
+    if (!donViDangChon || !mkDaCo[donViDangChon.id]) return;
+    setMkDangTai(true);
+    xemTctCredential(donViDangChon.id)
+      .then((r) => setMkGiaTri(r.data.matKhau))
+      // Không đọc được thì cứ để ô trống — vẫn nhập đè được như trước, đừng chặn việc lưu
+      .catch(() => {})
+      .finally(() => setMkDangTai(false));
+  };
 
   // Hỏi tiến độ mỗi 2 giây khi còn phiên chạy — nguồn là status.json của script
   useEffect(() => {
@@ -597,7 +614,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
             Xem file còn lại{soFileCuaDonViChon > 0 ? ` (${soFileCuaDonViChon})` : ""}
           </Button>
           <Button size="small" disabled={!donViDangChon}
-                  onClick={() => { setMkGiaTri(""); setMkMo(true); }}>
+                  onClick={moHopMatKhau}>
             Mật khẩu cổng TCT
             {donViDangChon ? (mkDaCo[donViDangChon.id] ? " — đã có" : " — CHƯA có") : ""}
           </Button>
@@ -737,10 +754,12 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
       >
         <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
           MST lấy sẵn từ hồ sơ đơn vị: <b>{donViDangChon?.taxCode || "(chưa có MST)"}</b>.
-          Chỉ cần nhập mật khẩu. Mật khẩu được mã hóa trước khi lưu và không bao giờ
-          hiển thị lại — muốn đổi thì nhập đè.
+          Chỉ cần nhập mật khẩu. Mật khẩu lưu nguyên văn nên xem lại được bất cứ lúc nào,
+          kể cả khi người khác vừa đổi — muốn đổi thì nhập đè rồi bấm Lưu.
         </Typography.Paragraph>
-        <Input.Password autoFocus placeholder="Mật khẩu cổng hoadondientu.gdt.gov.vn"
+        <Input.Password autoFocus placeholder={mkDangTai
+                          ? "Đang lấy mật khẩu hiện tại…"
+                          : "Mật khẩu cổng hoadondientu.gdt.gov.vn"}
                         value={mkGiaTri} onChange={(e) => setMkGiaTri(e.target.value)}
                         onPressEnter={luuMatKhau} />
       </Modal>

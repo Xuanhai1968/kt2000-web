@@ -238,9 +238,17 @@ export interface TctCredentialInfo {
 export const getTctCredential = (tenantId: string) =>
   api.get<TctCredentialInfo>("/admin/tct-credential", { params: { tenantId } });
 
-// Mật khẩu đi MỘT CHIỀU: gửi lên rồi mã hóa lưu, không có API nào đọc ngược ra
 export const saveTctCredential = (tenantId: string, matKhau: string) =>
   api.put("/admin/tct-credential", { tenantId, matKhau });
+
+// Đọc ngược mật khẩu ra. Đường RIÊNG chứ không gộp vào getTctCredential: mỗi lượt gọi
+// đây đều ghi một dòng nhật ký, mà getTctCredential thì màn hình tự gọi mỗi lần đổi đơn vị.
+export interface TctCredentialXem {
+  code: string;
+  matKhau: string;
+}
+export const xemTctCredential = (tenantId: string) =>
+  api.get<TctCredentialXem>("/admin/tct-credential/xem", { params: { tenantId } });
 
 export interface TienDoLay {
   tenantId: string;

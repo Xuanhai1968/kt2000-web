@@ -32,6 +32,7 @@ namespace KT2000.Api.Services
             (12, "KT2000.Api.va_017_loai_thue.sql"),
             (13, "KT2000.Api.va_019_dinh_khoan_kieu.sql"),
             (14, "KT2000.Api.va_020_pt_vat_int.sql"),
+            (15, "KT2000.Api.va_021_in_value.sql"),
         };
 
         // KHÔNG có khái niệm "phiên bản mới nhất" — xem giải thích ở DocCacPhienBan.

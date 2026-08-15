@@ -110,7 +110,22 @@ namespace KT2000.Api.Services
 
         public PhienLay LayTienDo() => _phien;
 
-        public string MaHoa(string matKhauTho) => _protector.Protect(matKhauTho);
+        // Mật khẩu cổng TCT lưu THẲNG, không mã hóa (chốt Trường 15/08).
+        //
+        // VÌ SAO: mã hóa hai chiều bằng Data Protection ràng mật khẩu vào thư mục dp-keys
+        // của đúng một máy. Đổi máy, mất khóa, hay dựng lại server là không ai đọc được
+        // nữa — kể cả người vừa tự tay nhập. Trường cần mở ra xem được mật khẩu hiện tại,
+        // kể cả khi người khác vừa đổi, nên đổi lấy sự tiện đó.
+        //
+        // ĐÁNH ĐỔI, ghi rõ để người sau khỏi tưởng là sơ suất: ai đọc được database —
+        // kể cả qua một file .bak nằm trên ổ đĩa hay gửi qua mạng — là có mật khẩu cổng
+        // thuế của TOÀN BỘ khách hàng. Đây là mật khẩu của HỌ, không phải của mình.
+        //
+        // KHÔNG xóa đường mã hóa: bật lại chỉ cần đặt BaoMat:MaHoaMatKhauTct = true trong
+        // appsettings, và GiaiMa đọc được cả hai kiểu nên bật/tắt lúc nào cũng được.
+        public string MaHoa(string matKhauTho)
+            => _config.GetValue("BaoMat:MaHoaMatKhauTct", false)
+             ? _protector.Protect(matKhauTho) : matKhauTho;
 
         // ---------- Khởi động một phiên ----------
         // NT-03: lấy xong là nạp luôn, không còn bước hai. xoaTruocKhiGhi đi kèm xuống
@@ -535,12 +550,21 @@ namespace KT2000.Api.Services
             catch { /* file đang được ghi dở */ }
         }
 
-        private string GiaiMa(string maHoa)
+        // Đọc được CẢ HAI kiểu lưu: bản mã hóa từ trước, và bản thẳng từ 15/08 trở đi.
+        // Tính đến 15/08 thì CẢ 12 đơn vị vẫn đang giữ bản mã hóa, nên nhánh này còn sống
+        // lâu — chỉ mất đi khi từng đơn vị được nhập đè mật khẩu.
+        //
+        // TIỀN TỐ "CfDJ8" là header cố định của Data Protection. Phải xét nó, không thì
+        // dp-keys mất là hàm trả về nguyên chuỗi mã hóa và màn hình hiện "CfDJ8AbC…" như
+        // thể đó là mật khẩu thật — sai kiểu tệ nhất, vì trông y như đang chạy đúng.
+        internal string GiaiMa(string luuTru)
         {
-            try { return _protector.Unprotect(maHoa); }
+            if (string.IsNullOrEmpty(luuTru)) return "";
+            if (!luuTru.StartsWith("CfDJ8", StringComparison.Ordinal)) return luuTru;
+            try { return _protector.Unprotect(luuTru); }
             catch (Exception ex)
             {
-                _log.LogError(ex, "Không giải mã được mật khẩu TCT — khóa Data Protection có thể đã đổi");
+                _log.LogError(ex, "Không giải mã được mật khẩu TCT — khóa dp-keys có thể đã đổi");
                 return "";
             }
         }
