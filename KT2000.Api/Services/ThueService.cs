@@ -73,17 +73,65 @@ namespace KT2000.Api.Services
         // "Invalid column name" trên DB thuần thuế (TUAN_NGA_2025, HUY_THANH_2025/2026 chưa
         // chạy 015). Giữ SELECT trong phạm vi cột chuẩn thì mọi DB đơn vị đều chạy được.
 
-        // Tiền hàng và số dòng KHÔNG có cột sẵn trên HOA_DON — gộp từ HOA_DON_LINE.
-        // Gom bằng subquery thay vì JOIN + GROUP BY để không phải nhóm lại toàn bộ
-        // ~40 cột của HOA_DON chỉ để cộng hai con số.
+        // Gộp từ HOA_DON_LINE: tiền hàng, số dòng, thuế suất đại diện. Dùng OUTER APPLY
+        // thay vì JOIN + GROUP BY để không phải nhóm lại toàn bộ ~40 cột của HOA_DON.
+        //
+        // MỘT biểu thức tiền hàng DUY NHẤT, dùng chung cho câu chọn hóa đơn và câu đối
+        // chiếu. Trước đây câu chọn tính SUM(so_luong × don_gia) thuần nên CỘNG luôn dòng
+        // chiết khấu thay vì trừ — cột Tiền HĐ vống lên đúng HAI LẦN số chiết khấu.
+        //   Ca thật HOA_SANG 1C26THT/0002601 (15/08): hiện 19.207.500,05 trong khi đúng là
+        //   18.542.500,05; kiểm chéo 1.483.400 ÷ 8% = 18.542.500 — khớp con số đúng.
+        // Giữ hai công thức song song là tái lập đúng cái vênh vừa sửa, nên gom về đây.
+        //
+        // Đảo dấu dòng chiết khấu (tinh_chat = 3) rồi trừ tiếp chiết khấu của dòng.
+        // Ngoại lệ hóa đơn TOÀN dòng chiết khấu thì KHÔNG đảo dấu — xem
+        // ImportService.TongTienHangTuLine để biết vì sao từng bước.
+        //
+        // KHÁC ImportService một điểm, cố ý: ở đây KHÔNG làm tròn từng dòng. Bên kia làm
+        // tròn vì nó KIỂM số của mình với số cổng khai, mà cổng làm tròn từng dòng khi in
+        // hóa đơn. Còn đây là số ĐEM HIỆN cho kế toán, nên phải đúng bằng tổng thật.
+        //   Ca 1C26THT/0002601: làm tròn ra 18.542.499, không làm tròn ra 18.542.500,05 —
+        //   hóa đơn giấy ghi 18.542.500, lệch 1đ là thứ kế toán sẽ hỏi mà không ai giải
+        //   thích nổi. Chênh lệch giữa hai cách luôn dưới vài đồng nên không đủ chạm
+        //   ngưỡng 10đ của cột Lệch.
+        //
+        // Đo 15/08 trên HOA_SANG_2026 + HUY_THANH_2026: 44 hóa đơn có chiết khấu, KHÔNG
+        // cái nào khai chiết khấu chỉ ở master — luôn có dòng TC=3 hoặc tien_ck ở dòng.
+        // Nên chỉ cần đọc dòng là đủ, không phải đụng tới h.tien_ck.
+        private const string SqlGopTuLine = @"
+              OUTER APPLY (
+                    SELECT SUM(ISNULL(x.so_luong, 0) * ISNULL(x.don_gia, 0))
+                               AS tong_duong,
+                           SUM(ISNULL(x.so_luong, 0) * ISNULL(x.don_gia, 0)
+                               * CASE WHEN x.tinh_chat = 3 THEN -1 ELSE 1 END)
+                               AS tong_co_dau,
+                           SUM(ISNULL(x.tien_ck, 0)) AS ck,
+                           SUM(CASE WHEN ISNULL(x.tinh_chat, 0) <> 3 THEN 1 ELSE 0 END)
+                               AS dong_khac_ck,
+                           COUNT(*) AS so_dong,
+                           -- Thuế suất ĐẠI DIỆN của hóa đơn, để lùi về khi h.vat trống.
+                           -- MAX chứ không phải dòng đầu: hóa đơn lẫn 8% với KCT (-2) thì
+                           -- phải hiện 8, không phải -2. Hóa đơn nhiều thuế suất thật
+                           -- (8 và 10) sẽ hiện số lớn hơn — cột %VAT của cả hóa đơn vốn
+                           -- chỉ là số đại diện, muốn chính xác phải nhìn dòng.
+                           MAX(x.pt_vat) AS pt_vat_line
+                      FROM HOA_DON_LINE x
+                     WHERE x.ma_hd = h.ma_hd
+              ) s";
+
+        private const string SqlTienHang = @"
+                   CASE WHEN s.dong_khac_ck = 0 THEN ISNULL(s.tong_duong, 0)
+                                                ELSE ISNULL(s.tong_co_dau, 0) END
+                       - ISNULL(s.ck, 0)";
+
         private const string SqlChonHoaDon = @"
             SELECT h.ma_hd, h.huong, h.ngay, h.ngay_nh, h.thang, h.khhd, h.so_hd,
                    h.mst, h.ten_kh, h.dia_chi, h.nguoi_giao_dich, h.so_ptc,
                    h.ma_tv, h.ten_tv,
-                   ISNULL(l.tien_hang, 0)  AS tien_hang,
+                   " + SqlTienHang + @" AS tien_hang,
                    ISNULL(h.tien_vat, 0)   AS tien_vat,
                    ISNULL(h.tien_ck, 0)    AS tien_ck,
-                   ISNULL(l.so_dong, 0)    AS so_dong,
+                   ISNULL(s.so_dong, 0)    AS so_dong,
                    h.ghi_no, h.ghi_co, h.ma_ct_no, h.ma_ct_co, h.ghi_chu, h.tthai_hd,
                    h.tich_chat_hd_lienquan, h.loai_hd_lienquan, h.mau_so_hd_lienquan,
                    h.khhd_lienquan, h.sohd_lienquan, h.ngay_lienquan,
@@ -97,14 +145,15 @@ namespace KT2000.Api.Services
                    -- Trả DECIMAL nguyên bản, KHÔNG ép sang chuỗi ở SQL: CAST ra varchar
                    -- kéo theo cả phần thập phân (3331.00) rồi lại phải cắt đuôi.
                    h.ghi_no_vat, h.ghi_co_vat,
-                   h.vat
-              FROM HOA_DON h
-              OUTER APPLY (
-                    SELECT SUM(ISNULL(x.so_luong, 0) * ISNULL(x.don_gia, 0)) AS tien_hang,
-                           COUNT(*) AS so_dong
-                      FROM HOA_DON_LINE x
-                     WHERE x.ma_hd = h.ma_hd
-              ) l";
+                   h.vat,
+                   -- Thuế suất lấy từ DÒNG, để màn hình lùi về khi h.vat trống. Hai đơn
+                   -- vị ghi hai chỗ khác nhau (xem ghi chú h.vat ở trên), và còn một ca
+                   -- nữa: hóa đơn KHUYẾT ĐƠN GIÁ thì tiền hàng = 0 nên lúc nạp không suy
+                   -- ngược ra thuế suất được, h.vat để trống trong khi dòng vẫn có pt_vat.
+                   --   Ca thật HOA_SANG K26TBA/0051989 (15/08): master vat = NULL,
+                   --   tien_vat = 0, mà dòng có pt_vat = 8 — màn hình bỏ trống cột %VAT.
+                   s.pt_vat_line
+              FROM HOA_DON h" + SqlGopTuLine;
 
         private static HoaDonThueDto DocHoaDon(SqlDataReader r) => new()
         {
@@ -144,6 +193,7 @@ namespace KT2000.Api.Services
             GhiNoVat            = TaiKhoan(r, 31),
             GhiCoVat            = TaiKhoan(r, 32),
             Vat                = r.IsDBNull(33) ? null : r.GetInt32(33),
+            VatLine            = r.IsDBNull(34) ? null : r.GetInt32(34),
         };
 
         // Tài khoản định khoản — ĐỌC ĐƯỢC CẢ HAI KIỂU CỘT.
@@ -188,6 +238,69 @@ namespace KT2000.Api.Services
         }
 
         /// <summary>
+        /// Bản gốc TCT của từng hóa đơn (IN_VALUE_LINE) để màn danh sách đối chiếu.
+        /// </summary>
+        /// <remarks>
+        /// LƯỢT GỌI RIÊNG, cố ý KHÔNG ghép vào SqlChonHoaDon. Hai lý do:
+        ///   • IN_VALUE_LINE chưa tồn tại trên mọi database — bốn DB đời đầu chỉ có bảng
+        ///     này sau khi bản vá 021 chạy, mà bản vá chỉ chạy lúc NẠP. Ghép vào câu SQL
+        ///     chính là cả màn sổ thuế chết bằng "Invalid object name" ở đúng bốn đơn vị
+        ///     đó — cùng loại bẫy đã ghi ở đầu file với script 015.
+        ///   • Chỉ chế độ so sánh mới cần, mà phần lớn thời gian người dùng không bật.
+        /// Bảng chưa có thì trả danh sách RỖNG chứ không ném: màn hình hiện cột gốc trống,
+        /// đúng nghĩa "chưa có bản gốc để đối chiếu".
+        /// </remarks>
+        public async Task<List<DoiChieuHdDto>> LayDoiChieu(string code, int nam, string? huong)
+        {
+            using var conn = await OpenAsync(code, nam);
+
+            using (var doBang = new SqlCommand(
+                "SELECT CASE WHEN OBJECT_ID('IN_VALUE_LINE') IS NULL THEN 0 ELSE 1 END", conn))
+                if (Convert.ToInt32(await doBang.ExecuteScalarAsync()) == 0)
+                    return new List<DoiChieuHdDto>();
+
+            // Tiền hàng của SỔ tính lại bằng ĐÚNG công thức phép kiểm Σ lúc nạp:
+            //   • làm tròn về đồng ở TỪNG DÒNG rồi mới cộng (chốt Trường 14/08) — giữ
+            //     phần lẻ của mọi dòng rồi mới cộng là tự đẻ ra sai số bản gốc không có;
+            //   • dòng CHIẾT KHẤU (tinh_chat = 3) ghi số DƯƠNG trong sổ nhưng bản chất
+            //     là TRỪ, nên đảo dấu;
+            //   • trừ tiếp chiết khấu của từng dòng (tien_ck).
+            // NGOẠI LỆ hóa đơn chiết khấu thương mại đứng riêng — mọi dòng đều tinh_chat=3:
+            // cổng khai số dương và sổ cũng vậy, đảo dấu là sai gấp đôi.
+            // Đo 15/08 trên 49 hóa đơn tháng 8 HOA_SANG: công thức này lệch 0, còn lấy
+            // thẳng Σ(SL×ĐG) thì 6 hóa đơn lệch giả.
+            //
+            // Lọc hướng qua IN_VALUE.loai_ct (V/R) — một hóa đơn chỉ nằm ở đúng một chiều.
+            var ds = new List<DoiChieuHdDto>();
+            using var cmd = new SqlCommand(
+                @"SELECT g.ma_hd,
+                         " + SqlTienHang + @"  AS tien_hang_so,
+                         ISNULL(h.tien_vat, 0) AS tien_vat_so,
+                         g.value1, g.tax, g.ghi_chu_m
+                    FROM IN_VALUE_LINE g
+                    JOIN IN_VALUE v ON v.ma_input = g.ma_input
+                    JOIN HOA_DON  h ON h.ma_hd    = g.ma_hd" + SqlGopTuLine + @"
+                   WHERE g.ma_hd IS NOT NULL
+                     AND (@lc IS NULL OR v.loai_ct = @lc)", conn);
+            cmd.Parameters.AddWithValue("@lc",
+                huong == null ? DBNull.Value
+              : huong.Equals("RA", StringComparison.OrdinalIgnoreCase) ? "R" : "V");
+
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+                ds.Add(new DoiChieuHdDto
+                {
+                    MaHd        = r.GetString(0),
+                    TienHangSo  = r.GetDecimal(1),
+                    TienVatSo   = r.GetDecimal(2),
+                    TienHangGoc = r.GetDecimal(3),
+                    TienVatGoc  = r.GetDecimal(4),
+                    TthaiGoc    = r.IsDBNull(5) ? null : r.GetString(5),
+                });
+            return ds;
+        }
+
+        /// <summary>
         /// Danh sách hóa đơn, mới nhất trước. Lọc theo hướng (VAO/RA), tháng và từ khóa.
         /// Không kèm dòng hàng — gọi <see cref="LayChiTiet"/> khi cần.
         /// </summary>
@@ -224,7 +337,11 @@ namespace KT2000.Api.Services
             while (await r.ReadAsync())
             {
                 var hd = DocHoaDon(r);
-                hd.TongTien = hd.TienHang - hd.TienCk + hd.TienVat;
+                // KHÔNG trừ TienCk nữa: từ 15/08 TienHang tính theo SqlTienHang, vốn ĐÃ trừ chiết
+            // khấu (đảo dấu dòng TC=3 và trừ tien_ck của dòng). Trừ thêm ở đây là trừ hai
+            // lần — mà đo trên dữ liệu thật thì không hóa đơn nào khai chiết khấu chỉ ở
+            // master, nên h.tien_ck luôn là bản sao của thứ đã tính rồi.
+            hd.TongTien = hd.TienHang + hd.TienVat;
                 ds.Add(hd);
             }
             return ds;
@@ -243,7 +360,11 @@ namespace KT2000.Api.Services
                 if (!await r.ReadAsync()) return null;
                 hd = DocHoaDon(r);
             }
-            hd.TongTien = hd.TienHang - hd.TienCk + hd.TienVat;
+            // KHÔNG trừ TienCk nữa: từ 15/08 TienHang tính theo SqlTienHang, vốn ĐÃ trừ chiết
+            // khấu (đảo dấu dòng TC=3 và trừ tien_ck của dòng). Trừ thêm ở đây là trừ hai
+            // lần — mà đo trên dữ liệu thật thì không hóa đơn nào khai chiết khấu chỉ ở
+            // master, nên h.tien_ck luôn là bản sao của thứ đã tính rồi.
+            hd.TongTien = hd.TienHang + hd.TienVat;
 
             using (var cmd = new SqlCommand(
                 SqlChonLine + " WHERE ma_hd = @id ORDER BY stt_line", conn))

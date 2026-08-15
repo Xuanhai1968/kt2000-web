@@ -14,6 +14,17 @@ namespace KT2000.Api.Services
     // "lệch Σ line phải xử lý tay" khỏi các loại hỏng khác.
     public record LoiNap(string MaHd, string Huong, string LoaiLoi, string LyDo);
 
+    // Kết quả của nút "Lấy giá trị từ tờ khai" — dựng lại bản gốc TCT từ Excel có sẵn.
+    // Loi là danh sách tháng đọc không nổi, KHÔNG phải hóa đơn lỗi: một file hỏng thì
+    // các tháng khác vẫn bù được, nên phải nói rõ hỏng ở tháng nào.
+    public class KetQuaDungGoc
+    {
+        public int SoFile { get; set; }
+        public int Them { get; set; }
+        public int Sua { get; set; }
+        public List<string> Loi { get; set; } = new();
+    }
+
     // Một dòng hàng đọc thẳng từ XML gốc của TCT
     // TinhChat = TChat của TCT: 1 hàng hóa/dịch vụ, 2 khuyến mại, 3 CHIẾT KHẤU thương mại,
     // 4 ghi chú. Phải mang ra tận giao diện: dòng chiết khấu ghi ThTien DƯƠNG trong XML
@@ -160,12 +171,13 @@ namespace KT2000.Api.Services
                             "Không đọc được NGAY_HD/NGAY_HD_G")); continue; }
                     if (ngay.Value.Year != req.Nam) { skippedYear++; continue; }  // BR-IMP-01 lớp DÒNG
 
+                    var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
+
                     // Bản gốc TCT: chép thẳng dòng Excel danh sách sang bảng đối chiếu,
                     // TRƯỚC mọi phép kiểm. Hóa đơn bị đá ra vì lệch Σ vẫn phải nằm đây —
                     // "cổng có mà sổ chưa có" chính là thứ đối chiếu sinh ra để thấy.
-                    dsGoc.Add(DongGocTuExcel(r, M, huong, maHd, ngay.Value));
-
-                    var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
+                    dsGoc.Add(DongGocTuExcel(r, M, huong, maHd, ngay.Value,
+                                             TongTienHangTuLine(lines, L)));
 
                     // ---- Kiểm Σ line = master: ưu tiên cặp chuẩn hóa, trống thì cặp _G ----
                     // Sai số cho phép DƯỚI 10 đồng. Có lúc nới lên 1.000đ rồi trả về 10đ
@@ -199,38 +211,11 @@ namespace KT2000.Api.Services
                     //   9.482.503, master 9.482.503, phép kiểm cũ báo chênh 18.965.006.
                     // Hóa đơn TC hỗn hợp (vừa hàng vừa chiết khấu) vẫn đảo dấu như cũ —
                     // ca C26TMN_14134 và _17159 cùng đơn vị đó chạy đúng, đừng đụng vào.
-                    bool toanChietKhau = lines.Count > 0
-                        && lines.All(x => S(x, L, "LOAI_HH").Trim() == "3");
-
-                    // Tiền hàng của một dòng = SL × ĐG − chiết khấu dòng, SAU khi vá SL/ĐG
-                    // khuyết bằng đúng hàm mà ReplaceLines dùng lúc ghi (chốt Trường 14/08).
-                    // Trước đây đọc thẳng THANH_TIEN — khớp master hoàn hảo nhưng không nói
-                    // được gì về hai cột thật sự vào DB, nên dòng thiếu đơn giá lọt qua rồi
-                    // vào sổ bằng 0.
-                    decimal TienHangDong(IXLRow x)
-                    {
-                        var (sl, dg) = SoLuongDonGia(
-                            N2(x, L, "SO_LUONG", "SO_LUONG_G"),
-                            N2(x, L, "DON_GIA",  "DON_GIA_G"),
-                            N2(x, L, "THANH_TIEN", "TTIEN_LINE"));
-                        // Làm tròn về ĐỒNG ngay ở TỪNG DÒNG, trước khi cộng (chốt Trường
-                        // 14/08). Người bán cũng làm đúng thế khi in hóa đơn: thành tiền
-                        // mỗi dòng là số nguyên đồng. Giữ phần lẻ của mọi dòng rồi mới
-                        // cộng là tự tích ra sai số mà bản gốc không hề có.
-                        // Đo trên 1.250 hóa đơn thật: kéo thêm 22 hóa đơn về khớp TUYỆT ĐỐI.
-                        return Math.Round(sl * dg, 0, MidpointRounding.AwayFromZero)
-                             - N(x, L, "CK_LINE_G");
-                    }
-
-                    decimal CongTienHang() => lines.Sum(x =>
-                        (!toanChietKhau && S(x, L, "LOAI_HH").Trim() == "3" ? -1m : 1m)
-                        * TienHangDong(x));
-
                     // MỘT cách tính Σ duy nhất. Bản cũ có hai (THANH_TIEN và TTIEN_LINE)
                     // rồi chọn theo cặp nào khác 0 — giữ hai lối tính song song là tái lập
                     // đúng cái vênh vừa sửa. Bên master vẫn lùi từ cột chuẩn hóa sang cột _G
                     // vì đó chỉ là hai cách CHÉP cùng một số của cổng.
-                    decimal sumLine   = CongTienHang();
+                    decimal sumLine   = TongTienHangTuLine(lines, L);
                     decimal masterVal = N(r, M, "TIEN_HANG");
                     if (masterVal == 0) masterVal = N(r, M, "TT_HD_G");
 
@@ -720,6 +705,53 @@ namespace KT2000.Api.Services
             return (sl, dg);
         }
 
+        /// <summary>
+        /// Σ tiền hàng của các dòng hàng trong Excel: SL × ĐG − chiết khấu dòng.
+        /// </summary>
+        /// <remarks>
+        /// Trước đây là hai closure nằm trong ImportJob. Tách ra vì việc dựng bản gốc TCT
+        /// cũng cần ĐÚNG con số này — hai chỗ tính hai kiểu thì sớm muộn lệch nhau, mà lệch
+        /// ở đây nghĩa là phép kiểm lúc nạp bảo khớp còn bảng đối chiếu bảo lệch.
+        ///
+        /// SL/ĐG khuyết được vá bằng đúng hàm mà ReplaceLines dùng lúc ghi (chốt Trường
+        /// 14/08). Trước đây đọc thẳng THANH_TIEN — khớp master hoàn hảo nhưng không nói
+        /// được gì về hai cột thật sự vào DB, nên dòng thiếu đơn giá lọt qua rồi vào sổ
+        /// bằng 0.
+        ///
+        /// Làm tròn về ĐỒNG ở TỪNG DÒNG rồi mới cộng: người bán cũng làm thế khi in hóa
+        /// đơn. Giữ phần lẻ của mọi dòng rồi mới cộng là tự tích ra sai số bản gốc không
+        /// hề có — đo trên 1.250 hóa đơn thật, cách này kéo thêm 22 hóa đơn về khớp tuyệt đối.
+        ///
+        /// Dòng CHIẾT KHẤU (LOAI_HH = TChat = 3) ghi số DƯƠNG trong XML của TCT nhưng bản
+        /// chất là TRỪ vào tiền hàng, nên đảo dấu.
+        /// NGOẠI LỆ — hóa đơn chiết khấu thương mại đứng riêng (mọi dòng đều TC=3): người
+        /// bán phát hành để trả lại khoản chiết khấu chứ không bán gì, master khai số DƯƠNG
+        /// nên đảo dấu là sai gấp đôi.
+        ///   Ca thật HOA_SANG T4: VAO_4600285900_C26TMN_14708 — một dòng TC=3 9.482.503,
+        ///   master 9.482.503, phép kiểm cũ báo chênh 18.965.006.
+        /// Hóa đơn TC hỗn hợp (vừa hàng vừa chiết khấu) vẫn đảo dấu như cũ — ca C26TMN_14134
+        /// và _17159 cùng đơn vị đó chạy đúng, đừng đụng vào.
+        /// </remarks>
+        internal static decimal TongTienHangTuLine(List<IXLRow> lines, Dictionary<string,int> L)
+        {
+            if (lines.Count == 0) return 0m;
+            bool toanChietKhau = lines.All(x => S(x, L, "LOAI_HH").Trim() == "3");
+
+            decimal TienHangDong(IXLRow x)
+            {
+                var (sl, dg) = SoLuongDonGia(
+                    N2(x, L, "SO_LUONG", "SO_LUONG_G"),
+                    N2(x, L, "DON_GIA",  "DON_GIA_G"),
+                    N2(x, L, "THANH_TIEN", "TTIEN_LINE"));
+                return Math.Round(sl * dg, 0, MidpointRounding.AwayFromZero)
+                     - N(x, L, "CK_LINE_G");
+            }
+
+            return lines.Sum(x =>
+                (!toanChietKhau && S(x, L, "LOAI_HH").Trim() == "3" ? -1m : 1m)
+                * TienHangDong(x));
+        }
+
         internal const decimal PT_VAT_KHONG_KE_KHAI   = -1m;
         internal const decimal PT_VAT_KHONG_CHIU_THUE = -2m;
 
@@ -905,13 +937,127 @@ namespace KT2000.Api.Services
         // cBase: kết nối tới KT2000_Base để tra/cấp mã khách. Truyền kết nối chứ không
         // truyền sẵn ma_kh vì chính hàm này mới biết MST của đối tác là bên bán hay bên
         // mua — tùy hướng hóa đơn.
+        /// <summary>
+        /// Dựng lại BẢN GỐC TCT cho cả năm từ những file Excel danh sách đã nằm sẵn trên
+        /// đĩa. KHÔNG vào mạng, KHÔNG đụng HOA_DON — chỉ ghi IN_VALUE / IN_VALUE_LINE.
+        /// </summary>
+        /// <remarks>
+        /// VÌ SAO CẦN: IN_VALUE_LINE chỉ bắt đầu được ghi từ 15/08, nên mọi hóa đơn nạp
+        /// trước đó không có bản gốc để đối chiếu (đo 15/08: HOA_SANG_2026 có 592 hóa đơn
+        /// mà chỉ 49 dòng gốc). Nạp lại từng tháng cũng bù được, nhưng nạp lại còn ghi cả
+        /// HOA_DON — nặng hơn hẳn việc cần làm, và đụng vào sổ khi chỉ muốn bù bảng tra.
+        ///
+        /// Nguồn là chính file mà lần nạp trước đã dùng, nên số ra y hệt nạp lại.
+        /// Thiếu file tháng nào thì bỏ qua tháng đó — có gì bù nấy, không kêu.
+        /// </remarks>
+        public async Task<KetQuaDungGoc> DungLaiBanGoc(Guid tenantId, int nam, string huong,
+                                                       string userName)
+        {
+            var tenant = await _db.Tenants.FindAsync(tenantId)
+                ?? throw new ArgumentException("Không tìm thấy đơn vị");
+
+            _va.BaoDam(tenant.Code, nam, userName);   // bốn DB đời đầu còn thiếu hẳn hai bảng
+
+            string jobsRoot = _config["Paths:JobsRoot"]
+                ?? throw new ArgumentException("Chưa cấu hình Paths:JobsRoot trong appsettings.json");
+
+            using var conn = new SqlConnection(_resolver.GetTenantConnection(tenant.Code, nam));
+            await conn.OpenAsync();
+
+            // Mã hóa đơn ĐÃ CÓ trong sổ. Chỉ những mã này mới được gắn vào cột ma_hd —
+            // hóa đơn nằm trong Excel mà chưa nạp vào sổ thì vẫn ghi dòng gốc (đó chính
+            // là thứ đối chiếu cần thấy) nhưng để ma_hd trống, đúng quy ước NULL = chưa khớp.
+            var maHdTrongSo = new HashSet<string>(StringComparer.Ordinal);
+            using (var doc = new SqlCommand("SELECT ma_hd FROM HOA_DON", conn))
+            using (var r = await doc.ExecuteReaderAsync())
+                while (await r.ReadAsync()) maHdTrongSo.Add(r.GetString(0));
+
+            int soFile = 0, them = 0, sua = 0;
+            var loi = new List<string>();
+
+            foreach (string h in CacHuong(huong))
+            {
+                // Duyệt cả 12 tháng, tháng nào không có file thì bỏ qua. Rẻ hơn quét đệ quy
+                // cả cây thư mục, mà tên thư mục thì cố định theo khuôn của bộ tải.
+                for (int thang = 1; thang <= 12; thang++)
+                {
+                    string file = Path.Combine(
+                        jobsRoot, tenant.Code, $"NAM{nam}", $"T{thang}_{nam}_{tenant.Code}",
+                        "outputs", $"HOA_DON_{h}_{tenant.Code}.xlsx");
+                    if (!File.Exists(file)) continue;
+
+                    try
+                    {
+                        using var wb = new XLWorkbook(file);
+                        var wsM = wb.Worksheet($"hoa_don_{h.ToLower()}");
+                        var wsL = wb.Worksheet($"hoa_don_{h.ToLower()}_line");
+                        var M = HeaderMap(wsM);
+                        var L = HeaderMap(wsL);
+
+                        // Phải đọc CẢ sheet dòng hàng: hóa đơn máy tính tiền của hộ kinh
+                        // doanh không có cột tiền nào ở master, số chỉ nằm dưới này.
+                        // Khớp bằng MA_HD THÔ — Python ghi y hệt chuỗi đó ở cả hai sheet,
+                        // khớp bằng bản đã chuẩn hóa là mất sạch dòng hàng.
+                        var linesByHd = new Dictionary<string, List<IXLRow>>();
+                        foreach (var x in wsL.RowsUsed().Skip(1))
+                        {
+                            string k = S(x, L, "MA_HD");
+                            if (k == "") continue;
+                            if (!linesByHd.TryGetValue(k, out var lst)) linesByHd[k] = lst = new();
+                            lst.Add(x);
+                        }
+
+                        var dsGoc = new List<DoiChieuService.DongGoc>();
+                        foreach (var r in wsM.RowsUsed().Skip(1))
+                        {
+                            string maHdTho = S(r, M, "MA_HD");
+                            if (maHdTho == "") continue;
+                            DateTime? ngay = D2(r, M, "NGAY_HD", "NGAY_HD_G");
+                            if (ngay == null) continue;
+                            if (ngay.Value.Year != nam) continue;   // BR-IMP-01 lớp DÒNG
+
+                            string maHd = ChuanHoaMaHd(maHdTho, S2(r, M, "SO_HD", "SO_HD_G"));
+                            var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
+                            var d = DongGocTuExcel(r, M, h, maHd, ngay.Value,
+                                                   TongTienHangTuLine(lines, L));
+                            dsGoc.Add(maHdTrongSo.Contains(maHd) ? d : d with { MaHd = null });
+                        }
+
+                        var kq = _dc.Ghi(conn, h, tenant.KhaiQuy, dsGoc, userName);
+                        them += kq.Them; sua += kq.Sua;
+                        soFile++;
+                    }
+                    catch (Exception ex)
+                    {
+                        // Một file hỏng không được làm hỏng cả lượt: các tháng khác vẫn bù
+                        // được, và người dùng cần biết đúng tháng nào đọc không nổi.
+                        loi.Add($"T{thang} {h}: {ex.Message}");
+                    }
+                }
+            }
+
+            await GhiNhatKyDungGoc(tenantId, nam, userName,
+                $"Dựng bản gốc từ Excel ({huong}): {soFile} file, thêm {them}, thay {sua}"
+              + (loi.Count > 0 ? $", lỗi {loi.Count}" : ""));
+
+            return new KetQuaDungGoc { SoFile = soFile, Them = them, Sua = sua, Loi = loi };
+        }
+
+        // Luật #7: việc này ghi vào database nên phải có vết, kể cả khi nó chỉ đụng bảng tra.
+        private async Task GhiNhatKyDungGoc(Guid tenantId, int nam, string user, string chiTiet)
+            => await _db.Database.ExecuteSqlRawAsync(
+                @"INSERT INTO ActivityLog (UserName, TenantId, Nam, Action, Detail)
+                  VALUES ({0}, {1}, {2}, {3}, {4})",
+                user, tenantId, nam, "DUNG_BAN_GOC", chiTiet);
+
         // Một dòng Excel danh sách → một dòng bản gốc TCT (IN_VALUE_LINE).
         // Đọc THẲNG từ Excel, KHÔNG mượn lại masterVal của phép kiểm Σ: chỗ đó đã qua mấy
         // lượt suy ngược (trừ thuế ra, đổi sang tổng đã gồm VAT cho HĐ không có gốc) để so
         // cho đúng cặp. Bảng này phải là bản chép của cổng, suy diễn thì hết là bản gốc.
         // khhd ghép KIEU_HD + ký hiệu, y hệt HOA_DON.khhd — hai bảng phải khớp được nhau.
         private static DoiChieuService.DongGoc DongGocTuExcel(
-            IXLRow r, Dictionary<string,int> M, string huong, string maHd, DateTime ngay)
+            IXLRow r, Dictionary<string,int> M, string huong, string maHd, DateTime ngay,
+            decimal tongTuLine)
         {
             decimal value1    = N2(r, M, "TIEN_HANG", "TT_HD_G");
             decimal tax       = N2(r, M, "TIEN_VAT",  "TVAT_HD_G");
@@ -921,6 +1067,16 @@ namespace KT2000.Api.Services
             // trước thuế — vì loại này không có thuế GTGT (chốt Trường 15/08). Lấy tổng
             // làm tiền hàng và ép thuế về 0; để value1 = 0 thì cả kỳ hụt đúng số tiền đó.
             if (value1 == 0 && thanhToan != 0) { value1 = thanhToan; tax = 0; }
+
+            // Nấc lùi cuối: hóa đơn MÁY TÍNH TIỀN của hộ kinh doanh — dòng master trong
+            // Excel danh sách KHÔNG có lấy một cột tiền nào, cả TIEN_HANG lẫn TT_HD_G,
+            // TIEN_VAT và TONG_TIEN đều trống; số tiền chỉ nằm ở sheet dòng hàng.
+            //   Ca thật HOA_SANG T7: 2C26MTT/0000192 của HỘ KINH DOANH NGUYỄN TIẾN DUYỆT
+            //   — master trống trơn, dòng hàng 1.488 × 13.440 = 19.998.720.
+            // Không có nấc này thì value1 = 0 và cả hóa đơn hiện thành "lệch" đúng bằng
+            // toàn bộ giá trị của nó. Dòng hàng cũng là số của cổng nên vẫn là bản gốc.
+            // Thuế vẫn 0: loại này không có thuế GTGT, đúng luật Trường đã chốt.
+            if (value1 == 0 && tax == 0 && tongTuLine != 0) value1 = tongTuLine;
 
             return new DoiChieuService.DongGoc(
                 S(r, M, "KIEU_HD") + S2(r, M, "KHHD", "KHHD_G"),

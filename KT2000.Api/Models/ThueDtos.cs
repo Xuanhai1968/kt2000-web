@@ -23,6 +23,28 @@
     }
 
     // Một hóa đơn GTGT trong sổ thuế — ánh xạ HOA_DON.
+    // Một hóa đơn, hai vế: số đang nằm trong SỔ và số của BẢN GỐC TCT (IN_VALUE_LINE —
+    // chép từ file Excel danh sách của cổng lúc nạp).
+    //
+    // Vì sao trả cả vế SỔ dù màn hình đã có sẵn danh sách hóa đơn: tiền hàng trong sổ
+    // KHÔNG phải cột tienHang của danh sách. Cột đó là Σ(SL × ĐG) thuần, chưa trừ chiết
+    // khấu và chưa đảo dấu dòng chiết khấu — so thẳng với bản gốc thì mọi hóa đơn có
+    // chiết khấu đều báo lệch đúng bằng số chiết khấu (đo 15/08: 6/49 hóa đơn tháng 8
+    // của HOA_SANG lệch giả kiểu này, ca nặng nhất 17.901.037đ).
+    // Tính đúng ở đây, một chỗ duy nhất, bằng đúng công thức phép kiểm Σ lúc nạp.
+    //
+    // Phần LỆCH thì để màn hình trừ: đã có cả hai vế rồi, trả thêm là hai nơi cùng
+    // định nghĩa một phép trừ.
+    public class DoiChieuHdDto
+    {
+        public string MaHd { get; set; } = "";
+        public decimal TienHangSo { get; set; }   // Σ(SL×ĐG có dấu) − chiết khấu
+        public decimal TienVatSo { get; set; }
+        public decimal TienHangGoc { get; set; }
+        public decimal TienVatGoc { get; set; }
+        public string? TthaiGoc { get; set; }   // 'Hóa đơn mới', 'Hóa đơn đã bị thay thế'…
+    }
+
     public class HoaDonThueDto
     {
         public string MaHd { get; set; } = "";
@@ -61,6 +83,11 @@
         // %VAT của cả hóa đơn — cột vat nằm trên HEADER. Có đơn vị để trống ở đây mà
         // ghi %VAT xuống pt_vat của dòng, nên FE phải lùi về dòng khi cái này null.
         public int? Vat { get; set; }
+        // Thuế suất lấy từ DÒNG (MAX pt_vat) — màn hình lùi về đây khi Vat trống.
+        // Ngoài chuyện hai đơn vị ghi hai chỗ khác nhau, còn ca hóa đơn KHUYẾT ĐƠN GIÁ:
+        // tiền hàng = 0 nên lúc nạp không suy ngược ra thuế suất, Vat để trống trong khi
+        // dòng vẫn có pt_vat đàng hoàng.
+        public int? VatLine { get; set; }
         // Khối HĐ Liên quan
         public string? TichChatHdLienquan { get; set; }
         public string? LoaiHdLienquan { get; set; }
