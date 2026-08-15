@@ -33,6 +33,11 @@ namespace KT2000.Api.Services
             (13, "KT2000.Api.va_019_dinh_khoan_kieu.sql"),
             (14, "KT2000.Api.va_020_pt_vat_int.sql"),
             (15, "KT2000.Api.va_021_in_value.sql"),
+            // 16 chứ không phải 12: số 12 bị 022_base_tokhai.sql của nhánh tờ khai chiếm
+            // mất, khiến bản vá 017 bị coi là "đã áp" ở 9 database chưa hề có cột
+            // loai_thue. Xem đầu file 023 để biết cách phát hiện và vì sao không sửa
+            // ngược được. TRA CẢ database THẬT LẪN script của MỌI nhánh trước khi đặt số.
+            (16, "KT2000.Api.va_023_bu_loai_thue.sql"),
         };
 
         // KHÔNG có khái niệm "phiên bản mới nhất" — xem giải thích ở DocCacPhienBan.
