@@ -839,6 +839,9 @@ export interface HoaDonThue {
   ghiChu: string | null;
   tthaiHd: string | null;
   vat: number | null;
+  // Thuế suất lấy từ DÒNG — lùi về đây khi vat trống. Hai đơn vị ghi hai chỗ khác
+  // nhau, và hóa đơn khuyết đơn giá thì vat luôn trống vì lúc nạp không suy ra được.
+  vatLine: number | null;
   tichChatHdLienquan: string | null;
   loaiHdLienquan: string | null;
   mauSoHdLienquan: string | null;

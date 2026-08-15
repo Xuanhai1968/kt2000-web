@@ -519,26 +519,27 @@ export default function DanhSachHoaDon({
       tooltipValueGetter: (p) => String(p.value ?? "") },
     { colId: "ghiNo", headerName: "Nợ", field: "ghiNo", width: 44 },
     { colId: "ghiCo", headerName: "Có", field: "ghiCo", width: 44 },
+    // %VAT ưu tiên cột trên HEADER, TRỐNG thì lùi về thuế suất của DÒNG. Hai lý do đều
+    // gặp thật: (1) có đơn vị ghi %VAT xuống dòng chứ không ghi ở header; (2) hóa đơn
+    // KHUYẾT ĐƠN GIÁ thì tiền hàng = 0 nên lúc nạp không suy ngược ra thuế suất được,
+    // header để trống trong khi dòng vẫn có pt_vat.
+    // Đo 15/08 trên HOA_SANG_2026: 58 hóa đơn trống %VAT mà dòng có thuế suất.
     { colId: "ptVat", headerName: "%VAT", width: 56, type: "numericColumn",
-      valueGetter: (p) => p.data?.vat != null ? String(p.data.vat) : "" },
+      valueGetter: (p) => {
+        const v = p.data?.vat ?? p.data?.vatLine;
+        return v != null ? String(v) : "";
+      } },
     { colId: "noVat", headerName: "Nợ VAT", field: "ghiNoVat", width: 50 },
     { colId: "coVat", headerName: "Có VAT", field: "ghiCoVat", width: 46 },
     { colId: "kt", headerName: "KT", width: 44, field: "thang",
       type: "numericColumn",
       headerTooltip: "Tháng kê khai (HOA_DON.thang) — lọc bằng ô 'Tháng KT'" },
-    // Ở chế độ so sánh, cột này hiện tiền hàng ĐÃ TRỪ CHIẾT KHẤU — đúng vế đang đem đi
-    // so. Nếu vẫn hiện Σ(SL×ĐG) thuần thì ba cột cạnh nhau không cộng trừ ra nhau
-    // (77.037.037 − 59.136.000 mà cột Lệch lại ghi 0), nhìn như phần mềm tính sai.
-    // Hóa đơn chưa có bản gốc thì không có gì để trừ, giữ nguyên số cũ.
-    { colId: "tienHang", headerName: soSanh ? "Tiền HĐ (−CK)" : "Tiền HĐ", width: 130,
-      type: "numericColumn",
-      headerTooltip: soSanh
-        ? "Σ(SL×ĐG) đã trừ chiết khấu — cùng cách tính với phép kiểm lúc nạp"
-        : undefined,
-      valueGetter: (p) => (soSanh
-        ? soSanhRef.current.lechCuaHd(p.data)?.tienHangSo ?? p.data?.tienHang ?? 0
-        : p.data?.tienHang ?? 0),
-      valueFormatter: (p) => soVn(p.value ?? 0) },
+    // Từ 15/08 backend trả tienHang ĐÃ TRỪ CHIẾT KHẤU nên hai chế độ dùng chung một số,
+    // không phải đổi nhãn hay lấy riêng từ bản đối chiếu nữa.
+    // Trước đó cột này là Σ(SL×ĐG) thuần, tức CỘNG cả dòng chiết khấu thay vì trừ — hóa
+    // đơn có chiết khấu vống lên đúng hai lần số chiết khấu.
+    { colId: "tienHang", headerName: "Tiền HĐ", field: "tienHang", width: 130,
+      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
     // Chế độ so sánh THAY cột Tiền CK bằng bốn cột đối chiếu (chốt Trường 15/08):
     // chiết khấu không giúp gì cho việc soát số với cổng, mà giữ lại thì hàng ngang
     // dài thêm đúng lúc cần nhìn nhanh nhất.

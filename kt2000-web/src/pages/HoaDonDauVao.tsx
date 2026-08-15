@@ -1183,7 +1183,7 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
       ghiNo: "", ghiCo: "", maCtNo: "", maCtCo: "",
       // HĐ nhập tay chưa định khoản phần thuế — để null, ImportService/kế toán gán sau.
       ghiNoVat: null, ghiCoVat: null,
-      ghiChu: "", tthaiHd: null, vat: null,
+      ghiChu: "", tthaiHd: null, vat: null, vatLine: null,
       tichChatHdLienquan: null, loaiHdLienquan: null, mauSoHdLienquan: null,
       khhdLienquan: null, sohdLienquan: null, ngayLienquan: null,
       trangThaiHdLienQuan: null,

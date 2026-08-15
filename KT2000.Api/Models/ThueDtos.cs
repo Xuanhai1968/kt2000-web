@@ -83,6 +83,11 @@
         // %VAT của cả hóa đơn — cột vat nằm trên HEADER. Có đơn vị để trống ở đây mà
         // ghi %VAT xuống pt_vat của dòng, nên FE phải lùi về dòng khi cái này null.
         public int? Vat { get; set; }
+        // Thuế suất lấy từ DÒNG (MAX pt_vat) — màn hình lùi về đây khi Vat trống.
+        // Ngoài chuyện hai đơn vị ghi hai chỗ khác nhau, còn ca hóa đơn KHUYẾT ĐƠN GIÁ:
+        // tiền hàng = 0 nên lúc nạp không suy ngược ra thuế suất, Vat để trống trong khi
+        // dòng vẫn có pt_vat đàng hoàng.
+        public int? VatLine { get; set; }
         // Khối HĐ Liên quan
         public string? TichChatHdLienquan { get; set; }
         public string? LoaiHdLienquan { get; set; }
