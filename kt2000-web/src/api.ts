@@ -1302,3 +1302,68 @@ export const thueHtmlHoaDon = async (maHd: string, maDonVi?: string) => {
     { params: { maDonVi }, responseType: "text" });
   return { html: r.data, duongDan: docDuongDan(r.headers) };
 };
+
+// ===== BÁO CÁO TỒN KHO (SPEC-BAO-CAO-TON-KHO) =====
+//
+// Đơn vị và năm KHÔNG truyền lên: backend đọc từ claim trong token (BR-BC-12).
+// Mọi endpoint là GET — màn báo cáo không bao giờ tự ghi (BR-BC-01).
+
+export interface TonKhoTongHopRow {
+  maTk: string;
+  maHang: string;
+  tenHang: string | null;
+  maNh: string | null;
+  tenNh: string | null;      // chưa có bảng DM_NH ⇒ luôn null
+  maNgan: string | null;
+  quyCach: string | null;
+  slTd: number; gtTd: number;
+  slNo: number; gtNo: number;
+  slCo: number; gtCo: number;
+  slTc: number; gtTc: number;
+  giaNhap: number;
+  loLai: number;
+  phaiSua: boolean;          // cột DB chưa có ⇒ luôn false
+  ngayPs: string | null;
+}
+
+export interface TonKhoKetQua {
+  rows: TonKhoTongHopRow[];
+  canTinhLaiGia: boolean;    // BR-BC-11 — chưa có chỗ lưu ⇒ luôn false
+}
+
+export interface TonKhoChiTietRow {
+  ngayNh: string | null;
+  tenKh: string | null;
+  soHd: string | null;
+  maHd: string;
+  slNo: number; gtNo: number;
+  slCo: number; gtCo: number;
+  ghiNo: string | null;
+  ghiCo: string | null;
+  donGia: number;
+  giaVon: number;
+  dvt: string | null;
+  slQd: number; dgQd: number;
+  ghiChu: string | null;
+  phaiSua: boolean;
+}
+
+export interface HangAmRow {
+  maHang: string;
+  tenHang: string | null;
+  maTk: string;
+  ngayAmDauTien: string | null;
+  soDuKhiAm: number;
+  maHdGayAm: string | null;
+}
+
+/** thang: 1–12, hoặc 13 = cả năm. */
+export const layTonKho = (thang: number, includeLoLai = false, includePhaiSua = false) =>
+  api.get<TonKhoKetQua>("/bao-cao/ton-kho",
+    { params: { thang, includeLoLai, includePhaiSua } });
+
+export const layTonKhoChiTiet = (maHang: string, thang: number) =>
+  api.get<TonKhoChiTietRow[]>("/bao-cao/ton-kho/chi-tiet", { params: { maHang, thang } });
+
+export const layHangAm = (thang?: number) =>
+  api.get<HangAmRow[]>("/bao-cao/ton-kho/hang-am", { params: { thang } });
