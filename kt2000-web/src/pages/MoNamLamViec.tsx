@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, Table, Button, InputNumber, Space, Tag, message, Alert } from "antd";
-import { getAdminTenants, openFiscalYears } from "../api";
+import { getAdminTenants, openFiscalYears, loiApi } from "../api";
 import type { AdminTenant, OpenYearResult } from "../api";
 import { useAuth } from "../AuthContext";
 import { mauDonVi, damDonVi } from "../theme/donViColors";
@@ -32,8 +32,8 @@ export default function MoNamLamViec() {
         if (err > 0) message.error(`Xong: ${ok} tạo mới, ${skip} đã có, ${err} LỖI — xem bảng dưới`);
         else if (ok === 0) message.warning(`Không tạo gì mới — cả ${skip} đơn vị đều đã có năm ${year}`);
         else message.success(`Đã tạo năm ${year} cho ${ok} đơn vị (${skip} đã có từ trước)`);
-        } catch (e: any) {
-        message.error(e?.response?.data?.message ?? "Lỗi khi mở năm");
+        } catch (e) {
+        message.error(loiApi(e, "Lỗi khi mở năm"));
         } finally {
         setRunning(false);
         }

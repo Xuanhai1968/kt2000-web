@@ -3,7 +3,7 @@ import {
   Card, Table, Button, Select, Input, Space, Tag, Typography, Alert, message,
 } from "antd";
 import {
-  getActivityLog, getActivityActions, getAdminTenants,
+  getActivityLog, getActivityActions, getAdminTenants, loiApi,
   type NhatKyDong, type AdminTenant,
 } from "../api";
 import { useAuth } from "../AuthContext";
@@ -78,16 +78,20 @@ export default function NhatKyHeThong() {
       soDong: l.soDong,
     })
       .then((r) => { setDs(r.data.ds); setTong(r.data.tong); setTrang(r.data.trang); })
-      .catch((e: any) => message.error(
-        e?.response?.data?.message ?? "Không đọc được nhật ký"))
+      .catch((e) => message.error(loiApi(e, "Không đọc được nhật ký")))
       .finally(() => setDangTai(false));
   };
 
+  // setTimeout 0: tai() bật cờ "đang tải" NGAY khi được gọi, mà setState đồng bộ trong
+  // thân effect bị React coi là render dây chuyền. Đẩy sang lượt sau là hết — cùng lối
+  // với BaoCaoThue/ToKhaiXml.
   useEffect(() => {
     if (!laAdmin) return;
     getActivityActions().then((r) => setHanhDongCo(r.data)).catch(() => {});
     getAdminTenants(true).then((r) => setTenants(r.data)).catch(() => {});
-    tai(1);
+    const id = setTimeout(() => tai(1), 0);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [laAdmin]);
 
   const boLoc = () => {

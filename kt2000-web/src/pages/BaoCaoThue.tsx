@@ -16,36 +16,10 @@ import type { BaoCaoThue as BaoCaoThueDto, BangKeHoaDon, ChiTieuTongHop,
 import { useAuth } from "../AuthContext";
 import "./bao-cao-thue.css";
 
-// ============ BÁO CÁO THUẾ GTGT — FRM_BC_THUE ============
-// Dựng lại form "Báo cáo thuế GTGT" của KT2000 VFP: thanh lọc kỳ trên cùng, ba
-// tab nghiệp vụ, bảng chiếm gần hết màn, thanh tổng hồng dưới đáy.
-//
-// Dùng Table của antd chứ KHÔNG dùng AG Grid: AG Grid cần chiều cao tường minh từ
-// khối cha, mà ở màn này khối cha nằm sau một chuỗi dài (Layout.Content → trang →
-// tab), đứt một mắt là lưới cao 0 và mất cả header cột. Table của antd tự dựng
-// theo nội dung, chỉ cần khai scroll.y là cuộn trong lòng nó — chắc chắn hơn hẳn.
-//
-// Nguồn dữ liệu: MỘT lời gọi /thue/bao-cao trả về cả ba bảng (mua vào, bán ra,
-// tổng hợp). Gọi một lần cho cả màn thay vì mỗi tab một request — ba bảng đều
-// tính từ cùng tập hóa đơn của kỳ đó, tách ra thì vừa chậm vừa có nguy cơ ba tab
-// nói ba con số khác nhau nếu ai đó nạp hóa đơn xen giữa.
-//
-// Bảng tổng hợp KHÔNG cộng ở đây mà lấy thẳng số server tính: đó là số đi vào tờ
-// khai thuế, phải có một chỗ định nghĩa công thức (xem ThueService.TinhTongHop).
-
 const CAC_THANG = Array.from({ length: 12 }, (_, i) => i + 1);
 
-// Ghi nhớ ô lọc Tháng theo MÁY (cùng lối NT-06 ở màn Hóa đơn đầu vào — trạng thái
-// kiểu này nằm trong KT2000.INI của bản VFP cũ, localStorage là chỗ tương đương).
-//
-// Vì sao cần: kế toán làm tờ khai của MỘT kỳ suốt cả buổi, nhảy qua lại giữa màn
-// này và màn hóa đơn liên tục. Mỗi lần quay lại mà ô lọc nhảy về tháng hiện tại thì
-// phải chọn lại tháng đó — và tệ hơn, dễ đọc nhầm số của tháng khác mà không để ý.
 const KHOA_THANG = "kt2000_bao_cao_thue_thang";
 
-// "all" là giá trị hợp lệ của ô lọc nên phải phân biệt với "chưa từng lưu".
-// Không đọc được (localStorage bị chặn, giá trị rác) thì trả null để tầng gọi lùi
-// về mặc định, chứ không ném lỗi làm trắng cả màn.
 const docThangDaLuu = (): number | "all" | null => {
   try {
     const s = localStorage.getItem(KHOA_THANG);
@@ -55,7 +29,6 @@ const docThangDaLuu = (): number | "all" | null => {
   } catch { return null; }
 };
 
-// Tiền kiểu VFP: dấu . ngăn nghìn, dấu , ngăn phần lẻ, luôn 2 số lẻ.
 const tien = (v: number | null | undefined) =>
   v == null ? "" : v.toLocaleString("vi-VN",
     { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -65,28 +38,18 @@ const ngayNgan = (s: string | null) => {
   return p.length === 3 && p[0] ? `${p[2]}/${p[1]}/${p[0].slice(2)}` : "";
 };
 
-// Bề rộng cột — MỘT nguồn duy nhất cho cả bảng lẫn thanh tổng, để hai chỗ không
-// bao giờ lệch nhau. Thứ tự đúng như cotBangKe bên dưới.
-//
-// PHẢI khai TRƯỚC cotBangKe: const không được hoisting, đặt sau thì cotBangKe đọc
-// phải vùng chết và nổ "Cannot access before initialization" ngay khi nạp module.
 const RONG_COT = {
   stt: 56, khHd: 90, soHd: 90, ngay: 86, ten: 300, mst: 130, matHang: 240,
   dt: 150, ts: 56, thue: 140, ghiChu: 200,
 } as const;
 
-// Nhãn thanh tổng trải trên 7 cột đầu (STT…Mặt hàng), y như colSpan=7 trước đây.
 const RONG_NHAN = RONG_COT.stt + RONG_COT.khHd + RONG_COT.soHd + RONG_COT.ngay
                 + RONG_COT.ten + RONG_COT.mst + RONG_COT.matHang;
 
 const RONG_BANG = RONG_NHAN + RONG_COT.dt + RONG_COT.ts + RONG_COT.thue
                 + RONG_COT.ghiChu;
 
-// Cột chung cho hai bảng kê. Khác nhau đúng một chữ: "Người bán" (mua vào) vs
-// "Người mua" (bán ra). Để ngoài component vì không dùng state nào.
 const cotBangKe = (vaiTro: string): ColumnsType<BangKeHoaDon> => [
-  // KHÔNG fixed:"left" — cột ghim đứng yên khi cuộn ngang, còn thanh tổng bên dưới
-  // trượt cả khối, hai bên sẽ lệch nhau đúng 56px. Thà cùng trượt còn hơn lệch cột.
   { title: "STT", dataIndex: "stt", width: RONG_COT.stt, align: "right" },
   { title: "KH HĐ", dataIndex: "khHd", width: RONG_COT.khHd },
   { title: "Số HĐ", dataIndex: "soHd", width: RONG_COT.soHd },
@@ -99,7 +62,6 @@ const cotBangKe = (vaiTro: string): ColumnsType<BangKeHoaDon> => [
     render: (v: string | null) => <span title={v ?? ""}>{v}</span> },
   { title: "D.Thu Chưa thuế", dataIndex: "doanhThuChuaVat", width: RONG_COT.dt,
     align: "right", render: (v: number) => tien(v) },
-  // Thuế suất để trống khi HĐ không khai vat — không bịa thành 0%
   { title: "TS", dataIndex: "thueSuat", width: RONG_COT.ts, align: "right",
     render: (v: number | null) => v == null ? "" : String(v) },
   { title: "Thuế GTGT", dataIndex: "thueGtgt", width: RONG_COT.thue, align: "right",
@@ -119,21 +81,13 @@ const COT_TONG_HOP: ColumnsType<ChiTieuTongHop> = [
     render: (v: number | null) => tien(v) },
 ];
 
-// ============ LƯỚI RÀ SOÁT CHÉO (chỉ MDN_NB) ============
-// Dựng lại bảng theo dõi của kế toán dịch vụ: mỗi đơn vị một dòng, soi nhanh xem
-// đơn vị nào còn lệch trước khi nộp tờ khai.
-//
-// Tiền ở lưới này KHÔNG có phần lẻ (khác hàm tien() dùng cho bảng kê): chỉ tiêu tờ
-// khai là số nguyên đồng, thêm ",00" vào 30 dòng chỉ làm rối mắt mà không nói thêm gì.
-// null = CHƯA lập tờ khai → để trống, tuyệt đối không hiện 0 (xem chú thích ở api.ts).
 const tienNguyen = (v: number | null | undefined) =>
   v == null ? "" : v.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
 
-// Số đếm hóa đơn: 0 để TRỐNG cho lưới đỡ nhiễu — mắt chỉ cần bắt vào ô CÓ số.
 const dem = (v: number | null | undefined) => (v ? String(v) : "");
 
 const COT_RA_SOAT: ColumnsType<DongRaSoatToKhai> = [
-  { title: "STT", dataIndex: "stt", width: 50, align: "right", fixed: "left" },
+  { title: "STT", dataIndex: "stt", width: 50, align: "center", fixed: "left" },
   { title: "Đơn vị", dataIndex: "maDonVi", width: 170, fixed: "left",
     render: (v: string, m) => (
       <span className={m.khaiQuy ? "" : "dv-khai-thang"}
@@ -256,8 +210,6 @@ export default function BaoCaoThue() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [laMdnNb, tab, session?.tenant.id, namLamViec, thang]);
 
-  // Tổng ở thanh đáy đổi theo TAB đang xem — bản gốc cũng vậy: đang xem bảng kê
-  // nào thì thấy tổng của bảng đó.
   const tongDangXem = useMemo(() => {
     const ds = tab === "ra" ? bc?.banRa : bc?.muaVao;
     if (!ds) return { dt: 0, thue: 0, soHd: 0 };
@@ -276,7 +228,6 @@ export default function BaoCaoThue() {
 
   useEffect(() => {
     const oTong = oTongRef.current;
-    // Thân cuộn của antd — chỉ có sau khi bảng đã dựng xong.
     const oBang = oTong?.closest(".khoi-bang")
                        ?.querySelector<HTMLElement>(".ant-table-body");
     if (!oTong || !oBang) return;
@@ -291,7 +242,6 @@ export default function BaoCaoThue() {
 
     oBang.addEventListener("scroll", tuBang, { passive: true });
     oTong.addEventListener("scroll", tuTong, { passive: true });
-    // Đổi tab/kỳ thì bảng dựng lại từ đầu, kéo vị trí cuộn về 0 cho khớp.
     oTong.scrollLeft = oBang.scrollLeft;
     return () => {
       oBang.removeEventListener("scroll", tuBang);
@@ -301,7 +251,6 @@ export default function BaoCaoThue() {
 
   const CAO_BANG = "calc(100vh - 300px)";
 
-  // Bảng Tổng hợp không có thanh tổng dưới đáy nên được cao thêm đúng phần đó.
   const CAO_BANG_TH = "calc(100vh - 260px)";
 
   const CAO_BANG_CHEO = "calc(100vh - 272px)";
@@ -309,7 +258,6 @@ export default function BaoCaoThue() {
   const thanhTong = (
     <div className="tong-bc-ngoai" ref={oTongRef}>
       <div className="tong-bc" style={{ width: RONG_BANG }}>
-        {/* Gộp 7 cột đầu (STT…Mặt hàng) làm chỗ đặt nhãn */}
         <span className="tong-nhan" style={{ width: RONG_NHAN }}>
           Tổng {tab === "ra" ? "bán ra" : "mua vào"} {nhanKy} —{" "}
           <b>{tongDangXem.soHd}</b> hóa đơn
@@ -344,7 +292,6 @@ export default function BaoCaoThue() {
     </div>
   );
 
-  // Thanh lọc kỳ nằm ở `extra` của Card — đúng chỗ antd dành cho thao tác của khối.
   const thanhLoc = (
     <Space size={12} wrap>
       <Space size={8}>
@@ -397,8 +344,6 @@ export default function BaoCaoThue() {
             BC tờ khai XML
           </Button>
 
-          {/* HĐ thay thế/điều chỉnh KHÁC KỲ — không kê vào kỳ này, nhưng kỳ GỐC còn
-              treo. Quét MỌI đơn vị nên không đòi tích chọn dòng nào. */}
           <Button icon={<SwapOutlined />}
                   onClick={() => setMoLienQuan(true)}
                   title={"Hóa đơn thay thế/điều chỉnh có hóa đơn gốc thuộc kỳ khác"
@@ -436,7 +381,6 @@ export default function BaoCaoThue() {
               selectedRowKeys: dvChon,
               onChange: (keys) => setDvChon(keys as string[]),
             }}
-            // Đơn vị khai THÁNG: đỏ cả dòng + nền hồng (xem bao-cao-thue.css).
             rowClassName={(m) => m.khaiQuy ? "" : "dong-khai-thang"}
             locale={{ emptyText: "Chưa có đơn vị nào" }}
           />
@@ -471,8 +415,6 @@ export default function BaoCaoThue() {
                 loading={tai}
                 pagination={false}
                 scroll={{ y: CAO_BANG_TH }}
-                // Chỉ tiêu CHÍNH của tờ khai (1, 2, 3...) in đậm để mắt tách ngay
-                // với dòng con 2a/2b/3c.
                 rowClassName={(m) => m.laDongChinh ? "dong-chi-tieu-chinh" : ""}
                 locale={{ emptyText: "Chưa có số liệu" }}
               />
@@ -490,6 +432,7 @@ export default function BaoCaoThue() {
           nam={namLamViec}
           thang={thang === "all" ? thangMacDinh : thang}
           vatKhauTruKyTruoc={laMdnNb ? dongDangChon?.tonDau : null}
+          bcCoSan={!laMdnNb && thang !== "all" ? bc : null}
         />
       )}
 
@@ -498,16 +441,10 @@ export default function BaoCaoThue() {
           mo={moBcXml}
           onDong={() => setMoBcXml(false)}
           nam={namLamViec}
-          // Kỳ ĐI THEO bộ lọc ngoài: lọc ngoài tháng 7 mà trong màn mặc định tháng
-          // hiện tại là lưu file vào nhầm kỳ. Ô lọc để "Tất cả" thì lùi về tháng
-          // mặc định — lưu file là việc của MỘT kỳ, không có "cả năm".
           thang={thang === "all" ? thangMacDinh : thang}
         />
       )}
 
-      {/* Bảng tổng hợp — cần tích đúng một đơn vị. Lọc theo tháng đang chọn; ô lọc
-          để "Tất cả" thì lùi về tháng mặc định, vì bảng tổng hợp là của MỘT kỳ —
-          gộp cả năm thì mọi chỉ tiêu chồng lên nhau. */}
       {laMdnNb && dvChon.length === 1 && (
         <BangTongHop
           mo={moTongHop}
@@ -519,8 +456,6 @@ export default function BaoCaoThue() {
         />
       )}
 
-      {/* HĐ thay thế/điều chỉnh khác kỳ — quét MỌI đơn vị nên KHÔNG đòi tích chọn
-          dòng nào, khác ba modal trên. */}
       {laMdnNb && (
         <HdLienQuanKhacKy
           mo={moLienQuan}

@@ -11,6 +11,30 @@ import { useAuth } from "../AuthContext";
 import { mauDonVi, damDonVi } from "../theme/donViColors";
 import "./luoi-gon.css";
 
+// Giá trị các ô của hai form. Khai tường minh thay vì `any`: đổi tên ô mà quên sửa
+// chỗ đọc thì TypeScript bắt ngay, chứ `any` để lọt tới lúc chạy rồi gửi undefined
+// lên server.
+interface OToDonViMoi {
+  code: string;
+  name: string;
+  taxCode?: string;
+  address?: string;
+  firstYear: number;
+  tenantType?: string;
+  linkedTenantCode?: string | null;
+  matKhauTct?: string;
+}
+
+interface OToSuaDonVi {
+  name: string;
+  taxCode?: string;
+  address?: string;
+  // Switch nên luôn có giá trị — startEdit() đã điền từ dòng đang sửa.
+  isActive: boolean;
+  khaiQuy?: boolean;
+  linkedTenantCode?: string | null;
+}
+
 export default function DonViKhachHang() {
   const { session } = useAuth();
   const isAdmin = !!session?.user.isAdmin;
@@ -27,9 +51,14 @@ export default function DonViKhachHang() {
     setLoading(true);
     getAdminTenants().then((r) => setTenants(r.data)).finally(() => setLoading(false));
   };
-  useEffect(reload, []);
+  // setTimeout 0: reload() bật cờ loading NGAY khi gọi, mà setState đồng bộ trong thân
+  // effect bị React coi là render dây chuyền.
+  useEffect(() => {
+    const id = setTimeout(reload, 0);
+    return () => clearTimeout(id);
+  }, []);
 
-  const onCreate = async (v: any) => {
+  const onCreate = async (v: OToDonViMoi) => {
     setSaving(true);
     try {
       const r = await createTenant({ code: v.code, name: v.name, taxCode: v.taxCode,
@@ -55,8 +84,8 @@ export default function DonViKhachHang() {
       }
 
       setOpenNew(false); formNew.resetFields(); reload();
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không tạo được đơn vị");
+    } catch (e) {
+      message.error(loiApi(e, "Không tạo được đơn vị"));
     } finally { setSaving(false); }
   };
 
@@ -68,7 +97,7 @@ export default function DonViKhachHang() {
                               linkedTenantCode: t.linkedTenantCode });
   };
 
-  const onEdit = async (v: any) => {
+  const onEdit = async (v: OToSuaDonVi) => {
     if (!editing) return;
     setSaving(true);
     try {
@@ -78,8 +107,8 @@ export default function DonViKhachHang() {
                                        linkedTenantCode: v.linkedTenantCode || null });
       message.success("Đã lưu thay đổi");
       setEditing(null); reload();
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không lưu được");
+    } catch (e) {
+      message.error(loiApi(e, "Không lưu được"));
     } finally { setSaving(false); }
   };
 

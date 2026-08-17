@@ -5,7 +5,7 @@ import {
 } from "antd";
 import {
   getUsers, createUser, setUserActive, resetUserPassword, setUserRole, getAdminTenants,
-  viewInitialPassword, deleteUser,
+  viewInitialPassword, deleteUser, loiApi,
 } from "../api";
 import type { AdminUser, AdminTenant } from "../api";
 import { useAuth } from "../AuthContext";
@@ -19,6 +19,17 @@ const VAI_TRO = [
   { value: "nhap_don", label: "Nhập đơn (NB)" },
   { value: "quan_ly", label: "Quản lý (NB)" },
 ];
+
+// Giá trị các ô của form tạo người dùng. Khai tường minh thay vì `any`: đổi tên ô mà
+// quên sửa chỗ đọc thì TypeScript bắt ngay.
+interface OToUserMoi {
+  loginName: string;
+  realName?: string;
+  matKhau: string;
+  isAdmin?: boolean;
+  tenantId?: string;
+  role?: string;
+}
 
 export default function QuanLyUser() {
   const { session } = useAuth();
@@ -40,13 +51,17 @@ export default function QuanLyUser() {
     setDangTai(true);
     Promise.all([getUsers(), getAdminTenants(true)])
       .then(([u, t]) => { setUsers(u.data); setTenants(t.data); })
-      .catch((e: any) => message.error(
-        e?.response?.data?.message ?? "Không tải được danh sách người dùng"))
+      .catch((e) => message.error(loiApi(e, "Không tải được danh sách người dùng")))
       .finally(() => setDangTai(false));
   };
-  useEffect(napLai, []);
+  // setTimeout 0: napLai() bật cờ "đang tải" NGAY khi gọi, mà setState đồng bộ trong
+  // thân effect bị React coi là render dây chuyền.
+  useEffect(() => {
+    const id = setTimeout(napLai, 0);
+    return () => clearTimeout(id);
+  }, []);
 
-  const taoUser = async (v: any) => {
+  const taoUser = async (v: OToUserMoi) => {
     setDangLuu(true);
     try {
       const r = await createUser({
@@ -55,8 +70,8 @@ export default function QuanLyUser() {
       });
       message.success(r.data.message ?? "Đã tạo người dùng");
       setMoTao(false); formTao.resetFields(); napLai();
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không tạo được người dùng");
+    } catch (e) {
+      message.error(loiApi(e, "Không tạo được người dùng"));
     } finally { setDangLuu(false); }
   };
 
@@ -78,8 +93,8 @@ export default function QuanLyUser() {
           </div>
         ),
       });
-    } catch (e: any) {
-      message.warning(e?.response?.data?.message ?? "Không xem được mật khẩu");
+    } catch (e) {
+      message.warning(loiApi(e, "Không xem được mật khẩu"));
     }
   };
 
@@ -88,8 +103,8 @@ export default function QuanLyUser() {
       const r = await deleteUser(u.id);
       message.success(r.data.message);
       napLai();
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không xóa được tài khoản");
+    } catch (e) {
+      message.error(loiApi(e, "Không xóa được tài khoản"));
     }
   };
 
@@ -98,8 +113,8 @@ export default function QuanLyUser() {
       const r = await setUserActive(u.id, !u.isActive);
       message.success(r.data.message);
       napLai();
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không đổi được trạng thái");
+    } catch (e) {
+      message.error(loiApi(e, "Không đổi được trạng thái"));
     }
   };
 
@@ -109,8 +124,8 @@ export default function QuanLyUser() {
       const r = await resetUserPassword(userDangSua.id, mkMoi);
       message.success(r.data.message);
       setMkMoi(""); napLai();
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không đặt lại được mật khẩu");
+    } catch (e) {
+      message.error(loiApi(e, "Không đặt lại được mật khẩu"));
     }
   };
 
@@ -121,8 +136,8 @@ export default function QuanLyUser() {
       message.success(r.data.message);
       formQuyen.resetFields();
       napLai();
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không cấp được quyền");
+    } catch (e) {
+      message.error(loiApi(e, "Không cấp được quyền"));
     }
   };
 

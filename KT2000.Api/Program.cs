@@ -32,6 +32,7 @@ builder.Services.AddScoped<ToKhaiService>();  // lập tờ khai 01/GTGT — CH�
 builder.Services.AddScoped<BangToKhaiService>();  // bảng tờ khai nhiều đơn vị (MDN_NB) — CHỈ ĐỌC
 // CÓ GHI (khác ba service trên): đánh dấu ghi_chu cho HĐ thay thế/điều chỉnh khác kỳ.
 builder.Services.AddScoped<GhiChuHdLienQuan>();
+builder.Services.AddMemoryCache(o => o.SizeLimit = 500);
 
 // Mật khẩu cổng TCT mã hóa hai chiều bằng Data Protection. Khóa PHẢI lưu ra đĩa:
 // mặc định nó nằm trong profile người dùng và đổi theo tài khoản chạy tiến trình —

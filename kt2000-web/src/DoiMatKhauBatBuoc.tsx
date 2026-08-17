@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Modal, Form, Input, Button, Alert, message, Space } from "antd";
-import { doiMatKhau } from "./api";
+import { doiMatKhau, loiApi } from "./api";
 import { useAuth } from "./AuthContext";
 
 // QT-01: tài khoản mới tạo (hoặc vừa bị admin đặt lại) mang cờ MustChangePassword.
@@ -15,15 +15,15 @@ export default function DoiMatKhauBatBuoc() {
   const [form] = Form.useForm();
   const [dangLuu, setDangLuu] = useState(false);
 
-  const luu = async (v: any) => {
+  const luu = async (v: { matKhauCu: string; matKhauMoi: string }) => {
     setDangLuu(true);
     try {
       const { data } = await doiMatKhau(v.matKhauCu, v.matKhauMoi);
       message.success(data.message ?? "Đã đổi mật khẩu");
       form.resetFields();
       xongDoiMatKhau();
-    } catch (e: any) {
-      message.error(e?.response?.data?.message ?? "Không đổi được mật khẩu");
+    } catch (e) {
+      message.error(loiApi(e, "Không đổi được mật khẩu"));
     } finally {
       setDangLuu(false);
     }

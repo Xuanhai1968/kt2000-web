@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import axios from "axios";
 import {
   Card, Table, Button, message, Typography, Input, Select, Space,
   Tag, Checkbox, Progress, Alert, Modal, Empty, InputNumber, Popconfirm,
@@ -382,6 +383,9 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
       }).catch(() => {});
     }, 2000);
     return () => clearInterval(id);
+    // CHỈ chạy theo cờ đang-chạy: đưa dangHoatDong/docFileLoi vào deps thì mỗi lượt vẽ
+    // là dựng lại interval, đồng hồ 2 giây không bao giờ đủ chu kỳ để bắn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phien?.dangChay]);
 
   // Mở màn hình là hỏi luôn phiên trước còn chạy dở không, và đọc lịch sử
@@ -395,6 +399,9 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
       .then((r) => setMkDaCo((m) => ({ ...m, [t.id]: r.data.coMatKhau })))
       .catch(() => {});
 
+  // Chạy theo `selected` (mảng id đang tích) chứ không theo donViDangChon: cái sau là
+  // đối tượng suy ra, đổi tham chiếu mỗi lượt vẽ nên sẽ hỏi lại server liên tục.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (donViDangChon) docTrangThaiMk(donViDangChon); }, [selected]);
 
   const luuMatKhau = async () => {
@@ -483,22 +490,32 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
       })
       // Nói rõ hỏng ở đâu: nuốt hết thành một câu chung chung thì hết phiên, mất mạng
       // và lỗi phân quyền nhìn giống hệt nhau — dò bệnh rất mất thời gian
-      .catch((e: any) =>
-        message.error(
-          e?.response?.data?.message ??
-            (e?.response
-              ? `Không tải được danh sách đơn vị (HTTP ${e.response.status})`
-              : "Không gọi được máy chủ — kiểm tra backend còn chạy không")
-        )
-      )
+      .catch((e) => {
+        // Có response = máy chủ trả lỗi (nêu mã HTTP); không có = chưa gọi tới nơi.
+        // Hai chuyện khác hẳn nhau về cách khắc phục nên không gộp một câu.
+        const coPhanHoi = axios.isAxiosError(e) && !!e.response;
+        message.error(loiApi(e, coPhanHoi
+          ? `Không tải được danh sách đơn vị (HTTP ${
+              axios.isAxiosError(e) ? e.response?.status : ""})`
+          : "Không gọi được máy chủ — kiểm tra backend còn chạy không"));
+      })
       .finally(() => setLoading(false));
   };
-  useEffect(() => napDanhSach(), []);
+  // setTimeout 0: napDanhSach() bật cờ loading NGAY khi gọi, mà setState đồng bộ trong
+  // thân effect bị React coi là render dây chuyền.
+  useEffect(() => {
+    const id = setTimeout(() => napDanhSach(), 0);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Đổi khoảng tháng hoặc đổi hướng thì cột đếm phải tính lại, không thì số hiện
   // đang là của lựa chọn cũ mà tiêu đề cột lại ghi lựa chọn mới
   useEffect(() => {
     if (tenants.length) docFileLoi(tenants.filter((t) => t.isActive));
+    // docFileLoi dựng mới mỗi lượt vẽ nên ESLint đòi nó; phụ thuộc THẬT là bốn thứ đã
+    // liệt kê — thêm hàm vào là gọi lại server sau mỗi lần vẽ.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tuThang, denThang, huong, tenants]);
 
   const chonTheoKyKhai = (khaiQuy: boolean) =>

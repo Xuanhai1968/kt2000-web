@@ -895,11 +895,24 @@ export interface ChiTieuTongHop {
   laDongChinh: boolean;
 }
 
+// Một mức thuế suất, gom từ DÒNG hàng (HOA_DON_LINE.pt_vat) — KHÁC thueSuat của
+// BangKeHoaDon vốn là số đại diện ở header. Hóa đơn trộn nhiều mức thì header cho ra
+// %VAT bình quân (6%, 7%…) không tồn tại trong luật thuế; nhóm này gom đúng theo dòng
+// nên khớp với engine tờ khai (BR-TK-18).
+export interface NhomSuat {
+  thueSuat: number;      // âm = không chịu thuế / không kê khai
+  soHd: number;
+  doanhThu: number;
+  thue: number;
+}
+
 export interface BaoCaoThue {
   nam: number;
   thang: number | null;
   muaVao: BangKeHoaDon[];
   banRa: BangKeHoaDon[];
+  nhomBanRa: NhomSuat[];
+  nhomMuaVao: NhomSuat[];
   tongHop: ChiTieuTongHop[];
 }
 
@@ -1107,8 +1120,6 @@ export const thueDuongDanToKhai = (ma: string, thang: number, nam?: number) =>
     "/thue/duong-dan-to-khai", { params: { ma, thang, nam } });
 
 // ===== DUYỆT KHO TỜ KHAI =====
-// Xem tận mắt cây thư mục trên máy chủ trước khi chốt chỗ lưu. CHỈ ĐỌC, server
-// nhốt trong Paths:ScanDocRoot1. Bỏ trống `duong` = đứng ở gốc kho.
 export interface MucKho {
   ten: string;
   duongDan: string;
@@ -1117,8 +1128,6 @@ export interface MucKho {
   suaLuc: string | null;
 }
 
-// duongDan = chỗ mở ĐƯỢC THẬT; duongDanXin = chỗ đã xin. Hai cái khác nhau khi
-// thư mục kỳ chưa tồn tại — thieuTang liệt kê các tầng còn thiếu ở giữa.
 export interface KetQuaDuyetKho {
   duongDan: string;
   cha: string | null;
@@ -1168,14 +1177,11 @@ export interface KetQuaLienQuan {
   message: string;
 }
 
-// chiXem = true (mặc định): CHỈ liệt kê + xuất file, KHÔNG ghi vào sổ.
-// Bỏ trống `ma` = quét mọi đơn vị khai thuế.
 export const thueHdLienQuanKhacKy = (
   thang: number, nam?: number, ma?: string, chiXem = true
 ) => api.post<KetQuaLienQuan>("/thue/hd-lien-quan-khac-ky", null,
        { params: { thang, nam, ma: ma || undefined, chiXem } });
 
-// LƯU file TCT trả về vào kho (tự tạo thư mục kỳ) + nạp 26 chỉ tiêu vào TOKHAI.
 export const thueLuuToKhaiTct = (
   file: File, ma: string, thang: number, nam?: number, ghiChu?: string,
   // Thư mục kế toán tự duyệt và chọn. Bỏ trống thì server suy theo khuôn kho.
@@ -1188,8 +1194,6 @@ export const thueLuuToKhaiTct = (
     lech: { ma: string; tuLap: number | null; tct: number | null; lech: number | null }[];
     canhBao: string[]; message: string;
   }>("/thue/luu-to-khai-tct", fd,
-     // ghiChu bỏ trống thì KHÔNG gửi tham số: server phân biệt "không gửi" (giữ
-     // nguyên ghi chú cũ) với chuỗi rỗng — gửi "" là xin xóa ghi chú đang có.
      { params: { ma, thang, nam, ghiChu: ghiChu?.trim() || undefined,
                  thuMuc: thuMuc?.trim() || undefined },
        headers: { "Content-Type": "multipart/form-data" } });
@@ -1206,8 +1210,6 @@ export const thueNapXmlDaNop = (file: File) => {
      { headers: { "Content-Type": "multipart/form-data" } });
 };
 
-// ===== TỜ KHAI GÕ TAY (lưu thẳng vào bảng TOKHAI ở KT2000_Base) =====
-// Dùng cho đơn vị chưa có hóa đơn trong sổ nhưng vẫn phải nộp tờ khai.
 export interface ToKhaiTay {
   maDonVi: string;
   nam: number;
@@ -1255,10 +1257,7 @@ export const thueDoiChieu = (ma: string, thang: number, nam?: number, lanNop = 0
 export const thueLuuToKhaiTay = (tk: ToKhaiTay) =>
   api.post<{ message: string }>("/thue/to-khai-tay", tk);
 
-// Đọc bảng kê Excel của cổng TCT (HD_VAO/HD_RA…xlsx) thành danh sách hóa đơn.
-// Đọc ở SERVER vì frontend không có thư viện đọc Excel — backend đã sẵn ClosedXML.
-// maDonVi: chỉ MDN_NB truyền, để đọc bảng kê CỦA ĐƠN VỊ KHÁC. Bỏ trống = đơn vị
-// đang đăng nhập. Cần vì hàm đọc suy hướng hóa đơn bằng MST của đơn vị.
+
 export const thueDocBangKe = (file: File, maDonVi?: string) => {
   const fd = new FormData();
   fd.append("file", file);
@@ -1267,31 +1266,38 @@ export const thueDocBangKe = (file: File, maDonVi?: string) => {
     { params: { maDonVi }, headers: { "Content-Type": "multipart/form-data" } });
 };
 
-// Lập tờ khai để XEM TRƯỚC. xmlKyTruoc = nội dung file XML tờ khai kỳ liền trước,
-// server lấy ct43 trong đó làm ct22 của kỳ này (BR-TK-02).
+export interface KhoBangKe {
+  thang: number;
+  nam: number;
+  huong: "RA" | "VAO";
+  soFile: number;
+  thuMucDaDo: string[];
+  tong: { soHd: number; tienHang: number; tienVat: number };
+  loi: string[];
+  doiChieu: KetQuaRaSoat | null;
+}
+
+export const thueKhoBangKe = (thang: number, huong: "RA" | "VAO",
+                              maDonVi?: string, chiTong?: boolean) =>
+  api.get<KhoBangKe>("/thue/kho/bang-ke",
+                     { params: { thang, huong, maDonVi, chiTong } });
+
+
 export const thueLapToKhai = (thang: number, xmlKyTruoc?: string,
                               maDonVi?: string) =>
   api.post<ToKhaiGtgt>("/thue/to-khai", { xmlKyTruoc },
                        { params: { thang, maDonVi } });
 
-// Tải file XML tờ khai để nạp vào HTKK. Trả về blob.
 export const thueToKhaiXml = (thang: number, xmlKyTruoc?: string,
                               maDonVi?: string) =>
   api.post<Blob>("/thue/to-khai/xml", { xmlKyTruoc },
                  { params: { thang, maDonVi }, responseType: "blob" });
 
-// maDonVi: chỉ MDN_NB truyền, để xem ảnh hóa đơn của ĐƠN VỊ KHÁC từ màn Tờ khai.
-// Bỏ trống = đơn vị đang đăng nhập.
-// Xử lý hóa đơn THAY THẾ / ĐIỀU CHỈNH của một kỳ (BR-TK-06).
-// Cùng kỳ: engine tờ khai tự loại HĐ gốc, KHÔNG ghi gì vào sổ.
-// Khác kỳ: ghi chú vào HOA_DON.ghi_chu để kế toán sửa tay khi có dữ liệu kỳ gốc.
 export const thueXuLyTtDc = (thang: number, maDonVi?: string) =>
   api.post<{
     soCungKy: number; soKhacKy: number; chiTiet: string[]; message: string;
   }>("/thue/xu-ly-tt-dc", null, { params: { thang, maDonVi } });
 
-// XÓA HẲN một hóa đơn khỏi sổ, kèm dòng hàng. KHÔNG đảo ngược được — muốn lấy lại
-// phải chạy nạp HĐĐT lần nữa. Server ghi ActivityLog để truy vết.
 export const thueXoaHoaDon = (maHd: string, maDonVi?: string) =>
   api.delete<{ message: string }>(
     `/thue/hoa-don/${encodeURIComponent(maHd)}`, { params: { maDonVi } });

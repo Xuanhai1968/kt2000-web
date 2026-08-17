@@ -197,6 +197,27 @@
     }
 
     // Trả về cho MỘT kỳ kê khai: hai bảng kê + bảng tổng hợp đã tính sẵn.
+    /// <summary>
+    /// Một mức thuế suất và số gom được của nó, tính từ DÒNG hàng (HOA_DON_LINE.pt_vat).
+    /// </summary>
+    /// <remarks>
+    /// Khác hẳn <see cref="BangKeHoaDonDto.ThueSuat"/>: cái kia là số ĐẠI DIỆN của cả
+    /// hóa đơn (%VAT bình quân ở header), hóa đơn trộn nhiều mức thì nó ra con số không
+    /// có trong luật thuế. Nhóm này gom đúng theo dòng nên khớp với engine tờ khai
+    /// (BR-TK-18).
+    ///
+    /// ThueSuat là decimal chứ không int: pt_vat có thể là DECIMAL(18,3) ở database
+    /// chưa chạy bản vá 020, ép về int là mất phần thập phân mà không ai báo.
+    /// Giá trị ÂM = loại không có thuế suất thông thường (-1, -2 đo được trên sổ thật).
+    /// </remarks>
+    public class NhomSuatDto
+    {
+        public decimal ThueSuat { get; set; }
+        public int SoHd { get; set; }
+        public decimal DoanhThu { get; set; }
+        public decimal Thue { get; set; }
+    }
+
     public class BaoCaoThueDto
     {
         public int Nam { get; set; }
@@ -204,6 +225,9 @@
         public List<BangKeHoaDonDto> MuaVao { get; set; } = new();
         public List<BangKeHoaDonDto> BanRa { get; set; } = new();
         public List<ChiTieuTongHopDto> TongHop { get; set; } = new();
+        /// <summary>Bán ra gom theo thuế suất của DÒNG — xem NhomSuatDto.</summary>
+        public List<NhomSuatDto> NhomBanRa { get; set; } = new();
+        public List<NhomSuatDto> NhomMuaVao { get; set; } = new();
     }
 
     // ======================= TỜ KHAI 01/GTGT (TT80) =======================
