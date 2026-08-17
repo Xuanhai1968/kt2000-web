@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal, Button, Input, Select, Checkbox, Radio, Typography, message,
 } from "antd";
-import { EyeOutlined, DeleteOutlined, ExclamationCircleFilled } from "@ant-design/icons";
+import { ExclamationCircleFilled } from "@ant-design/icons";
 import { AgGridReact } from "ag-grid-react";
-import type { ColDef } from "ag-grid-community";
+import type { ColDef, ValueFormatterParams } from "ag-grid-community";
 import type { HoaDonThue, HoaDonLine, DoiChieuHd } from "../api";
 import { layDoiChieuHd, dungBanGocTct, loiApi } from "../api";
 import { thueXoaHoaDon, thueXuLyTtDc } from "../api";
@@ -71,7 +71,7 @@ export default function DanhSachHoaDon({
   const [gocDangTai, setGocDangTai] = useState(false);
   const [dangDung, setDangDung] = useState(false);
 
-  const taiDoiChieu = () => {
+  const taiDoiChieu = useCallback(() => {
     setGocDangTai(true);
     return layDoiChieuHd(laDauRa ? "ra" : "vao")
       .then((r) => {
@@ -83,12 +83,15 @@ export default function DanhSachHoaDon({
       // dựng ra một cột lệch mà số liệu nền không có thật.
       .catch(() => setGoc({}))
       .finally(() => setGocDangTai(false));
-  };
+  }, [laDauRa]);
 
   useEffect(() => {
     if (!mo || !soSanh) return;
-    void taiDoiChieu();
-  }, [mo, soSanh, laDauRa, namLamViec]);
+    // Bọc trong hàm async: taiDoiChieu bật cờ "đang tải" NGAY khi được gọi, mà setState
+    // đồng bộ trong thân effect thì React coi là render dây chuyền. Await một nhịp là
+    // lời gọi rơi sang microtask, cờ bật ngoài thân effect.
+    void (async () => { await Promise.resolve(); await taiDoiChieu(); })();
+  }, [mo, soSanh, laDauRa, namLamViec, taiDoiChieu]);
 
   // Bù bản gốc cho hóa đơn nạp trước 15/08 (lúc IN_VALUE_LINE chưa được ghi). Đọc lại
   // chính file Excel mà lần nạp trước đã dùng, nên không phải vào cổng thuế lần nữa và
@@ -140,10 +143,32 @@ export default function DanhSachHoaDon({
     return l != null
         && (Math.abs(l.lechTien) >= NGUONG_LECH || Math.abs(l.lechVat) >= NGUONG_LECH);
   };
-  // Hàm dùng trong useMemo/ColDef nhưng phụ thuộc state `goc` — giữ qua ref để khỏi
-  // phải dựng lại cả mảng cột mỗi lần bản gốc về, cùng cách file này đã làm với hamRef.
-  const soSanhRef = useRef({ lechCuaHd, coLech });
-  soSanhRef.current = { lechCuaHd, coLech };
+
+  // ColDef của lưới trên chỉ dựng lại khi BẬT/TẮT chế độ so sánh, không dựng lại mỗi
+  // lần bản gốc về — nên valueGetter không được đóng gói (closure) state `goc`, bằng
+  // không nó mãi đọc bản đồ rỗng của lượt render đầu. Giải: giữ `goc` trong một ref
+  // DỮ LIỆU, ghi ở effect (ghi lúc render là sai luật hook), rồi cho hai hàm dùng
+  // trong cột đọc qua ref đó — identity của chúng ổn định nên cột yên vị.
+  const gocRef = useRef(goc);
+  useEffect(() => {
+    gocRef.current = goc;
+    // Cột so sánh đọc qua gocRef nên AG Grid không tự biết số đã đổi — bảo nó vẽ lại.
+    luoiTrenRef.current?.api?.refreshCells({
+      columns: ["tienHangGoc", "tienVatGoc", "lechTien", "lechVat"], force: true,
+    });
+  }, [goc]);
+
+  const lechCuaHdCot = useCallback((x?: HoaDonThue) => {
+    const g = x ? gocRef.current[x.maHd] : undefined;
+    if (!g) return null;
+    return {
+      tienHangSo: g.tienHangSo,
+      tienHangGoc: g.tienHangGoc,
+      tienVatGoc: g.tienVatGoc,
+      lechTien: g.tienHangSo - g.tienHangGoc,
+      lechVat: g.tienVatSo - g.tienVatGoc,
+    };
+  }, []);
 
   // Bí danh của prop `soSanh`. Bên trong dsLoc có một biến cục bộ CŨNG tên soSanh (hàm
   // so sánh chuỗi để sắp xếp) che mất prop — dùng thẳng ở đó là so một hàm với boolean
@@ -212,13 +237,16 @@ export default function DanhSachHoaDon({
       // Chế độ đối chiếu: hóa đơn LỆCH dồn xuống cuối bảng (chốt Trường 15/08), cuộn
       // hết xuống là thấy trọn nhóm cần xử lý. Trong từng nhóm vẫn theo ngày như cũ.
       if (soSanhMo) {
-        const la = soSanhRef.current.coLech(a) ? 1 : 0;
-        const lb = soSanhRef.current.coLech(b) ? 1 : 0;
+        const la = coLech(a) ? 1 : 0;
+        const lb = coLech(b) ? 1 : 0;
         if (la !== lb) return la - lb;
       }
       const d = soSanh((a.ngay ?? "").slice(0, 10), (b.ngay ?? "").slice(0, 10));
       return d !== 0 ? d : soSanh(a.soHd ?? "", b.soHd ?? "");
     });
+    // coLech dựng mới mỗi render nên ESLint đòi nó; phụ thuộc THẬT của nó là `goc`,
+    // đã có trong danh sách — thêm chính hàm vào chỉ tổ tính lại mỗi render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dsHd, thang, thangKT, tuKhoa, soSanhMo, goc]);
 
   // Hóa đơn đang chọn ở bảng trên — nguồn của bảng dòng hàng bên dưới
@@ -267,22 +295,28 @@ export default function DanhSachHoaDon({
   // của TCT, đổi cách viết một cái là phép lọc câm lặng bỏ sót hóa đơn.
   //
   // Đánh dấu hóa đơn VỪA có chiết khấu VỪA là điều chỉnh/thay thế.
-  const laCanIn = (h: HoaDonThue) =>
+  const laDienDanhDau = (h: HoaDonThue) =>
     (h.tienCk ?? 0) !== 0 && (h.tichChatHdLienquan ?? "").trim() !== "";
 
-  // Chỉ giữ những mã người dùng TỰ BẤM ngược lại mặc định, không giữ cả tập đã
-  // tích. Nhờ vậy ô tích luôn bám theo dữ liệu mới nhất: tải lại danh sách hay
-  // sửa chiết khấu là dấu tự đúng, không cần đồng bộ tay và không bao giờ lệch.
-  // (Ghi đè chỉ sống trong phiên — chưa có cột nào dưới DB để lưu.)
+  // MẶC ĐỊNH BAN ĐẦU = BỎ TRỐNG HẾT. Trước đây cột In tự tích theo laDienDanhDau,
+  // nên vừa mở màn hình / vừa bấm Refresh đã thấy một loạt dòng có dấu — kế toán
+  // không phân biệt được đâu là dấu mình đặt, đâu là dấu máy tự đặt. Giờ máy chỉ
+  // GỢI Ý (đếm ở thanh trên, và bước 1 của xử lý TT/ĐC vẫn tự tích khi cần),
+  // còn dấu trên lưới thì hoàn toàn do người dùng bấm.
+  const laCanIn = () => false;
+
+  // Chỉ giữ những mã người dùng TỰ BẤM ngược lại mặc định (mặc định giờ là bỏ trống,
+  // nên thực tế đây là tập các mã đang được tích). Dấu chỉ sống trong phiên — chưa có
+  // cột nào dưới DB để lưu — và Refresh xóa sạch bộ này.
   const [inGhiDe, setInGhiDe] = useState<Record<string, boolean>>({});
 
-  const laDanhDauIn = (h: HoaDonThue) => inGhiDe[h.maHd] ?? laCanIn(h);
+  const laDanhDauIn = (h: HoaDonThue) => inGhiDe[h.maHd] ?? laCanIn();
 
   const datIn = (h: HoaDonThue, tich: boolean) => {
     setInGhiDe((cu) => {
       // Bấm về đúng giá trị mặc định thì XÓA ghi đè, đừng lưu lại — để dòng đó
       // tiếp tục bám dữ liệu nếu chiết khấu đổi về sau.
-      if (tich === laCanIn(h)) {
+      if (tich === laCanIn()) {
         const moi = { ...cu };
         delete moi[h.maHd];
         return moi;
@@ -295,6 +329,10 @@ export default function DanhSachHoaDon({
     () => dsLoc.filter(laDanhDauIn).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dsLoc, inGhiDe]);
+
+  // Số hóa đơn ĐÁNG chú ý theo dữ liệu (CK + điều chỉnh/thay thế). Chỉ để hiện gợi ý
+  // ở thanh trên — không còn tự tích vào lưới nữa.
+  const soDienDanhDau = useMemo(() => dsLoc.filter(laDienDanhDau).length, [dsLoc]);
 
   // ===== Kiểm tra thứ tự HĐ ra =====
   // HĐ đầu ra phải liên tục theo từng ký hiệu: thủng số là dấu hiệu mất hóa đơn
@@ -447,10 +485,10 @@ export default function DanhSachHoaDon({
     });
   };
 
-  const hamRef = useRef({ laDanhDauIn, datIn, xemHtml: onXemHtml, xoaHoaDon });
+  const hamRef = useRef({ laDanhDauIn, datIn });
 
   useEffect(() => {
-    hamRef.current = { laDanhDauIn, datIn, xemHtml: onXemHtml, xoaHoaDon };
+    hamRef.current = { laDanhDauIn, datIn };
     luoiTrenRef.current?.api?.refreshCells({ columns: ["in"], force: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inGhiDe, dsLoc]);
@@ -462,35 +500,8 @@ export default function DanhSachHoaDon({
   const cotTren = useMemo<ColDef<HoaDonThue>[]>(() => [
     { colId: "stt", headerName: "STT", width: 48, pinned: "left",
       valueGetter: (p) => (p.node?.rowIndex ?? 0) + 1 },
-    // THAO TÁC + IN — hai cột thao tác đứng CẠNH NHAU ngay sau STT, ghim TRÁI.
-    // Gom một chỗ vì cùng là thứ NGƯỜI DÙNG BẤM, khác hẳn các cột còn lại chỉ để
-    // đọc; ghim trái nên cuộn ngang bao nhiêu vẫn bấm được ngay.
-    //
-    // stopPropagation ở cả hai nút: bấm icon KHÔNG được kéo theo việc chọn dòng —
-    // chọn dòng làm bảng dòng hàng bên dưới tải lại, thừa một lượt gọi API.
-    { colId: "thaoTac", headerName: "Thao tác", width: 84, pinned: "left",
-      sortable: false, filter: false, resizable: false,
-      cellStyle: { textAlign: "center", padding: 0 },
-      cellRenderer: (p: { data?: HoaDonThue }) => p.data ? (
-        <span className="o-thao-tac">
-          <button type="button" className="nut-tt"
-                  title={`Xem ảnh gốc ${p.data.khhd ?? ""}/${p.data.soHd ?? ""}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (p.data) hamRef.current.xemHtml(p.data.maHd);
-                  }}>
-            <EyeOutlined />
-          </button>
-          <button type="button" className="nut-tt nut-xoa"
-                  title={`Xóa hóa đơn ${p.data.khhd ?? ""}/${p.data.soHd ?? ""}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (p.data) hamRef.current.xoaHoaDon(p.data);
-                  }}>
-            <DeleteOutlined />
-          </button>
-        </span>
-      ) : null } as ColDef<HoaDonThue>,
+    // Cột "Thao tác" đã bỏ: xem ảnh gốc và xóa giờ là hai nút ở thanh trên, chạy theo
+    // hóa đơn ĐANG CHỌN. Một chỗ bấm thay vì lặp icon trên từng dòng.
     { colId: "in", headerName: "In", width: 46, pinned: "left",
       headerTooltip: "Tự đánh dấu: HĐ có chiết khấu và là HĐ điều chỉnh/thay thế",
       valueGetter: (p) => (p.data ? hamRef.current.laDanhDauIn(p.data) : false),
@@ -543,33 +554,34 @@ export default function DanhSachHoaDon({
     // Chế độ so sánh THAY cột Tiền CK bằng bốn cột đối chiếu (chốt Trường 15/08):
     // chiết khấu không giúp gì cho việc soát số với cổng, mà giữ lại thì hàng ngang
     // dài thêm đúng lúc cần nhìn nhanh nhất.
-    ...(soSanh ? [] : [{
+    ...(soSanh ? [] : ([{
       colId: "tienCk", headerName: "Tiền CK", field: "tienCk", width: 110,
-      type: "numericColumn", valueFormatter: (p: any) => soVn(p.value ?? 0),
-    } as ColDef<HoaDonThue>]),
+      type: "numericColumn",
+      valueFormatter: (p: ValueFormatterParams<HoaDonThue>) => soVn(p.value ?? 0),
+    }] as ColDef<HoaDonThue>[])),
     { colId: "tienVat", headerName: "Tiền VAT", field: "tienVat", width: 120,
       type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
     ...(!soSanh ? [] : ([
       { colId: "tienHangGoc", headerName: "T.Tiền gốc", width: 130,
         type: "numericColumn",
         headerTooltip: "Tiền hàng theo file Excel danh sách của cổng (IN_VALUE_LINE)",
-        valueGetter: (p) => soSanhRef.current.lechCuaHd(p.data)?.tienHangGoc ?? null,
+        valueGetter: (p) => lechCuaHdCot(p.data)?.tienHangGoc ?? null,
         // Ô trống chứ không phải "0": chưa có bản gốc khác hẳn gốc bằng 0.
         valueFormatter: (p) => (p.value == null ? "—" : soVn(p.value)) },
       { colId: "tienVatGoc", headerName: "VAT gốc", width: 120,
         type: "numericColumn",
         headerTooltip: "Tiền VAT theo file Excel danh sách của cổng",
-        valueGetter: (p) => soSanhRef.current.lechCuaHd(p.data)?.tienVatGoc ?? null,
+        valueGetter: (p) => lechCuaHdCot(p.data)?.tienVatGoc ?? null,
         valueFormatter: (p) => (p.value == null ? "—" : soVn(p.value)) },
       { colId: "lechTien", headerName: "Lệch T.Tiền", width: 120,
         type: "numericColumn",
         headerTooltip: `Tiền HĐ − T.Tiền gốc. Dưới ${NGUONG_LECH}đ coi như khớp.`,
-        valueGetter: (p) => soSanhRef.current.lechCuaHd(p.data)?.lechTien ?? null,
+        valueGetter: (p) => lechCuaHdCot(p.data)?.lechTien ?? null,
         valueFormatter: (p) => (p.value == null ? "—" : soVn(p.value)) },
       { colId: "lechVat", headerName: "Lệch VAT", width: 110,
         type: "numericColumn",
         headerTooltip: `Tiền VAT − VAT gốc. Dưới ${NGUONG_LECH}đ coi như khớp.`,
-        valueGetter: (p) => soSanhRef.current.lechCuaHd(p.data)?.lechVat ?? null,
+        valueGetter: (p) => lechCuaHdCot(p.data)?.lechVat ?? null,
         valueFormatter: (p) => (p.value == null ? "—" : soVn(p.value)) },
     ] as ColDef<HoaDonThue>[])),
     { colId: "maTv", headerName: "Thương vụ", field: "maTv", width: 90 },
@@ -592,9 +604,10 @@ export default function DanhSachHoaDon({
     { colId: "tthaiHd", headerName: "Trạng thái", field: "tthaiHd", width: 100 },
     { colId: "ghiChu", headerName: "Ghi chú", field: "ghiChu", width: 120,
       tooltipField: "ghiChu" },
-    // soSanh là phụ thuộc DUY NHẤT: bật/tắt thì đổi hẳn bộ cột. Bản gốc về sau đó
-    // không cần dựng lại cột — valueGetter đọc qua soSanhRef nên tự có số mới.
-  ], [soSanh]);
+    // soSanh quyết định bộ cột: bật/tắt thì đổi hẳn. Bản gốc về sau đó KHÔNG dựng lại
+    // cột — lechCuaHdCot ổn định (useCallback rỗng) và đọc `goc` qua gocRef nên tự có
+    // số mới; refreshCells ở effect dưới lo phần vẽ lại.
+  ], [soSanh, lechCuaHdCot]);
 
   const cotDuoi = useMemo<ColDef<HoaDonLine>[]>(() => [
     { colId: "sttLine", headerName: "STT", field: "sttLine", width: 48, pinned: "left" },
@@ -630,7 +643,8 @@ export default function DanhSachHoaDon({
   // "Chưa có bản gốc" đếm riêng — nó không phải lỗi số liệu, chỉ là tháng đó nạp trước
   // khi có bảng đối chiếu; nạp lại tháng đó là hết.
   const soLech = useMemo(
-    () => (soSanhMo ? dsLoc.filter((x) => soSanhRef.current.coLech(x)).length : 0),
+    () => (soSanhMo ? dsLoc.filter((x) => coLech(x)).length : 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [dsLoc, soSanhMo, goc]);
   const soChuaCoGoc = useMemo(
     () => (soSanhMo ? dsLoc.filter((x) => !goc[x.maHd]).length : 0),
@@ -690,10 +704,13 @@ export default function DanhSachHoaDon({
                   title="Tháng của cột Ngày — hóa đơn phát sinh trong tháng nào"
                   onChange={(v) => setThang(v)} options={optThang} />
           <span className="nhan">Năm {namLamViec}</span>
+          {/* Refresh = về trạng thái ban đầu: đọc lại sổ VÀ bỏ hết dấu tích ở cột In.
+              Giữ lại ghi đè cũ thì dấu của lượt trước bám sang danh sách vừa nạp,
+              trong khi người dùng bấm Refresh chính là để làm lại từ đầu. */}
           <Button size="small" className="nut-xanhdg" loading={dangTai}
                   disabled={!onLamMoi}
-                  onClick={() => void onLamMoi?.()}
-                  title={onLamMoi ? "Đọc lại sổ hóa đơn từ server"
+                  onClick={() => { setInGhiDe({}); void onLamMoi?.(); }}
+                  title={onLamMoi ? "Đọc lại sổ hóa đơn và bỏ hết dấu tích ở cột In"
                                   : "Màn cha chưa cấp hàm nạp lại"}>
             Refresh
           </Button>
@@ -748,8 +765,13 @@ Không vào mạng, không đụng vào sổ hóa đơn.">
           <Typography.Text type="secondary" style={{ fontSize: 14 }}>
             {dsLoc.length}/{dsHd.length} hóa đơn
             {soDanhDau > 0 && (
-              <span title="Hóa đơn vừa có chiết khấu vừa là HĐ điều chỉnh/thay thế — đã tự tích ở cột In">
-                {" · "}<b>{soDanhDau}</b> HĐ đánh dấu ở cột In
+              <span title="Số hóa đơn bạn đang tích ở cột In">
+                {" · "}<b>{soDanhDau}</b> HĐ đã tích ở cột In
+              </span>
+            )}
+            {soDienDanhDau > 0 && (
+              <span title="Hóa đơn vừa có chiết khấu vừa là HĐ điều chỉnh/thay thế — gợi ý, KHÔNG tự tích">
+                {" · "}<b>{soDienDanhDau}</b> HĐ nên xem (CK + ĐC/TT)
               </span>
             )}
             {oTuKhoa !== tuKhoa && (
@@ -762,6 +784,17 @@ Không vào mạng, không đụng vào sổ hóa đơn.">
                   title={fileChon ? `Mở bản HTML gốc của ${fileChon}`
                                   : "Chưa chọn hóa đơn"}>
             Xem ảnh gốc HĐ
+          </Button>
+          {/* Xóa hóa đơn ĐANG CHỌN. Phải tra lại dòng trong dsLoc chứ không truyền mỗi
+              fileChon: hộp xác nhận cần khhd/soHd/tenKh để kế toán biết đang xóa cái gì. */}
+          <Button size="small" danger disabled={!fileChon || dangXuLy}
+                  onClick={() => {
+                    const hd = dsLoc.find((x) => x.maHd === fileChon);
+                    if (hd) xoaHoaDon(hd);
+                  }}
+                  title={fileChon ? `Xóa hóa đơn ${fileChon} khỏi sổ`
+                                  : "Chưa chọn hóa đơn"}>
+            Xóa HĐ
           </Button>
           <Button size="small" type="primary" disabled={!fileChon}
                   onClick={chonVaDong}>
