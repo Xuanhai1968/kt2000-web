@@ -65,6 +65,14 @@ export const colSo = {
 export const dinhDangTien = (v: number | null | undefined) =>
   v == null ? "" : Number(v).toLocaleString("vi-VN", { maximumFractionDigits: 2 });
 
+// SỐ LƯỢNG và ĐƠN GIÁ giữ tới 4 số lẻ (chốt Trường 17/08), khác các cột tiền chỉ giữ 2.
+// Hai cột này là THỪA SỐ chứ không phải kết quả: cắt bớt số lẻ thì SL × ĐG đọc trên màn
+// không ra đúng Thành tiền, người soát tưởng phần mềm tính sai.
+//   Ca thật: đơn giá 240.272,7272 hiện thành 240.272,73 — nhân 240 lệch hơn 600đ.
+// Không ép đuôi 0: 35,3670 và 35,367 là một số, thêm hai số 0 chỉ làm cột dài ra.
+export const dinhDang4SoLe = (v: number | null | undefined) =>
+  v == null ? "" : Number(v).toLocaleString("vi-VN", { maximumFractionDigits: 4 });
+
 
 // %VAT hiện dạng người đọc quen: 10 chứ không phải 0.1.
 //
@@ -75,8 +83,20 @@ export const dinhDangTien = (v: number | null | undefined) =>
 // Quy ước: ≤ 1 là dạng tỷ lệ, nhân 100; lớn hơn thì đã là phần trăm sẵn. Thuế
 // suất VAT cao nhất hiện hành là 10%, nên mốc 1 không trùng mức thuế thật nào
 // (1% có tồn tại nhưng ghi dạng tỷ lệ sẽ là 0.01 — vẫn ≤ 1, vẫn ra đúng).
+// MÃ LOẠI THUẾ nằm chung cột với thuế suất, mang giá trị ÂM (chốt Trường 14/08):
+//   -1 = KKKNT (không kê khai, không tính nộp)   ·   -2 = KCT (không chịu thuế)
+// Phải chặn TRƯỚC phép nhân 100 bên dưới: -1 lọt vào nhánh "≤ 1 là tỷ lệ" nên hiện
+// thành -100, trông y như một thuế suất âm khổng lồ (gặp thật 17/08, NHAT_TUAN T7).
+const MA_LOAI_THUE: Record<number, string> = { [-1]: "KKKNT", [-2]: "KCT" };
+
+// Thuế suất đã là SỐ NGUYÊN sẵn (cột vat của hóa đơn, hoặc pt_vat sau bản vá 020) —
+// chỉ cần đổi mã âm sang chữ, KHÔNG nhân 100 như dinhDangPhanTramVat.
+export const nhanThueSuat = (v: number | null | undefined) =>
+  v == null ? "" : v < 0 ? (MA_LOAI_THUE[v] ?? String(v)) : String(v);
+
 export const dinhDangPhanTramVat = (v: number | null | undefined) => {
   if (v == null || v === 0) return "";
+  if (v < 0) return MA_LOAI_THUE[v] ?? String(v);
   const pt = v <= 1 ? v * 100 : v;
   // Bỏ đuôi ,00 cho các mức nguyên (8 · 10) nhưng vẫn giữ số lẻ nếu có
   return Number.isInteger(pt) ? String(pt) : pt.toLocaleString("vi-VN");
