@@ -614,7 +614,9 @@ namespace KT2000.Api.Services
                     { del.Parameters.AddWithValue("@id", maHd); await del.ExecuteNonQueryAsync(); }
 
                     // Cùng lý do như ở ImportJob: database chưa chạy 017 thì bỏ cột ra.
-                    bool coLoaiThue = CoCot(conn, "HOA_DON_LINE", "loai_thue");
+                    // Chỗ này nằm TRONG transaction nên phải truyền tx — khác lời gọi ở
+                    // ImportJob (dòng 106) chạy trước khi mở giao dịch.
+                    bool coLoaiThue = CoCot(conn, "HOA_DON_LINE", "loai_thue", tx);
 
                     foreach (var m in req.MatHangs)
                     {
@@ -1237,9 +1239,15 @@ namespace KT2000.Api.Services
         // mọi lần nạp vào đó chết với "Invalid column name". ThueService đã dính đúng
         // chuyện này với mấy cột của 015. Dò một lần mỗi job rồi ghi theo, đắt gần bằng
         // không mà không bao giờ vỡ.
-        private static bool CoCot(SqlConnection c, string bang, string cot)
+        //
+        // PHẢI nhận transaction: Microsoft.Data.SqlClient từ chối thẳng mọi câu lệnh chạy
+        // trên connection đang có giao dịch mở mà bản thân câu lệnh không gán Transaction
+        // ("ExecuteScalar requires the command to have a transaction..."). Bỏ quên tham số
+        // này ở NapMotHoaDon làm nút Ghi của modal hóa đơn lệch chết 500 đủ 100% số lần.
+        private static bool CoCot(SqlConnection c, string bang, string cot,
+                                  SqlTransaction? tx = null)
         {
-            using var cmd = new SqlCommand("SELECT COL_LENGTH(@b, @c)", c);
+            using var cmd = new SqlCommand("SELECT COL_LENGTH(@b, @c)", c, tx);
             cmd.Parameters.AddWithValue("@b", bang);
             cmd.Parameters.AddWithValue("@c", cot);
             var o = cmd.ExecuteScalar();
