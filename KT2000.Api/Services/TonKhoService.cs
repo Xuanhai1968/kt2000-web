@@ -177,6 +177,30 @@ namespace KT2000.Api.Services
             }
 
             var tonDauNam = await LayTonDauNamAsync(conn);
+
+            // Mặt hàng CÓ tồn đầu năm mà KHÔNG mua không bán trong năm thì không có dòng nào
+            // trong HOA_DON_LINE, nên không lọt vào thoRows — và biến mất khỏi báo cáo, kéo
+            // theo dòng TỔNG CỘNG hụt đúng phần đó. Đúng cái hàng ế lại là thứ kế toán cần
+            // thấy nhất. Bù chúng vào bằng dòng chuyển động RỖNG; tồn đầu ghép ở vòng dưới.
+            //
+            // Chưa lộ vì TON_KHO đang rỗng ở mọi đơn vị. Sẽ lộ đúng ngày WP-08 Chuyển năm
+            // chạy xong — lúc đó rất khó truy vì "hôm qua báo cáo vẫn đúng".
+            //
+            // Vẫn phải qua đủ hai bộ lọc của người dùng: không thì lọc theo TK / mặt hàng
+            // xong vẫn có dòng ngoài phạm vi chui vào.
+            var daCo = new HashSet<(string, string)>(thoRows.Select(t => (t.MaTk, t.MaHang)));
+            var locTk = new HashSet<string>(dsTk, StringComparer.OrdinalIgnoreCase);
+            var locHang = q.MaHang is { Count: > 0 }
+                        ? new HashSet<string>(q.MaHang, StringComparer.OrdinalIgnoreCase)
+                        : null;
+            foreach (var ((maTk, maHang), _) in tonDauNam)
+            {
+                if (daCo.Contains((maTk, maHang))) continue;
+                if (!locTk.Contains(maTk)) continue;
+                if (locHang != null && !locHang.Contains(maHang)) continue;
+                thoRows.Add((maTk, maHang, 0m, 0m, 0m, 0m, 0m, 0m, null, null));
+            }
+
             var giaNhap   = await LayGiaNhapTrongKyAsync(conn, q, caNam, tapK);
             var loLai     = q.IncludeLoLai
                           ? await LayLoLaiAsync(conn, q, caNam)
@@ -195,7 +219,11 @@ namespace KT2000.Api.Services
                 // BR-BC-07: bỏ dòng rác tồn đầu — giá trị dưới 0,1đ mà số lượng bằng 0.
                 // Chỉ bỏ khi trong kỳ CŨNG không phát sinh gì, nếu không thì mặt hàng mới
                 // mua trong kỳ (tồn đầu đúng bằng 0) sẽ biến mất khỏi báo cáo.
-                bool racTonDau = gtTd < 0.1m && slTd == 0;
+                //
+                // Abs chứ không phải gtTd < 0.1m: luật này nói về SAI SỐ LÀM TRÒN, mà viết
+                // thiếu Abs thì tồn đầu −5.000.000 với số lượng 0 cũng lọt vào diện "rác" và
+                // bị loại im lặng — đúng cái dòng báo hiệu sổ hỏng.
+                bool racTonDau = Math.Abs(gtTd) < 0.1m && slTd == 0;
                 bool khongPhatSinh = t.SlNo == 0 && t.SlCo == 0 && t.GtNo == 0 && t.GtCo == 0;
                 if (racTonDau && khongPhatSinh) continue;
 
@@ -251,6 +279,10 @@ namespace KT2000.Api.Services
         // TON_KHO thang = 0 — tồn đầu NĂM, sản phẩm của WP-08 Chuyển năm.
         // Cột tên là ma_chitiet chứ không phải ma_hang (kiểm cấu trúc 17/08).
         // Đo 17/08: bảng này đang RỖNG ở mọi đơn vị vì chuyển năm chưa chạy → tồn đầu năm 0.
+        //
+        // ma_tk và ma_chitiet đều khai NOT NULL (010_tenant_template_v6.sql) nên GetString ở
+        // đây an toàn, KHÔNG cần lọc IS NOT NULL như câu lấy giá nhập bên dưới — bên đó đọc
+        // HOA_DON_LINE.ghi_no, cột cho phép NULL và thật sự đang có 487 dòng NULL.
         private static async Task<Dictionary<(string, string), (decimal Sl, decimal Gt)>>
             LayTonDauNamAsync(SqlConnection conn)
         {
@@ -261,10 +293,6 @@ namespace KT2000.Api.Services
                          SUM(ISNULL(ps_no, 0)       - ISNULL(ps_co, 0))
                     FROM TON_KHO
                    WHERE thang = 0
-                     -- Bỏ dòng không có TK: tồn kho của một tài khoản rỗng là vô nghĩa,
-                     -- mà để lọt thì GetString bên dưới ném SqlNullValueException. Bảng
-                     -- đang rỗng nên chưa lộ; sẽ lộ đúng lúc WP-08 Chuyển năm chạy xong.
-                     AND ma_tk IS NOT NULL
                    GROUP BY ma_tk, ISNULL(ma_chitiet, '')", conn);
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -460,8 +488,17 @@ namespace KT2000.Api.Services
             var ds = new List<HangAmRow>();
 
             // Window function thay trọn vòng SCAN Temp79/Temp791 của VFP (gợi ý spec 6).
-            // Thứ tự cộng dồn phải GIỮ luật VFP: trong cùng một ngày, phiếu trả lại (mã "R")
-            // xếp SAU — không thì một hóa đơn trả hàng cùng ngày làm số dư âm giả.
+            //
+            // Thứ tự cộng dồn trong CÙNG một ngày: NHẬP trước, XUẤT sau. Chứng từ chỉ ghi
+            // ngày chứ không ghi giờ, nên nếu xếp ngược thì một lô mua và bán trọn trong
+            // ngày sẽ tụt xuống âm ở bước giữa rồi về 0 — báo động giả, và loại báo động giả
+            // này nhiều đến mức che mất ca âm thật.
+            //
+            // Phân loại bằng chính chuyển động (sl_no > 0), KHÔNG bằng tiền tố mã hóa đơn.
+            // Bản đầu viết ma_hd LIKE 'R%' kèm chú thích "phiếu trả lại" — sai hai lần: mã
+            // thật có dạng VAO_… / RA_… nên 'R%' bắt trúng toàn bộ hóa đơn BÁN RA, còn phiếu
+            // trả lại thì hệ thống chưa có mã riêng nào để nhận ra cả (nếu sau này có, xử lý
+            // riêng ở đây và ghi rõ mã).
             using var cmd = new SqlCommand($@"
                 WITH cd AS ({SqlChuyenDong}),
                 luy_ke AS (
@@ -469,7 +506,7 @@ namespace KT2000.Api.Services
                            SUM(sl_no - sl_co) OVER (
                                PARTITION BY ma_tk, ma_hang
                                ORDER BY ngay,
-                                        CASE WHEN ma_hd LIKE 'R%' THEN 1 ELSE 0 END,
+                                        CASE WHEN sl_no > 0 THEN 0 ELSE 1 END,
                                         ma_hd
                                ROWS UNBOUNDED PRECEDING) AS so_du
                       FROM cd
