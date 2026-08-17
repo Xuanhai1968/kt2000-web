@@ -141,8 +141,13 @@ namespace KT2000.Api.Services
         // PHẢI có GhiChuM ở đây: hóa đơn bị thay thế thì SỐ TIỀN KHÔNG ĐỔI, chỉ mỗi trạng
         // thái đổi từ 'Hóa đơn mới' sang 'Hóa đơn đã bị thay thế'. So thiếu cột này là bỏ
         // qua đúng cái thay đổi đáng giá nhất.
+        // PHẢI có cả MaHd: dòng gốc ghi lần đầu lúc hóa đơn chưa vào được sổ sẽ mang
+        // ma_hd NULL, và những lần nạp sau tiền không đổi nên nhánh "y hệt thì bỏ qua"
+        // chặn luôn — mã không bao giờ được nối, cột đối chiếu vĩnh viễn hiện "—".
+        //   Ca thật NHAT_TUAN 17/08: nạp lại ra "đối chiếu +0/thay 0", bấm cả nút Lấy giá
+        //   trị từ tờ khai cũng "thêm 82, thay 0" — hai đường khác nhau cùng đâm vào đây.
         private sealed record DongCu(string LineNum, decimal Value1, decimal Tax, decimal Ck,
-                                     string GhiChuM);
+                                     string GhiChuM, string MaHd);
 
         private static KetQua ThemHoacThayLine(SqlConnection c, SqlTransaction tx, string maInput,
                                                List<DongGoc> dong, string user)
@@ -153,7 +158,7 @@ namespace KT2000.Api.Services
             int lineKe = 0;
             using (var doc = new SqlCommand(
                 @"SELECT ISNULL(khhd,''), ISNULL(so_hd,''), ISNULL(mst,''),
-                         line_num, value1, tax, ck, ISNULL(ghi_chu_m,'')
+                         line_num, value1, tax, ck, ISNULL(ghi_chu_m,''), ISNULL(ma_hd,'')
                   FROM IN_VALUE_LINE WHERE ma_input=@m", c, tx))
             {
                 doc.Parameters.AddWithValue("@m", maInput);
@@ -163,7 +168,7 @@ namespace KT2000.Api.Services
                     string ln = r.GetString(3);
                     daCo[Khoa(r.GetString(0), r.GetString(1), r.GetString(2))] =
                         new DongCu(ln, r.GetDecimal(4), r.GetDecimal(5), r.GetDecimal(6),
-                                   r.GetString(7));
+                                   r.GetString(7), r.GetString(8));
                     // line_num là 'L' + số. Lấy số LỚN NHẤT để đánh tiếp, đừng đếm số dòng —
                     // đếm thì xóa tay một dòng giữa chừng là sinh trùng khóa chính.
                     if (ln.Length > 1 && int.TryParse(ln.AsSpan(1), out int so) && so > lineKe)
@@ -208,7 +213,10 @@ namespace KT2000.Api.Services
                          -- là số trước khi cổng sửa.
                          old_value = CASE WHEN value1 <> @value1 THEN value1 ELSE old_value END,
                          old_vat   = CASE WHEN tax    <> @tax    THEN tax    ELSE old_vat   END,
-                         value1=@value1, tax=@tax, ck=@ck, ma_hd=@ma_hd,
+                         value1=@value1, tax=@tax, ck=@ck,
+                         -- ISNULL: chỉ GHI ĐÈ khi bản mới có mã. Hóa đơn chưa vào được sổ
+                         -- gửi lên NULL, gán thẳng là xóa mất mã đã nối từ lần trước.
+                         ma_hd = ISNULL(@ma_hd, ma_hd),
                          ghi_chu_m=@tthai
                    WHERE ma_input=@m AND line_num=@ln", c, tx);
             var q = upd.Parameters;
@@ -233,8 +241,13 @@ namespace KT2000.Api.Services
                     // Y hệt thì bỏ qua: nạp lại một tháng không có gì đổi là chuyện thường,
                     // ghi đè cả nghìn dòng bằng đúng cái đang có chỉ tổ mất old_value thật
                     // (nó bị đè bằng chính value1 hiện tại).
+                    // So cả ma_hd. Nhưng CHỈ khi bản mới CÓ mã: hóa đơn chưa vào sổ thì
+                    // d.MaHd = null, so thẳng sẽ thấy "khác" và xóa trắng mã đã nối được
+                    // từ lần trước — nối rồi lại gỡ, mỗi lần nạp một kiểu.
+                    string maMoi = (d.MaHd ?? "").Trim();
+                    bool giuNguyenMa = maMoi.Length == 0 || maMoi == cu.MaHd;
                     if (cu.Value1 == d.Value1 && cu.Tax == d.Tax && cu.Ck == d.Ck
-                        && cu.GhiChuM == (d.TthaiHd ?? "").Trim()) continue;
+                        && cu.GhiChuM == (d.TthaiHd ?? "").Trim() && giuNguyenMa) continue;
 
                     q["@m"].Value = maInput;
                     q["@ln"].Value = cu.LineNum;
@@ -249,7 +262,8 @@ namespace KT2000.Api.Services
                     // Ghi lại giá trị mới vào bộ nhớ: file Excel có hai dòng cùng hóa đơn
                     // thì dòng sau phải so với dòng trước, không thì lần nào cũng "khác".
                     daCo[k] = cu with { Value1 = d.Value1, Tax = d.Tax, Ck = d.Ck,
-                                        GhiChuM = (d.TthaiHd ?? "").Trim() };
+                                        GhiChuM = (d.TthaiHd ?? "").Trim(),
+                                        MaHd = maMoi.Length == 0 ? cu.MaHd : maMoi };
                     sua++;
                     continue;
                 }
@@ -271,7 +285,7 @@ namespace KT2000.Api.Services
                 p["@u"].Value = user;
                 ins.ExecuteNonQuery();
                 daCo[k] = new DongCu("L" + lineKe, d.Value1, d.Tax, d.Ck,
-                                     (d.TthaiHd ?? "").Trim());
+                                     (d.TthaiHd ?? "").Trim(), (d.MaHd ?? "").Trim());
                 them++;
             }
             return new KetQua(them, sua);

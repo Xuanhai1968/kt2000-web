@@ -21,7 +21,8 @@ import { AgGridReact } from "ag-grid-react";
 import type { ColDef } from "ag-grid-community";
 import { mauDonVi, damDonVi } from "../theme/donViColors";
 import {
-  themeVfp, luoiVfpProps, colVfp, colSua, colSo, dinhDangTien, nhoDoRongCot,
+  themeVfp, luoiVfpProps, colVfp, colSua, colSo, dinhDangTien, dinhDang4SoLe,
+  nhoDoRongCot,
 } from "../theme/luoiVfp";
 import "./luoi-gon.css";
 import "./mau-huong.css";
@@ -53,29 +54,66 @@ const THANG_HIEN_TAI = new Date().getMonth() + 1;
 // như cũ, vì ở đó nó là một dòng trong bảng kê chứ không phải toàn bộ hóa đơn.
 const toanChietKhau = (mh: MatHang[]) => mh.length > 0 && mh.every(laDongChietKhau);
 
+// Tiền hàng theo dòng = Σ (Thành tiền − Chiết khấu), CỘNG ĐỀU mọi dòng.
+//
+// Không còn nhánh riêng cho dòng TC=3 (chốt Trường 17/08): tiền của dòng đó nay nằm ở
+// cột Chiết khấu chứ không phải Thành tiền, nên "TT − CK" của nó tự ra SỐ ÂM. Cộng một
+// số âm chính là trừ — một phép tính duy nhất cho cả hai loại dòng, khỏi nhớ ngoại lệ.
+//
+// Đây cũng là công thức backend dùng, nên cột Lệch Σ line từ nay khớp với con số ở cột
+// "Vì sao còn nằm lại". Trước kia hai bên tính hai kiểu: badge xanh báo khớp nằm ngay
+// cạnh dòng chữ đỏ báo lệch 1.668.095 — cùng một hóa đơn mà màn hình tự cãi nhau.
+//
+// NGOẠI LỆ giữ nguyên: hóa đơn CHIẾT KHẤU THƯƠNG MẠI đứng riêng (mọi dòng đều TC=3) thì
+// người bán khai tiền hàng là số DƯƠNG nên Σ cũng phải dương mới khớp — cộng đều ở đây
+// sẽ ra âm và báo lệch gấp đôi. Khớp đúng ngoại lệ toanChietKhau bên ImportJob.
 const sumLine = (hd: HoaDonConLai) =>
-  // Hóa đơn CHIẾT KHẤU THƯƠNG MẠI đứng riêng: người bán khai tiền hàng là số DƯƠNG nên
-  // Σ cũng phải dương mới khớp. Đảo dấu ở đây là báo lệch gấp đôi và tô đỏ một hóa đơn
-  // mà backend đã nhận — khớp đúng ngoại lệ toanChietKhau bên ImportJob.
-  // Thành tiền của mấy dòng này đã được chuanHoaMatHang dời sang cột Chiết khấu, nên
-  // phải cộng chietKhau chứ không phải thanhTien (thanhTien nay bằng 0).
   toanChietKhau(hd.matHangs)
     ? hd.matHangs.reduce((s, m) => s + (m.chietKhau || 0), 0)
-    : hd.matHangs.reduce((s, m) => s + (laDongChietKhau(m) ? -m.thanhTien : m.thanhTien), 0);
+    : hd.matHangs.reduce((s, m) => s + m.thanhTien - (m.chietKhau || 0), 0);
 
-// Dời số tiền sang cột Chiết khấu ngay lúc nhận dữ liệu, KHÔNG làm ở tầng hiển thị:
-// lưới sửa thẳng vào mảng này, có hai cách đọc song song là chỗ nào cũng phải nhớ
-// dịch, sót một chỗ là ra số sai.
-const chuanHoaMatHang = (hd: HoaDonConLai): HoaDonConLai =>
-  toanChietKhau(hd.matHangs)
-    ? { ...hd, matHangs: hd.matHangs.map((m) => ({ ...m, chietKhau: m.thanhTien, thanhTien: 0 })) }
-    : hd;
+// Dời số tiền của dòng TC=3 sang cột Chiết khấu ngay lúc nhận dữ liệu, KHÔNG làm ở tầng
+// hiển thị: lưới sửa thẳng vào mảng này, có hai cách đọc song song là chỗ nào cũng phải
+// nhớ dịch, sót một chỗ là ra số sai.
+//
+// Từ 17/08 áp cho MỌI dòng TC=3, kể cả trong hóa đơn hỗn hợp (trước chỉ áp khi cả hóa
+// đơn toàn dòng TC=3) — chiết khấu phải nằm ở cột Chiết khấu, không nằm ở cột Thành tiền.
+// Đổi chỗ này thì sumLine và ckCuaHoaDon phải đọc theo, xem hai hàm kề bên.
+const chuanHoaMatHang = (hd: HoaDonConLai): HoaDonConLai => ({
+  ...hd,
+  matHangs: hd.matHangs.map((m) =>
+    laDongChietKhau(m) && m.thanhTien !== 0
+      ? { ...m, chietKhau: m.thanhTien, thanhTien: 0 }
+      : m),
+});
 
-// Chiết khấu của cả hóa đơn = Σ chiết khấu từng dòng. Không dòng nào khai thì lùi về
-// số cổng khai ở mức hóa đơn (TTCKTMai) — thà lấy số của cổng còn hơn hiện 0.
+// Phép NGƯỢC của chuanHoaMatHang, chạy ngay trước khi gửi lên server.
+//
+// BẮT BUỘC phải có: backend ghi thẳng ChietKhau xuống HOA_DON_LINE.tien_ck còn SoLuong
+// và DonGia thì giữ nguyên. Gửi dòng TC=3 ở dạng đã dời thì nó vào sổ với CẢ SL×ĐG lẫn
+// tien_ck cùng mang số chiết khấu — tự tay đẻ ra đúng ca "trừ hai lần" mà 1C26TBN/0000611
+// đang mắc, cho MỌI hóa đơn ghi tay có dòng chiết khấu.
+// Việc dời chỗ là chuyện của MÀN HÌNH; xuống tới sổ thì phải trả về đúng dạng của cổng.
+const traVeDangGoc = (mh: MatHang[]): MatHang[] =>
+  mh.map((m) =>
+    laDongChietKhau(m) && m.thanhTien === 0 && (m.chietKhau || 0) !== 0
+      ? { ...m, thanhTien: m.chietKhau, chietKhau: 0 }
+      : m);
+
+// Chiết khấu của cả hóa đơn.
+//
+// CÓ dòng TC=3 thì CHỈ cộng mấy dòng đó, không cộng thêm chiết khấu rải trên dòng hàng:
+// hóa đơn khai cả hai dạng thì đó là CÙNG MỘT khoản ghi hai chỗ, cộng cả hai là gấp đôi.
+//   Ca thật NHAT_TUAN 1C26TBN/0000611: dòng TC=3 ghi 1.668.096, ba dòng hàng cũng rải
+//   đúng 1.668.096, mà cổng khai ở mức hóa đơn (TTCKTMai) vẫn chỉ 1.668.096.
+// Không có dòng TC=3 thì Σ chiết khấu của dòng hàng chính là nó — 29 hóa đơn HOA_SANG
+// và HUY_THANH thuộc loại này, đối chiếu bản gốc TCT khớp 28/28 (đo 17/08).
+// Không dòng nào khai thì lùi về số cổng khai ở mức hóa đơn — thà lấy số của cổng hơn hiện 0.
 const ckCuaHoaDon = (hd?: HoaDonConLai) => {
   if (!hd) return 0;
-  const tong = hd.matHangs.reduce((s, m) => s + (m.chietKhau || 0), 0);
+  const dongCk = hd.matHangs.filter(laDongChietKhau);
+  const tong = (dongCk.length > 0 ? dongCk : hd.matHangs)
+    .reduce((s, m) => s + (m.chietKhau || 0), 0);
   return tong || hd.tienCk || 0;
 };
 
@@ -118,9 +156,13 @@ const COT_HOA_DON: ColDef<HoaDonConLai>[] = [
           // để thêm chỉ tổ chiếm chỗ của mấy cột phải đọc kỹ hơn.
           // Ngưỡng 10đ khớp SAI_SO_CHO_PHEP bên ImportService — không thì hóa đơn
           // backend đã nhận vẫn hiện đỏ ở đây, đọc như còn lỗi.
+          // Hiện ĐÚNG số lệch, kể cả vài đồng lẻ (chốt Trường 17/08). Trước đây dưới
+          // ngưỡng 10đ thì in "0" cho đỡ rối, nhưng thế là giấu mất chênh lệch thật:
+          // người soát thấy 0 rồi tin là khớp tuyệt đối, trong khi có thể lệch 9đ.
+          // Ngưỡng 10đ VẪN dùng — nhưng chỉ để quyết định TÔ ĐỎ hay không, xem cellStyle.
           { colId: "lechSigma", headerName: "Lệch Σ line", width: 125, type: "numericColumn",
             valueGetter: (p) => (p.data ? p.data.tienHang - sumLine(p.data) : 0),
-            valueFormatter: (p) => (Math.abs(p.value) < 10 ? "0" : dinhDangTien(p.value)),
+            valueFormatter: (p) => dinhDangTien(p.value),
             // Tra ve MOT hinh dang duy nhat: hai nhanh khac khoa thi TS suy ra kieu
             // hop, va CellStyle co index signature khong nhan undefined.
             cellStyle: (p) => ({
@@ -151,10 +193,12 @@ const COT_MAT_HANG: ColDef<MatHang>[] = [
           { ...colSua, headerName: "Tên hàng", field: "tenHang", width: 300,
             tooltipField: "tenHang" },
           { ...colSua, headerName: "ĐVT", field: "dvt", width: 85 },
+          // SL và ĐG giữ 4 số lẻ — chúng là THỪA SỐ, cắt bớt thì nhân ra không khớp
+          // Thành tiền. Các cột tiền bên dưới vẫn 2 số như cũ.
           { ...colSo, headerName: "Số lượng", field: "soLuong", width: 110,
-            valueFormatter: (p) => dinhDangTien(p.value) },
+            valueFormatter: (p) => dinhDang4SoLe(p.value) },
           { ...colSo, headerName: "Đơn giá", field: "donGia", width: 130,
-            valueFormatter: (p) => dinhDangTien(p.value) },
+            valueFormatter: (p) => dinhDang4SoLe(p.value) },
           // Chiết khấu của RIÊNG dòng (STCKhau). SỬA ĐƯỢC (chốt 12/08) — cổng nhiều khi
           // không khai STCKhau, đây là chỗ kế toán điền tay; ô Chiết khấu ở lưới trên
           // cộng lại từ chính cột này nên sửa ở đây là trên kia đổi theo.
@@ -406,7 +450,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
         // cứng 0 (hay gửi hd.tienCk không đổi theo) thì người dùng gõ vào rồi bấm Ghi
         // mà số không vào sổ — một ô giả. Lấy đúng con số đang hiện trên lưới.
         diaChi: "", tienHang: hd.tienHang, tienVat: hd.tienVat, tienCk: ckCuaHoaDon(hd),
-        matHangs: hd.matHangs,
+        matHangs: traVeDangGoc(hd.matHangs),
       });
       const d = r.data;
       message.success(`${d.capNhat ? "Đã cập nhật" : "Đã thêm"} ${d.maHd}`

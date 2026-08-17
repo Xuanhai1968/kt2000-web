@@ -10,7 +10,8 @@ import { layDoiChieuHd, dungBanGocTct, loiApi } from "../api";
 import { thueXoaHoaDon, thueXuLyTtDc } from "../api";
 import { MAU_HD_RA, MAU_HD_VAO } from "../AppShell";
 import {
-  themeVfp, luoiVfpProps, colVfp, dinhDangPhanTramVat, nhoDoRongCot,
+  themeVfp, luoiVfpProps, colVfp, dinhDangPhanTramVat, nhanThueSuat,
+  dinhDang4SoLe, nhoDoRongCot,
 } from "../theme/luoiVfp";
 import "./mau-huong.css";          // .ag-row.dong-dang-chon — tô dòng đang chọn
 import "./keo-cot.css";            // con trỏ ↔ ở mép cột, báo cho biết kéo được
@@ -536,10 +537,7 @@ export default function DanhSachHoaDon({
     // header để trống trong khi dòng vẫn có pt_vat.
     // Đo 15/08 trên HOA_SANG_2026: 58 hóa đơn trống %VAT mà dòng có thuế suất.
     { colId: "ptVat", headerName: "%VAT", width: 56, type: "numericColumn",
-      valueGetter: (p) => {
-        const v = p.data?.vat ?? p.data?.vatLine;
-        return v != null ? String(v) : "";
-      } },
+      valueGetter: (p) => nhanThueSuat(p.data?.vat ?? p.data?.vatLine) },
     { colId: "noVat", headerName: "Nợ VAT", field: "ghiNoVat", width: 50 },
     { colId: "coVat", headerName: "Có VAT", field: "ghiCoVat", width: 46 },
     { colId: "kt", headerName: "KT", width: 44, field: "thang",
@@ -614,10 +612,12 @@ export default function DanhSachHoaDon({
     { colId: "tenHang", headerName: "Tên hàng hoá dịch vụ", field: "tenHang",
       width: 300, tooltipField: "tenHang" },
     { colId: "dvt", headerName: "ĐVT", field: "dvt", width: 70 },
+    // SL và ĐG giữ tới 4 số lẻ, khác các cột TIỀN chỉ giữ 2 (chốt Trường 17/08): hai cột
+    // này là THỪA SỐ, cắt bớt số lẻ thì nhân ra không khớp Thành tiền ngay bên cạnh.
     { colId: "soLuong", headerName: "Số lượng", field: "soLuong", width: 96,
-      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
+      type: "numericColumn", valueFormatter: (p) => dinhDang4SoLe(p.value ?? 0) },
     { colId: "donGia", headerName: "Đơn giá", field: "donGia", width: 120,
-      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
+      type: "numericColumn", valueFormatter: (p) => dinhDang4SoLe(p.value ?? 0) },
     { colId: "thanhTien", headerName: "Thành tiền", field: "thanhTien", width: 130,
       type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0),
       cellStyle: { backgroundColor: "#f5f5f5", fontWeight: 600 } },

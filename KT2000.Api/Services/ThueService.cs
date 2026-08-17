@@ -114,7 +114,12 @@ namespace KT2000.Api.Services
                            -- phải hiện 8, không phải -2. Hóa đơn nhiều thuế suất thật
                            -- (8 và 10) sẽ hiện số lớn hơn — cột %VAT của cả hóa đơn vốn
                            -- chỉ là số đại diện, muốn chính xác phải nhìn dòng.
-                           MAX(x.pt_vat) AS pt_vat_line
+                           -- CAST bắt buộc: pt_vat là INT ở database đã chạy bản vá 020,
+                           -- nhưng vẫn là DECIMAL(18,3) ở database chưa nạp lần nào (bản
+                           -- vá chỉ chạy lúc NẠP). Không ép kiểu thì GetInt32 ném
+                           -- InvalidCastException và cả màn danh sách trả 500 — mà chỉ ở
+                           -- đúng những đơn vị chưa nạp, nên rất dễ tưởng là đã hết lỗi.
+                           CAST(MAX(x.pt_vat) AS INT) AS pt_vat_line
                       FROM HOA_DON_LINE x
                      WHERE x.ma_hd = h.ma_hd
               ) s";

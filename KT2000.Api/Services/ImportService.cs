@@ -143,7 +143,7 @@ namespace KT2000.Api.Services
                 // Bản gốc TCT của hướng này, gom lại để ghi MỘT lượt cuối vòng — mỗi kỳ kê
                 // khai chỉ mở một transaction thay vì mỗi hóa đơn một cái.
                 var dsGoc = new List<DoiChieuService.DongGoc>();
-                var maHdDaGhi = new HashSet<string>(StringComparer.Ordinal);
+                var maHdTrongSo = new HashSet<string>(StringComparer.Ordinal);
 
                 // ---- Gom LINE theo MA_HD ----
                 var linesByHd = new Dictionary<string, List<IXLRow>>();
@@ -284,10 +284,6 @@ namespace KT2000.Api.Services
                         // hai con số không bao giờ lệch nhau.
                         if (existed) TheoH(huong).Updated++; else TheoH(huong).Inserted++;
                         ghiXong = true;
-                        // Chỉ hóa đơn THỰC SỰ vào được HOA_DON mới được mang ma_hd sang bảng
-                        // đối chiếu. Điền sẵn cho dòng bị đá ra là trỏ tới bản ghi không tồn
-                        // tại, mà cột đó quy ước NULL = chưa khớp.
-                        maHdDaGhi.Add(maHd);
                     }
                     catch (Exception ex)
                     {
@@ -313,8 +309,20 @@ namespace KT2000.Api.Services
                     }
                 }
 
+                // Đọc mã hóa đơn CÓ TRONG SỔ, sau khi vòng nạp đã xong.
+                //
+                // Trước đây dùng tập "vừa ghi thành công lượt này" — sai ở đúng chỗ đau
+                // nhất: hóa đơn đã nằm sẵn trong sổ từ lần nạp trước mà lượt này bị đá ra
+                // vì LỆCH Σ thì không có trong tập đó, nên dòng gốc của nó bị ghi ma_hd
+                // NULL và cột đối chiếu hiện "—". Tức là đúng những hóa đơn LỆCH THẬT —
+                // thứ duy nhất đáng đối chiếu — lại là thứ mất liên kết.
+                //   Ca thật NHAT_TUAN T7 (17/08): 4 hóa đơn, lệch tới 2.823.947đ.
+                using (var docSo = new SqlCommand("SELECT ma_hd FROM HOA_DON", conn))
+                using (var rSo = docSo.ExecuteReader())
+                    while (rSo.Read()) maHdTrongSo.Add(rSo.GetString(0));
+
                 var kqGoc = _dc.Ghi(conn, huong, tenant.KhaiQuy,
-                    dsGoc.Select(d => maHdDaGhi.Contains(d.MaHd!) ? d : d with { MaHd = null })
+                    dsGoc.Select(d => maHdTrongSo.Contains(d.MaHd!) ? d : d with { MaHd = null })
                          .ToList(),
                     userName);
                 dongGocMoi += kqGoc.Them; dongGocSua += kqGoc.Sua;
