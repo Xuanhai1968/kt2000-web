@@ -29,6 +29,9 @@ builder.Services.AddScoped<NoiBoService>();   // phần nội bộ: danh mục +
 builder.Services.AddScoped<ThueService>();    // sổ thuế: đọc HOA_DON của đơn vị đang đăng nhập
 builder.Services.AddScoped<RaSoatService>();  // đối chiếu file vs sổ trước khi khai thuế — CHỈ ĐỌC
 builder.Services.AddScoped<ToKhaiService>();  // lập tờ khai 01/GTGT — CHỈ ĐỌC
+// Viên gạch tồn kho dùng chung (SPEC-BAO-CAO-TON-KHO mục 3) — CHỈ ĐỌC, BR-BC-01.
+// Mọi module cần số tồn kho gọi qua đây, không module nào tự viết lại công thức.
+builder.Services.AddScoped<TonKhoService>();
 builder.Services.AddScoped<BangToKhaiService>();  // bảng tờ khai nhiều đơn vị (MDN_NB) — CHỈ ĐỌC
 // CÓ GHI (khác ba service trên): đánh dấu ghi_chu cho HĐ thay thế/điều chỉnh khác kỳ.
 builder.Services.AddScoped<GhiChuHdLienQuan>();

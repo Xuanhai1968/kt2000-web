@@ -5,6 +5,7 @@ import DashboardPage from "./DashboardPage";
 import AppShell from "./AppShell";
 import HoaDonDauVao from "./pages/HoaDonDauVao";
 import BaoCaoThue from "./pages/BaoCaoThue";
+import BaoCaoTonKho from "./pages/BaoCaoTonKho";
 import ChoPhatTrien from "./pages/ChoPhatTrien";
 import DonViKhachHang from "./pages/DonViKhachHang";
 import MoNamLamViec from "./pages/MoNamLamViec";
@@ -35,7 +36,7 @@ export default function App() {
             <Route path="phieu-thu" element={<ChoPhatTrien title="Phiếu thu" />} />
             <Route path="phieu-chi" element={<ChoPhatTrien title="Phiếu chi" />} />
             <Route path="bao-cao-thue" element={<BaoCaoThue />} />
-            <Route path="bao-cao-ton-kho" element={<ChoPhatTrien title="Báo cáo tồn kho" />} />
+            <Route path="bao-cao-ton-kho" element={<BaoCaoTonKho />} />
             <Route path="bao-cao-cong-no" element={<ChoPhatTrien title="Báo cáo công nợ" />} />
             {/* Đường dẫn giữ nguyên như cũ, chỉ đổi màn hình bên trong sang bản
                 USA_Meva. Nhờ vậy link/bookmark cũ và mọi chỗ navigate() sẵn có
