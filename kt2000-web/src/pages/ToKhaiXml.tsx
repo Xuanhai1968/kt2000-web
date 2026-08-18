@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Table, Typography, Empty, Upload, Button, Tag, message,
-         Input } from "antd";
+         Input, Checkbox } from "antd";
 import { FileTextOutlined, InboxOutlined, FileExcelOutlined,
          FileDoneOutlined, DownloadOutlined, FilePdfOutlined,
          ReloadOutlined, EyeOutlined, DeleteOutlined,
@@ -10,8 +10,8 @@ import { thueBaoCao, thueBaoCaoDonVi, thueDocBangKe, thueKhoBangKe, thueRaSoat,
          thueLapToKhai, thueToKhaiXml, thueHtmlHoaDon, thueXoaHoaDon,
          loiApi } from "../api";
 import HtmlHoaDon from "./HtmlHoaDon";
-import type { BaoCaoThue, BangKeHoaDon, HoaDonFile, KetQuaRaSoat, NhomSuat,
-              ToKhaiGtgt } from "../api";
+import type { BaoCaoThue, BangKeHoaDon, DongBangKe, HoaDonFile, KetQuaRaSoat,
+              NhomSuat, NhomSuatHd, ToKhaiGtgt } from "../api";
 import BangToKhai from "./BangToKhai";
 import "./bang-to-khai.css";
 import "./to-khai-xml.css";
@@ -27,6 +27,16 @@ const boDau = (s: string) =>
 
 const tienTron = (v: number | null | undefined) =>
   v == null ? "" : v.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
+
+// Làm tròn kiểu .NET MidpointRounding.AwayFromZero — KHÔNG dùng Math.round trần.
+//
+// Math.round làm tròn .5 về phía DƯƠNG vô cực: Math.round(-2.5) = -2, trong khi server
+// (Math.Round mặc định AwayFromZero ở các chỗ tính tiền) ra -3. Doanh thu ÂM là chuyện
+// có thật — hóa đơn điều chỉnh giảm, dòng chiết khấu đảo dấu — nên client và server
+// phải tròn cùng một kiểu, nếu không cùng một kỳ hiện hai con số khác nhau tùy chỗ
+// nhìn.
+const tronRaXa = (v: number) =>
+  v < 0 ? -Math.round(-v) : Math.round(v);
 
 function docXmlHoaDon(noiDung: string, tenFile: string): HoaDonFile | null {
   try {
@@ -74,12 +84,34 @@ const ngayNgan = (s: string | null) => {
   return p.length === 3 && p[0] ? `${p[2]}/${p[1]}/${p[0].slice(2)}` : "";
 };
 
+interface BoChon {
+  co: (maHd: string) => boolean;
+  doiMot: (maHd: string, tick: boolean) => void;
+  doiTatCa: (tick: boolean) => void;
+  tatCa: boolean;       // mọi dòng ĐANG HIỆN đều được chọn
+  motPhan: boolean;     // chọn một phần — ô đầu cột hiện gạch ngang
+}
+
 const cotHoaDon = (
   vaiTro: string,
   xem: (m: BangKeHoaDon) => void,
   xoa: (m: BangKeHoaDon) => void,
+  chon: BoChon,
 ): ColumnsType<BangKeHoaDon> => [
-  { title: "STT", dataIndex: "stt", width: 44, align: "right", fixed: "left" },
+  { title: "STT", dataIndex: "stt", width: 44, align: "center", fixed: "left" },
+  {
+    title: (
+      <Checkbox checked={chon.tatCa} indeterminate={chon.motPhan}
+                onChange={(e) => chon.doiTatCa(e.target.checked)}
+                title="Chọn / bỏ chọn hết hóa đơn đang hiện trong lưới" />
+    ),
+    dataIndex: "chon", width: 40, align: "center", fixed: "left",
+    render: (_: unknown, m: BangKeHoaDon) => (
+      <Checkbox checked={chon.co(m.maHd)}
+                onChange={(e) => chon.doiMot(m.maHd, e.target.checked)}
+                title={`Đưa ${m.khHd ?? ""}/${m.soHd ?? ""} vào tờ khai`} />
+    ),
+  },
   { title: "KHHD", dataIndex: "khHd", width: 80 },
   { title: "Số HĐ", dataIndex: "soHd", width: 86 },
   { title: "Ngày", dataIndex: "ngay", width: 76,
@@ -111,7 +143,7 @@ const cotHoaDon = (
     ) },
 ];
 
-const RONG_LUOI = 44 + 80 + 86 + 76 + 230 + 120 + 170 + 130 + 50 + 120 + 160 + 76;
+const RONG_LUOI = 44 + 40 + 80 + 86 + 76 + 230 + 120 + 170 + 130 + 50 + 120 + 160 + 76;
 
 interface HdLech {
   khhd: string;
@@ -137,6 +169,7 @@ interface TongExcel {
   dt: number;    // Σ tiền hàng chưa VAT
   vat: number;   // Σ tiền VAT
   soHd: number;
+  dong: DongBangKe[];
 }
 
 const chuanSoHd = (tho: string) => {
@@ -152,15 +185,14 @@ const chuanKhhd = (kh: string | null) =>
 const khoaHd = (khhd: string | null, soHd: string | null) =>
   `${chuanKhhd(khhd)}|${chuanSoHd(soHd ?? "")}`;
 
-// Thuế suất HỢP LỆ theo luật GTGT hiện hành, cộng các mã ÂM mà cổng dùng cho hàng
-// không có thuế suất thông thường (-1, -2 đo được trên sổ thật).
-//
-// Ngoài danh sách này là bất thường — thường là %VAT BÌNH QUÂN của hóa đơn trộn nhiều
-// mức (6% = trộn 5 và 8, 7% = trộn 5 và 10). Nay số lấy từ nhóm gom theo DÒNG nên
-// chuyện đó hết xảy ra, nhưng vẫn giữ phép kiểm: gặp mức lạ là dữ liệu có vấn đề,
-// phải nói ra thay vì lặng lẽ bỏ khỏi bảng.
 const SUAT_HOP_LE = new Set([-2, -1, 0, 5, 8, 10]);
 const suatLa = (s: number) => !SUAT_HOP_LE.has(s);
+
+// Mức giả để xếp hóa đơn được tick mà phân rã theo dòng KHÔNG có (hóa đơn không có
+// dòng hàng). Chọn một giá trị không bao giờ là thuế suất thật, và nằm ngoài
+// SUAT_HOP_LE nên tự rơi vào dòng "thuế suất LẠ" của khối chỉ tiêu — tức là hiện ra
+// cho người dùng thấy, thay vì mất hút. Xem gomTheoChon.
+const SUAT_LA_KHONG_DONG = -99;
 
 interface Props {
   mo: boolean;
@@ -242,30 +274,97 @@ export default function ToKhaiXml(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mo, maDonVi, nam, thang, bcCoSan]);
 
+  const [hdDaChon, setHdDaChon] = useState<Set<string>>(new Set());
+  const khoaKy = `${maDonVi}|${nam}|${thang}`;
+  const [khoaKyCu, setKhoaKyCu] = useState(khoaKy);
+  if (khoaKyCu !== khoaKy) {
+    setKhoaKyCu(khoaKy);
+    setHdDaChon(new Set());
+  }
+
   const tong = useMemo(() => {
-    const ra = bc?.banRa ?? [];
-    const vao = bc?.muaVao ?? [];
-    // SÁU DÒNG CỐ ĐỊNH, luôn hiện đủ kể cả khi kỳ đó không phát sinh — bảng đứng yên
-    // giữa các kỳ nên mắt quen chỗ, và số 0 cũng là một thông tin ("kỳ này không có
-    // hàng 10%") khác hẳn việc dòng đó biến mất.
-    //
-    // Số lấy từ nhomBanRa của SERVER — gom theo pt_vat của DÒNG hàng, KHÔNG theo
-    // thueSuat ở header. Header là %VAT bình quân của cả hóa đơn: hóa đơn trộn nhiều
-    // mức cho ra con số không có trong luật thuế. Đo thật DAT_VIET_THANH kỳ 7 (18/08)
-    // ba hóa đơn 0000766/0000777 (5%+8% → header 6%) và 0000778 (5%+8% → header 7%);
-    // gom theo header thì mọc ra hai nhóm 6%/7% không có thật, còn 5% và 8% thì thiếu
-    // đúng phần đó. Đây là BR-TK-18 mà engine tờ khai đã áp — nay màn này dùng chung
-    // một cách tính, nên hai nơi không còn ra hai số khác nhau.
+    const loc = hdDaChon.size > 0;
+    const giu = (m: BangKeHoaDon) => !loc || hdDaChon.has(m.maHd);
+    const ra = (bc?.banRa ?? []).filter(giu);
+    const vao = (bc?.muaVao ?? []).filter(giu);
     const lay = (ds: NhomSuat[] | undefined, s: number) => {
       const n = (ds ?? []).find((x) => x.thueSuat === s);
       return { dt: n?.doanhThu ?? 0, vat: n?.thue ?? 0 };
     };
-    const nhomRa = bc?.nhomBanRa;
-    // Mọi mức ÂM gộp vào một dòng "không chịu thuế": -1 và -2 đều là hàng không có
-    // thuế suất thông thường, tách ra chỉ thêm dòng mà không thêm thông tin.
-    const raKct = (nhomRa ?? []).filter((x) => x.thueSuat < 0)
+
+    /**
+     * Gom lại các mức thuế suất từ phân rã (hóa đơn × mức) của server, chỉ lấy hóa
+     * đơn đang được chọn.
+     *
+     * Phải đi đường này chứ không lọc thẳng bc.nhomBanRa: bản đó đã cộng hết cả kỳ về
+     * từng mức, không tách ngược ra được hóa đơn nào đóng góp bao nhiêu. Còn cộng theo
+     * thueSuat ở header của bảng kê thì sai hẳn — header là %VAT BÌNH QUÂN, hóa đơn
+     * trộn 5%+8% cho ra 6%/7% không có trong luật (BR-TK-18).
+     *
+     * Làm tròn SAU khi cộng xong và tròn RA XA số 0, đúng hai điểm mà server làm với
+     * bản cả kỳ. Tròn từng hóa đơn rồi mới cộng thì lệch vài đồng so với lúc không lọc.
+     *
+     * dsSo là bảng kê của cùng chiều: dùng để BẮT hóa đơn được tick mà phân rã không
+     * có dòng nào. Phân rã đi từ HOA_DON_LINE (JOIN), còn bảng kê đi từ HOA_DON
+     * (OUTER APPLY) — nên hóa đơn KHÔNG CÓ DÒNG HÀNG vẫn hiện trong lưới và tick được,
+     * nhưng lại vắng mặt ở phân rã. Im lặng bỏ qua thì tổng theo thuế suất thiếu đúng
+     * phần đó trong khi tổng doanh thu (cộng từ lưới) vẫn có — hai ô cạnh nhau vênh
+     * nhau mà không ai giải thích được. Gom chúng vào một nhóm "thuế suất lạ" để con
+     * số hiện ra thay vì biến mất.
+     */
+    const gomTheoChon = (chiTiet: NhomSuatHd[] | undefined,
+                         dsSo: BangKeHoaDon[]): NhomSuat[] => {
+      const theoSuat = new Map<number, { dt: number; hd: Set<string> }>();
+      const coPhanRa = new Set<string>();
+      const them = (thueSuat: number, maHd: string, dt: number) => {
+        let n = theoSuat.get(thueSuat);
+        if (!n) theoSuat.set(thueSuat, n = { dt: 0, hd: new Set() });
+        n.dt += dt;
+        n.hd.add(maHd);
+      };
+
+      for (const x of chiTiet ?? []) {
+        if (!hdDaChon.has(x.maHd)) continue;
+        coPhanRa.add(x.maHd);
+        them(x.thueSuat, x.maHd, x.doanhThu);
+      }
+
+      // Hóa đơn đã tick nhưng phân rã không có → xếp vào mức LẠ để nhìn thấy được.
+      // Dùng SUAT_LA_KHONG_DONG (một mức không bao giờ có thật) chứ không nhét vào 0%:
+      // 0% là mức hợp lệ, trộn vào đó là giấu vấn đề đi.
+      for (const m of dsSo) {
+        if (!hdDaChon.has(m.maHd) || coPhanRa.has(m.maHd)) continue;
+        them(SUAT_LA_KHONG_DONG, m.maHd, m.doanhThuChuaVat);
+      }
+
+      return [...theoSuat.entries()]
+        .map(([thueSuat, n]) => {
+          const doanhThu = tronRaXa(n.dt);
+          return {
+            thueSuat,
+            soHd: n.hd.size,
+            doanhThu,
+            // Mức âm (không chịu thuế / không kê khai) thì thuế = 0 — cùng luật với
+            // DocNhomTheoSuat bên server.
+            thue: thueSuat <= 0 ? 0 : tronRaXa(doanhThu * thueSuat / 100),
+          };
+        })
+        .sort((a, b) => a.thueSuat - b.thueSuat);
+    };
+
+    const nhomRa = loc
+      ? gomTheoChon(bc?.nhomBanRaTheoHd, bc?.banRa ?? [])
+      : bc?.nhomBanRa;
+
+    // Mọi mức ÂM HỢP LỆ gộp vào một dòng "không chịu thuế": -1 và -2 đều là hàng không
+    // có thuế suất thông thường, tách ra chỉ thêm dòng mà không thêm thông tin.
+    //
+    // Phải kèm !suatLa: mức âm LẠ (-3, -99…) đã có dòng "thuế suất LẠ" riêng bên dưới,
+    // không loại ở đây thì nó nằm trong CẢ HAI nhóm và cộng đôi vào tổng đang hiện.
+    const raKct = (nhomRa ?? []).filter((x) => x.thueSuat < 0 && !suatLa(x.thueSuat))
       .reduce((t, x) => ({ dt: t.dt + x.doanhThu, vat: t.vat + x.thue }),
               { dt: 0, vat: 0 });
+
     // Mức LẠ (không nằm trong bộ hợp lệ): gộp riêng để không âm thầm biến mất khỏi
     // bảng. Bình thường bằng 0 — khác 0 là dấu hiệu dữ liệu có vấn đề, phải nhìn ra.
     const raLa = (nhomRa ?? []).filter((x) => suatLa(x.thueSuat))
@@ -280,8 +379,11 @@ export default function ToKhaiXml(
       vaoDt: vao.reduce((t, x) => t + x.doanhThuChuaVat, 0),
       vaoVat: vao.reduce((t, x) => t + x.thueGtgt, 0),
       soRa: ra.length, soVao: vao.length,
+      // Vế Excel của phần đối chiếu phải lọc theo cùng bộ hóa đơn thì ô "Lệch" mới
+      // là phép so cùng phạm vi — xem locExcelTheoChon.
+      locTheoChon: loc,
     };
-  }, [bc]);
+  }, [bc, hdDaChon]);
 
   const [dangSoat, setDangSoat] = useState(false);
   const oFileVao = useRef<HTMLInputElement | null>(null);
@@ -291,34 +393,13 @@ export default function ToKhaiXml(
   const luotSoatRef = useRef(0);
   const [hdDangXem, setHdDangXem] = useState<BangKeHoaDon | null>(null);
 
-  // ----- LỌC LƯỚI THEO KẾT QUẢ SOÁT -----
-  // Bấm "Tìm HĐ lệch" xong thì CHÍNH lưới hóa đơn của bảng đó chỉ còn dòng lệch, thay
-  // vì dựng thêm một danh sách thứ hai bên dưới. Hai danh sách trong một màn hình buộc
-  // người dùng đối chiếu qua lại bằng mắt: bảng dưới nêu số hóa đơn, muốn xem chi tiết
-  // (ngày, thuế suất, tiền hàng…) lại phải cuộn lên lưới trên dò lại từng cái.
-  //
-  // Giữ MÃ hóa đơn chứ không giữ bản sao dòng: lưới vẫn đọc từ `bc` như thường, nên
-  // xóa/sửa hóa đơn xong nạp lại là số trên lưới tự đúng, không phải đồng bộ hai nơi.
-  //
-  // null = chưa soát, hiện đủ. Set rỗng = đã soát và KHỚP HẾT (khác hẳn chưa soát).
   const [locLech, setLocLech] = useState<{
     huong: "VAO" | "RA";
-    nhan: string;                 // tên file / "kho bán ra · 3 file" — hiện trên đầu lưới
+    nhan: string;                 // tên file / "kho bán ra / 3 file" — hiện trên đầu lưới
     maHd: Set<string>;            // mã hóa đơn CÓ TRONG SỔ mà lệch
     thieuTrongSo: HdLech[];       // có trong bảng kê, sổ chưa có ⇒ không có dòng để lọc
   } | null>(null);
 
-  /**
-   * Đổi kết quả đối chiếu của server thành bộ lọc cho lưới.
-   *
-   * Hai loại vấn đề CÓ dòng trong sổ (lệch tiền, có sổ mà thiếu trong bảng kê) thì tra
-   * ra mã hóa đơn để lọc lưới. Riêng "có trong bảng kê, sổ CHƯA CÓ" thì không có dòng
-   * nào để lọc — giữ riêng và hiện thành dải cảnh báo trên đầu lưới, vì đây lại đúng
-   * là loại nghiêm trọng nhất (khai thiếu hẳn hóa đơn).
-   */
-  // Sổ đọc qua REF: hàm này chỉ chạy lúc người dùng bấm soát, mà để `bc` vào deps thì
-  // mỗi lần nạp lại sổ là soatKho đổi theo → effect tự soát chạy lại → thừa một lượt
-  // quét đĩa + đọc Excel. Cùng lý lẽ với namRef.
   const bcRef = useRef(bc);
   useEffect(() => { bcRef.current = bc; }, [bc]);
 
@@ -326,8 +407,6 @@ export default function ToKhaiXml(
     (huong: "VAO" | "RA", nhan: string, dc: KetQuaRaSoat) => {
       const so = bcRef.current;
       const soSach = (huong === "VAO" ? so?.muaVao : so?.banRa) ?? [];
-      // Tra theo (ký hiệu, số HĐ) đã chuẩn hóa — cùng khóa mà nhánh chọn file tay dùng,
-      // vì sổ ghi ký hiệu kèm mẫu số ('1C26TNT') còn cổng chỉ ghi ký hiệu ('C26TNT').
       const theoKhoa = new Map(soSach.map((x) => [khoaHd(x.khHd, x.soHd), x.maHd]));
       const ma = new Set<string>();
       for (const x of [...dc.lechTien, ...dc.thieuTrongFile]) {
@@ -377,15 +456,6 @@ export default function ToKhaiXml(
     });
   }, [maDonVi, napBaoCao]);
 
-  // eslint-disable-next-line react-hooks/refs
-  const COT_VAO = cotHoaDon("người bán", setHdDangXem, xoaHoaDon);
-  // eslint-disable-next-line react-hooks/refs
-  const COT_RA = cotHoaDon("người mua", setHdDangXem, xoaHoaDon);
-  // HAI tầng lọc, cộng dồn:
-  //   1. lọc LỆCH — chỉ giữ hóa đơn mà lượt "Tìm HĐ lệch" chỉ ra, và chỉ áp cho đúng
-  //      bảng đã soát (soát bán ra không được làm rỗng lưới mua vào);
-  //   2. ô tìm nhanh của từng bảng, gõ tới đâu lọc tới đó.
-  // Gõ tìm trong lúc đang lọc lệch thì tìm TRONG tập lệch — đúng cái người dùng chờ đợi.
   const locHd = (ds: BangKeHoaDon[] | undefined, tu: string,
                  huong?: "VAO" | "RA") => {
     let kq = ds ?? [];
@@ -396,6 +466,50 @@ export default function ToKhaiXml(
     return kq.filter((m) =>
       boDau(`${m.khHd ?? ""} ${m.soHd ?? ""} ${m.tenDoiTac ?? ""} `
           + `${m.mstDoiTac ?? ""} ${m.matHang ?? ""} ${m.ghiChu ?? ""}`).includes(k));
+  };
+
+  const doiMotHd = useCallback((maHd: string, tick: boolean) => {
+    setHdDaChon((cu) => {
+      const m = new Set(cu);
+      if (tick) m.add(maHd); else m.delete(maHd);
+      return m;
+    });
+  }, []);
+
+  const dungBoChon = (dsHien: BangKeHoaDon[]): BoChon => {
+    const soChon = dsHien.reduce((n, m) => n + (hdDaChon.has(m.maHd) ? 1 : 0), 0);
+    return {
+      co: (maHd) => hdDaChon.has(maHd),
+      doiMot: doiMotHd,
+      doiTatCa: (tick) => setHdDaChon((cu) => {
+        const m = new Set(cu);
+        for (const x of dsHien) { if (tick) m.add(x.maHd); else m.delete(x.maHd); }
+        return m;
+      }),
+      tatCa: dsHien.length > 0 && soChon === dsHien.length,
+      motPhan: soChon > 0 && soChon < dsHien.length,
+    };
+  };
+
+  const hdVaoHien = locHd(bc?.muaVao, timVao, "VAO");
+  const hdRaHien = locHd(bc?.banRa, timRa, "RA");
+
+  // eslint-disable-next-line react-hooks/refs
+  const COT_VAO = cotHoaDon("người bán", setHdDangXem, xoaHoaDon,
+                            dungBoChon(hdVaoHien));
+  // eslint-disable-next-line react-hooks/refs
+  const COT_RA = cotHoaDon("người mua", setHdDangXem, xoaHoaDon,
+                           dungBoChon(hdRaHien));
+
+  const tongChon = (ds: BangKeHoaDon[] | undefined) => {
+    let soHd = 0, dt = 0, vat = 0;
+    for (const m of ds ?? []) {
+      if (!hdDaChon.has(m.maHd)) continue;
+      soHd++;
+      dt += m.doanhThuChuaVat;
+      vat += m.thueGtgt;
+    }
+    return { soHd, dt, vat };
   };
 
   const [xmlKyTruoc, setXmlKyTruoc] = useState<string | null>(null);
@@ -433,12 +547,13 @@ export default function ToKhaiXml(
         return;
       }
 
-      if (d.loi.length > 0) message.error(`Không đọc được: ${d.loi.join(" · ")}`, 8);
+      if (d.loi.length > 0) message.error(`Không đọc được: ${d.loi.join(" / ")}`, 8);
 
-      const nhan = `kho ${huong === "VAO" ? "mua vào" : "bán ra"} · ${d.soFile} file`;
+      const nhan = `kho ${huong === "VAO" ? "mua vào" : "bán ra"} / ${d.soFile} file`;
       if (huong === "RA") {
         setTongExcelRa({
           tenFile: nhan, dt: d.tong.tienHang, vat: d.tong.tienVat, soHd: d.tong.soHd,
+          dong: d.dong ?? [],
         });
       }
 
@@ -469,8 +584,7 @@ export default function ToKhaiXml(
         if (tuDong) setDangTuSoat(false); else setDangSoat(false);
       }
     }
-    // `nam` cố tình KHÔNG có ở đây (chỉ đi vào chuỗi thông báo — xem namRef).
-    // dungLocLech deps rỗng nên ổn định, thêm vào không kéo theo lượt chạy thừa nào.
+
   }, [thang, maDonVi, dungLocLech]);
 
   useEffect(() => {
@@ -568,6 +682,9 @@ export default function ToKhaiXml(
       for (const x of mFile.values()) { dtFile += x.tienHang; vatFile += x.tienVat; }
       const tongFile: TongExcel = {
         tenFile: f.name, dt: dtFile, vat: vatFile, soHd: mFile.size,
+        dong: [...mFile.values()].map((x) => ({
+          khhd: x.khhd, soHd: x.soHd, tienHang: x.tienHang, tienVat: x.tienVat,
+        })),
       };
       if (!laVao) setTongExcelRa(tongFile);
 
@@ -669,12 +786,13 @@ export default function ToKhaiXml(
     else if (daNhanTk) message.success("Đã nhận tờ khai kỳ trước");
   };
 
-  // ============ LẬP TỜ KHAI 01/GTGT ============
+  const dsChon = () => (hdDaChon.size > 0 ? [...hdDaChon] : undefined);
+
   const lapToKhai = async () => {
     setDangLapTk(true);
     try {
       const r = await thueLapToKhai(thang, xmlKyTruoc ?? undefined,
-                                    maDonVi || undefined);
+                                    maDonVi || undefined, dsChon());
       setToKhai(r.data);
     } catch (e) {
       const loi = loiApi(e, "Không lập được tờ khai");
@@ -709,7 +827,7 @@ export default function ToKhaiXml(
   const taiXml = async () => {
     try {
       const r = await thueToKhaiXml(thang, xmlKyTruoc ?? undefined,
-                                    maDonVi || undefined);
+                                    maDonVi || undefined, dsChon());
       const url = URL.createObjectURL(r.data);
       const a = document.createElement("a");
       a.href = url;
@@ -730,7 +848,6 @@ export default function ToKhaiXml(
   const phatSinh = tong.raVat - tong.vaoVat;
   const conPhaiNop = phatSinh - tonDau;
 
-  // Ô số chỉ đọc kiểu VFP: nhãn trái, số phải, viền mảnh.
   const o = (nhan: string, gia: number | null | undefined,
              lop = "", nhanLop = "") => (
     <div className="o-so">
@@ -738,10 +855,40 @@ export default function ToKhaiXml(
       <span className={`o-gia ${lop}`}>{tien(gia)}</span>
     </div>
   );
+  /**
+   * BR-TK-20 — cộng lại vế Excel chỉ trên những hóa đơn ĐANG ĐƯỢC TICK.
+   *
+   * Tra bằng khóa (ký hiệu, số HĐ) đã chuẩn hóa — cùng khóa mà phép đối chiếu vẫn
+   * dùng, nên tìm ra đúng hóa đơn dù sổ ghi ký hiệu kèm mẫu số ('1C26TNT') còn bảng
+   * kê cổng chỉ ghi ký hiệu ('C26TNT'), và số HĐ hai bên khác cách đệm số 0.
+   *
+   * Phải làm vậy ô "Lệch" mới còn nghĩa: giữ vế Excel là cả kỳ trong khi vế sổ đã
+   * lọc thì hiệu số chỉ nói "đang chọn ít hơn", không phải sai lệch số liệu.
+   *
+   * Hóa đơn được tick mà bảng kê KHÔNG có thì đương nhiên không cộng được vào vế
+   * Excel — đúng bản chất "có trong sổ, thiếu trong bảng kê", và ô Lệch sẽ hiện ra
+   * đúng phần chênh đó, y như khi không lọc.
+   */
+  const locExcelTheoChon = (tx: TongExcel, huong: "VAO" | "RA"): TongExcel => {
+    const soSach = (huong === "VAO" ? bc?.muaVao : bc?.banRa) ?? [];
+    const khoaChon = new Set(soSach
+      .filter((m) => hdDaChon.has(m.maHd))
+      .map((m) => khoaHd(m.khHd, m.soHd)));
+
+    let dt = 0, vat = 0, soHd = 0;
+    for (const d of tx.dong) {
+      if (!khoaChon.has(khoaHd(d.khhd, d.soHd))) continue;
+      dt += d.tienHang;
+      vat += d.tienVat;
+      soHd++;
+    }
+    return { ...tx, dt, vat, soHd };
+  };
+
   const oDoiChieuExcel = (
     nhan: string, tongSo: number, tx: TongExcel | null,
-    // Lấy vế nào của bảng kê ra so — tiền hàng hay tiền VAT.
     layGia: (t: TongExcel) => number,
+    huong: "VAO" | "RA",
   ) => {
     if (!tx) {
       return (
@@ -763,11 +910,18 @@ export default function ToKhaiXml(
         </>
       );
     }
-    const giaExcel = layGia(tx);
+
+    const excelTheoChon = tx.dong.length > 0 && tong.locTheoChon
+      ? locExcelTheoChon(tx, huong)
+      : tx;
+
+    const giaExcel = layGia(excelTheoChon);
     const lech = tongSo - giaExcel;
     return (
       <>
-        <div className="o-so" title={`${tx.tenFile} · ${tx.soHd} hóa đơn`}>
+        <div className="o-so"
+             title={`${tx.tenFile} / ${excelTheoChon.soHd} hóa đơn`
+                    + (tong.locTheoChon ? " (theo phần đã chọn)" : "")}>
           <span className="o-nhan">{nhan} từ Excel</span>
           <span className="o-gia">{tien(giaExcel)}</span>
         </div>
@@ -785,12 +939,12 @@ export default function ToKhaiXml(
   const luoi = (
     ten: string, viTat: string, huong: "VAO" | "RA",
     ds: BangKeHoaDon[] | undefined,
+    dsHien: BangKeHoaDon[],          // đã qua lọc lệch + ô tìm nhanh
     cot: ColumnsType<BangKeHoaDon>, dt: number, vat: number, so: number,
     tuTim: string, doiTuTim: (v: string) => void,
     phuThem?: React.ReactNode,
   ) => (
     <div className="khoi-luoi">
-      {/* Dải chỉ tiêu của khối — hàng trên cùng, đúng bố cục form gốc */}
       <div className="dai-chi-tieu">
         <div className="ct-o">
           <span className="ct-nhan">{viTat} Tờ khai</span>
@@ -847,9 +1001,6 @@ export default function ToKhaiXml(
         </div>
       </div>
 
-      {/* DẢI TRẠNG THÁI LỌC LỆCH — chỉ hiện ở bảng vừa soát.
-          Bắt buộc phải có: lưới đang giấu bớt dòng, không nói ra thì người dùng tưởng
-          sổ mất hóa đơn. Kèm luôn nút bỏ lọc để quay về đủ danh sách. */}
       {locLech?.huong === huong && (
         <div className="dai-loc-lech">
           <Tag color="orange">Đang lọc HĐ lệch</Tag>
@@ -857,8 +1008,7 @@ export default function ToKhaiXml(
           <span className="loc-dem">
             {locLech.maHd.size} hóa đơn lệch trong sổ
           </span>
-          {/* Loại này KHÔNG có dòng nào trong lưới để lọc ra (sổ chưa nạp), mà lại là
-              loại nặng nhất — nêu riêng ở đây chứ không để nó chìm mất. */}
+
           {locLech.thieuTrongSo.length > 0 && (
             <span className="loc-thieu"
                   title={locLech.thieuTrongSo
@@ -875,7 +1025,7 @@ export default function ToKhaiXml(
         className="luoi-tk"
         size="small"
         rowKey="maHd"
-        dataSource={locHd(ds, tuTim, huong)}
+        dataSource={dsHien}
         columns={cot}
         loading={tai}
         pagination={false}
@@ -891,9 +1041,20 @@ export default function ToKhaiXml(
         <Typography.Text strong>{ten}</Typography.Text>
         {tuTim || locLech?.huong === huong
           ? <span className="dem-hd">
-              {locHd(ds, tuTim, huong).length}/{so} hóa đơn — đang lọc
+              {dsHien.length}/{so} hóa đơn — đang lọc
             </span>
           : <span className="dem-hd">{so} hóa đơn</span>}
+        {(() => {
+          const tc = tongChon(ds);
+          if (tc.soHd === 0) return null;
+          return (
+            <span className="dem-chon"
+                  title="Phần sẽ đưa vào tờ khai — tổng trên cả kỳ, không phụ thuộc bộ lọc đang bật">
+              <Tag color="blue">{tc.soHd} HĐ đã chọn</Tag>
+              {tien(tc.dt)} / VAT {tien(tc.vat)}
+            </span>
+          );
+        })()}
         <span className="day" />
         <span className="tong-nhan">Tiền hàng{tuTim ? " (cả kỳ)" : ""}</span>
         <span className="tong-gia">{tien(dt)}</span>
@@ -910,8 +1071,8 @@ export default function ToKhaiXml(
           <FileTextOutlined style={{ marginRight: 8 }} />
           Rà soát &amp; lập tờ khai
           {maDonVi && <> — <b>{maDonVi}</b></>}
-          {tenDonVi && <span className="ten-dv"> · {tenDonVi}</span>}
-          <span className="ky-tk"> · kỳ {String(thang).padStart(2, "0")}/{nam}</span>
+          {tenDonVi && <span className="ten-dv"> - {tenDonVi}</span>}
+          <span className="ky-tk"> - {String(thang).padStart(2, "0")}/{nam}</span>
         </span>
       }
       open={mo}
@@ -926,7 +1087,7 @@ export default function ToKhaiXml(
                 ? <>Đã nhận tờ khai kỳ trước, sẵn sàng lập tờ khai</>
                 : vatKhauTruKyTruoc != null
                   ? <>Đã có tờ khai kỳ trước trong sổ (tháng {kyLienTruoc}
-                      {" "}· khấu trừ chuyển sang <b>{tien(vatKhauTruKyTruoc)}</b>)
+                      {" "}/ khấu trừ chuyển sang <b>{tien(vatKhauTruKyTruoc)}</b>)
                       {" "}, sẵn sàng lập tờ khai</>
                   : <span className="chan-loi">
                       Chưa có tờ khai kỳ trước (tháng {kyLienTruoc})
@@ -944,7 +1105,7 @@ export default function ToKhaiXml(
                       onClick={taiXml}
                       title={toKhai.choXuat ? `Tải ${toKhai.tenFileXml}`
                                             : "Còn lỗi chặn — xử lý hết mới xuất được XML"}>
-                Tải XML nạp HTKK
+                Tải XML
               </Button>
             </>
           )}
@@ -952,10 +1113,14 @@ export default function ToKhaiXml(
           <Button type="primary" size="large"
                   icon={toKhai ? <ReloadOutlined /> : <FileDoneOutlined />}
                   loading={dangLapTk} onClick={lapToKhai}
-                  title={toKhai ? "Tính lại từ dữ liệu sổ hiện tại"
-                                : `Lập tờ khai tháng ${thang} từ dữ liệu sổ`}>
-            {toKhai ? `Tạo lại tờ khai tháng ${thang}`
-                    : `Tạo tờ khai tháng ${thang}`}
+                  title={hdDaChon.size > 0
+                    ? `Chỉ tính ${hdDaChon.size} hóa đơn đã tick — bỏ hết tick để lấy cả kỳ`
+                    : toKhai ? "Tính lại từ dữ liệu sổ hiện tại (toàn bộ hóa đơn của kỳ)"
+                             : `Lập tờ khai tháng ${thang} từ toàn bộ hóa đơn của kỳ`}>
+            {hdDaChon.size > 0
+              ? `${toKhai ? "Tạo lại" : "Tạo"} tờ khai T${thang} từ ${hdDaChon.size} HĐ chọn`
+              : toKhai ? `Tạo lại tờ khai tháng ${thang}`
+                       : `Tạo tờ khai tháng ${thang}`}
           </Button>
         </div>
       }
@@ -973,13 +1138,12 @@ export default function ToKhaiXml(
             {o("Doanh thu 8%", tong.ra8.dt)}
             {o("Doanh thu 10%", tong.ra10.dt)}
             {o("Doanh thu không chịu thuế", tong.raKct.dt)}
-            {/* Chỉ hiện KHI CÓ: bình thường bằng 0 và không đáng chiếm một dòng, nhưng
-                khác 0 thì phải đập vào mắt — đó là thuế suất không có trong luật. */}
             {tong.raLa.soHd > 0
               && o(`Doanh thu thuế suất LẠ (${tong.raLa.soHd} HĐ)`,
                    tong.raLa.dt, "", "nhan-do")}
             {o("Tổng doanh thu", tong.raDt, "gia-dam")}
-            {oDoiChieuExcel("Tổng doanh thu", tong.raDt, tongExcelRa, (t) => t.dt)}
+            {oDoiChieuExcel("Tổng doanh thu", tong.raDt, tongExcelRa, (t) => t.dt,
+                            "RA")}
           </div>
 
           <div className="cot-ct">
@@ -992,7 +1156,8 @@ export default function ToKhaiXml(
             {tong.raLa.soHd > 0
               && o("VAT thuế suất LẠ", tong.raLa.vat, "", "nhan-do")}
             {o("Tổng VAT bán ra", tong.raVat, "gia-dam")}
-            {oDoiChieuExcel("Tổng VAT bán ra", tong.raVat, tongExcelRa, (t) => t.vat)}
+            {oDoiChieuExcel("Tổng VAT bán ra", tong.raVat, tongExcelRa, (t) => t.vat,
+                            "RA")}
           </div>
 
           <div className="cot-ct">
@@ -1023,14 +1188,14 @@ export default function ToKhaiXml(
               <p className="tha-icon"><InboxOutlined /></p>
               <p className="tha-chu">Kéo thả file để rà soát</p>
               <p className="tha-phu">
-                XML hóa đơn · XML tờ khai kỳ trước · bảng kê Excel
+                XML hóa đơn / XML tờ khai kỳ trước / bảng kê Excel
               </p>
             </Upload.Dragger>
 
             {!tenFileTk && vatKhauTruKyTruoc != null && (
               <div className="da-doc-tk">
                 <div className="so-doc-duoc">
-                  Lấy từ <b>sổ</b> (bảng tờ khai) · kỳ <b>{kyLienTruoc}</b>
+                  Lấy từ <b>sổ</b> (bảng tờ khai) / kỳ <b>{kyLienTruoc}</b>
                   <br />
                   chỉ tiêu 22: <b className="gia-xanh">{tien(vatKhauTruKyTruoc)}</b>
                 </div>
@@ -1041,7 +1206,7 @@ export default function ToKhaiXml(
               <div className="da-doc-tk">
                 <div className="ten-file" title={tenFileTk}>{tenFileTk}</div>
                 <div className="so-doc-duoc">
-                  {kyTruoc && <>Kỳ <b>{kyTruoc}</b> · </>}
+                  {kyTruoc && <>Kỳ <b>{kyTruoc}</b> / </>}
                   chỉ tiêu 43: <b className="gia-xanh">{tien(ct43)}</b>
                 </div>
                 {kyTruoc && kyTruoc !== kyLienTruoc && (
@@ -1055,12 +1220,7 @@ export default function ToKhaiXml(
           </div>
         </div>
 
-        {/* Panel "Hóa đơn lệch" chia ba nhóm đã BỎ (18/08): nó là danh sách THỨ HAI
-            của cùng một tập hóa đơn — nêu mỗi ký hiệu/số, muốn xem ngày hay thuế suất
-            lại phải cuộn lên lưới trên dò từng cái. Nay lượt soát lọc thẳng CHÍNH lưới
-            đó (xem locLech + dải .dai-loc-lech trên đầu mỗi lưới), nên vẫn đủ cột như
-            thường mà không phải đối chiếu qua lại bằng mắt. */}
-        {luoi("Mua vào", "MV", "VAO", bc?.muaVao, COT_VAO,
+        {luoi("Mua vào", "MV", "VAO", bc?.muaVao, hdVaoHien, COT_VAO,
               tong.vaoDt, tong.vaoVat, tong.soVao, timVao, setTimVao)}
 
         {kyDaSoat.length > 0 && (
@@ -1075,11 +1235,11 @@ export default function ToKhaiXml(
                 <div className="ky-so">
                   <span className="ky-nhom">
                     <span className="ky-mo">Mua vào</span>
-                    <b>{k.soVao}</b> HĐ · {tienTron(k.hangVao)} · VAT <b>{tienTron(k.vatVao)}</b>
+                    <b>{k.soVao}</b> HĐ / {tienTron(k.hangVao)} / VAT <b>{tienTron(k.vatVao)}</b>
                   </span>
                   <span className="ky-nhom">
                     <span className="ky-mo">Bán ra</span>
-                    <b>{k.soRa}</b> HĐ · {tienTron(k.hangRa)} · VAT <b>{tienTron(k.vatRa)}</b>
+                    <b>{k.soRa}</b> HĐ / {tienTron(k.hangRa)} / VAT <b>{tienTron(k.vatRa)}</b>
                   </span>
                 </div>
               </div>
@@ -1091,17 +1251,17 @@ export default function ToKhaiXml(
                   ? <span className="ky-ok">✓ Dữ liệu file khớp với sổ</span>
                   : <span className="ky-loi">
                       {tongVanDe} điểm lệch giữa file và sổ
-                      {kqRaSoat.thieuTrongSo.length > 0 && <> · thiếu trong sổ: {kqRaSoat.thieuTrongSo.length}</>}
-                      {kqRaSoat.lechTien.length > 0 && <> · lệch tiền: {kqRaSoat.lechTien.length}</>}
-                      {kqRaSoat.trung.length > 0 && <> · trùng: {kqRaSoat.trung.length}</>}
+                      {kqRaSoat.thieuTrongSo.length > 0 && <> / thiếu trong sổ: {kqRaSoat.thieuTrongSo.length}</>}
+                      {kqRaSoat.lechTien.length > 0 && <> / lệch tiền: {kqRaSoat.lechTien.length}</>}
+                      {kqRaSoat.trung.length > 0 && <> / trùng: {kqRaSoat.trung.length}</>}
                     </span>}
-                {soFileHong > 0 && <span className="ky-bo"> · bỏ qua {soFileHong} file</span>}
+                {soFileHong > 0 && <span className="ky-bo"> / bỏ qua {soFileHong} file</span>}
               </div>
             )}
           </div>
         )}
 
-        {luoi("Bán ra", "BR", "RA", bc?.banRa, COT_RA,
+        {luoi("Bán ra", "BR", "RA", bc?.banRa, hdRaHien, COT_RA,
               tong.raDt, tong.raVat, tong.soRa, timRa, setTimRa,
               <>
                 <div className="ct-o ct-nho">

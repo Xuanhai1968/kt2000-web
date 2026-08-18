@@ -62,7 +62,7 @@ namespace KT2000.Api.Controllers
         private IActionResult? ChanNeuLaNoiBo() =>
             User.FindFirst("tenant_type")?.Value == "noibo"
                 ? StatusCode(403, new
-                  { message = "Đơn vị nội bộ không có sổ thuế — dùng màn Phiếu xuất/nhập" })
+                { message = "Đơn vị nội bộ không có sổ thuế — dùng màn Phiếu xuất/nhập" })
                 : null;
 
         private static string? ChuanHoaHuong(string? huong) =>
@@ -171,7 +171,7 @@ namespace KT2000.Api.Controllers
 
             var ds = await _bangToKhai.Lap(
                 donVi.Select(x => new BangToKhaiService.DonViKy
-                      { Ma = x.Code, KhaiQuy = x.KhaiQuy }).ToList(),
+                { Ma = x.Code, KhaiQuy = x.KhaiQuy }).ToList(),
                 year, ky, HttpContext.RequestAborted);
             var hoSo = donVi.ToDictionary(x => x.Code, x => x, StringComparer.OrdinalIgnoreCase);
             foreach (var d in ds)
@@ -233,8 +233,12 @@ namespace KT2000.Api.Controllers
                 var ct = ToKhaiService.DocChiTieuXml(noiDung);
                 if (mst == null || thang == null || nam == null)
                 {
-                    ketQua.Add(new { tenFile, ok = false,
-                                     message = "Không đọc được MST/kỳ trong file" });
+                    ketQua.Add(new
+                    {
+                        tenFile,
+                        ok = false,
+                        message = "Không đọc được MST/kỳ trong file"
+                    });
                     return;
                 }
 
@@ -244,8 +248,12 @@ namespace KT2000.Api.Controllers
                     x => RaSoatService.GocMst(x.TaxCode) == goc);
                 if (dv == null)
                 {
-                    ketQua.Add(new { tenFile, ok = false,
-                                     message = $"Không có đơn vị nào mang MST {mst}" });
+                    ketQua.Add(new
+                    {
+                        tenFile,
+                        ok = false,
+                        message = $"Không có đơn vị nào mang MST {mst}"
+                    });
                     return;
                 }
 
@@ -255,23 +263,31 @@ namespace KT2000.Api.Controllers
 
                 if (!gan)
                 {
-                    ketQua.Add(new { tenFile, ok = false,
+                    ketQua.Add(new
+                    {
+                        tenFile,
+                        ok = false,
                         message = $"{dv.Code} chưa có tờ khai kỳ {thang:00}/{nam} "
-                                + "trong hệ thống — hãy tạo tờ khai trước" });
+                                + "trong hệ thống — hãy tạo tờ khai trước"
+                    });
                     return;
                 }
 
                 var lech = await _bangToKhai.SoSanhVoiTct(
                     dv.Code, nam.Value, thang.Value, 0, HttpContext.RequestAborted);
 
-                ketQua.Add(new { tenFile, ok = true,
+                ketQua.Add(new
+                {
+                    tenFile,
+                    ok = true,
                     message = lech.Count == 0
                         ? $"{dv.Code} kỳ {thang:00}/{nam} — KHỚP hoàn toàn "
                           + $"(chỉ tiêu 43: {ct43:N0})"
                         : $"{dv.Code} kỳ {thang:00}/{nam} — LỆCH {lech.Count} chỉ tiêu: "
                           + string.Join(", ", lech.Take(6).Select(
                               x => $"[{x.Ma}] tự lập {x.TuLap:N0} ≠ TCT {x.Tct:N0}")),
-                    lech });
+                    lech
+                });
             }
 
             try
@@ -324,7 +340,9 @@ namespace KT2000.Api.Controllers
 
             return Ok(new
             {
-                maDonVi = code, nam = year, thang,
+                maDonVi = code,
+                nam = year,
+                thang,
                 duongDan = duong,
                 daCo = Directory.Exists(duong),   // chưa có thì lúc lưu sẽ tự tạo
             });
@@ -586,8 +604,12 @@ namespace KT2000.Api.Controllers
                 if (ct22Truoc == null) return NoContent();
                 return Ok(new
                 {
-                    maDonVi = code, nam = year, thang, lanNop,
-                    ct22 = ct22Truoc, nguonCt22 = nguon,
+                    maDonVi = code,
+                    nam = year,
+                    thang,
+                    lanNop,
+                    ct22 = ct22Truoc,
+                    nguonCt22 = nguon,
                 });
             }
 
@@ -625,7 +647,10 @@ namespace KT2000.Api.Controllers
 
             return Ok(new
             {
-                maDonVi = code, nam = year, thang, lanNop,
+                maDonVi = code,
+                nam = year,
+                thang,
+                lanNop,
                 coSo = tuSo != null,
                 coTct = ds.Any(x => x.Tct != null),
                 soLech = ds.Count(x => x.CoLech),
@@ -735,12 +760,12 @@ namespace KT2000.Api.Controllers
 
             var tongExcel = new
             {
-                soHdVao  = tuExcel.Count(x => x.Huong != "RA"),
-                soHdRa   = tuExcel.Count(x => x.Huong == "RA"),
-                hangVao  = tuExcel.Where(x => x.Huong != "RA").Sum(x => x.TienHang),
-                vatVao   = tuExcel.Where(x => x.Huong != "RA").Sum(x => x.TienVat),
-                hangRa   = tuExcel.Where(x => x.Huong == "RA").Sum(x => x.TienHang),
-                vatRa    = tuExcel.Where(x => x.Huong == "RA").Sum(x => x.TienVat),
+                soHdVao = tuExcel.Count(x => x.Huong != "RA"),
+                soHdRa = tuExcel.Count(x => x.Huong == "RA"),
+                hangVao = tuExcel.Where(x => x.Huong != "RA").Sum(x => x.TienHang),
+                vatVao = tuExcel.Where(x => x.Huong != "RA").Sum(x => x.TienVat),
+                hangRa = tuExcel.Where(x => x.Huong == "RA").Sum(x => x.TienHang),
+                vatRa = tuExcel.Where(x => x.Huong == "RA").Sum(x => x.TienVat),
             };
 
             // --- Đối chiếu Excel với SỔ ---
@@ -750,12 +775,16 @@ namespace KT2000.Api.Controllers
 
             return Ok(new
             {
-                thang, nam,
+                thang,
+                nam,
                 soFile = new
                 {
-                    xmlRa = kho.XmlRa.Count, xmlVao = kho.XmlVao.Count,
-                    htmlRa = kho.HtmlRa.Count, htmlVao = kho.HtmlVao.Count,
-                    excelRa = kho.ExcelRa.Count, excelVao = kho.ExcelVao.Count,
+                    xmlRa = kho.XmlRa.Count,
+                    xmlVao = kho.XmlVao.Count,
+                    htmlRa = kho.HtmlRa.Count,
+                    htmlVao = kho.HtmlVao.Count,
+                    excelRa = kho.ExcelRa.Count,
+                    excelVao = kho.ExcelVao.Count,
                 },
                 thuMucDaDo = kho.DaDo,
                 tongExcel,
@@ -808,9 +837,13 @@ namespace KT2000.Api.Controllers
                 if (fileCanDoc.Count == 0)
                     return Ok(new
                     {
-                        thang, nam, huong = chieu,
-                        soFile = 0, thuMucDaDo = kho.DaDo,
+                        thang,
+                        nam,
+                        huong = chieu,
+                        soFile = 0,
+                        thuMucDaDo = kho.DaDo,
                         tong = new { soHd = 0, tienHang = 0m, tienVat = 0m },
+                        dong = Array.Empty<object>(),
                         loi = new List<string>(),
                         doiChieu = (Models.KetQuaRaSoatDto?)null,
                     });
@@ -843,7 +876,9 @@ namespace KT2000.Api.Controllers
 
                 return Ok(new
                 {
-                    thang, nam, huong = chieu,
+                    thang,
+                    nam,
+                    huong = chieu,
                     soFile = fileCanDoc.Count,
                     thuMucDaDo = kho.DaDo,
                     tong = new
@@ -852,6 +887,21 @@ namespace KT2000.Api.Controllers
                         tienHang = dung.Sum(x => x.TienHang),
                         tienVat = dung.Sum(x => x.TienVat),
                     },
+                    // BR-TK-20 — từng dòng của bảng kê, để màn rà soát cộng lại vế
+                    // Excel theo đúng những hóa đơn người dùng tick chọn. Không có
+                    // danh sách này thì vế Excel luôn là CẢ KỲ, đem trừ phần đã chọn
+                    // ra một số lệch vô nghĩa.
+                    //
+                    // Chỉ 4 trường: đủ để tra khớp (ký hiệu + số HĐ) và cộng tiền.
+                    // Không trả cả HoaDonFileDto vì tên đối tác/MST/ngày đã có sẵn
+                    // trong lưới sổ rồi, gửi lại chỉ phình response.
+                    dong = dung.Select(x => new
+                    {
+                        khhd = x.Khhd,
+                        soHd = x.SoHd,
+                        tienHang = x.TienHang,
+                        tienVat = x.TienVat,
+                    }),
                     loi = loiExcel,
                     doiChieu,
                 });
@@ -911,7 +961,11 @@ namespace KT2000.Api.Controllers
             }
         }
 
-        public record LapToKhaiRequest(string? XmlKyTruoc);
+        public record LapToKhaiRequest(string? XmlKyTruoc, List<string>? ChonHd = null);
+
+        // Chặn body khổng lồ: một kỳ vài trăm hóa đơn, gửi lên hàng chục nghìn mã là
+        // dấu hiệu client hỏng hoặc bị lợi dụng để bắt server băm chuỗi vô ích.
+        private const int MaxChonHd = 20000;
 
         [HttpPost("to-khai")]
         public async Task<IActionResult> ToKhai([FromQuery] int thang,
@@ -947,10 +1001,16 @@ namespace KT2000.Api.Controllers
                             + $"tháng {thangTruoc}/{namTruoc} lên — chỉ tiêu 43 của kỳ đó "
                             + "là chỉ tiêu 22 của kỳ này, và tờ khai đó cũng là khuôn "
                             + "mang thông tin cơ quan thuế mà sổ không lưu.",
-                    thangTruoc, namTruoc,
+                    thangTruoc,
+                    namTruoc,
                 });
 
-            return Ok(await _toKhai.Lap(code, nam, thang, mst, ten, diaChi, req?.XmlKyTruoc));
+            if (req?.ChonHd is { Count: > MaxChonHd })
+                return BadRequest(new
+                { message = $"Danh sách hóa đơn chọn quá dài (tối đa {MaxChonHd})" });
+
+            return Ok(await _toKhai.Lap(code, nam, thang, mst, ten, diaChi,
+                                        req?.XmlKyTruoc, req?.ChonHd));
         }
 
         [HttpPost("to-khai/xml")]
@@ -984,10 +1044,16 @@ namespace KT2000.Api.Controllers
                 {
                     message = $"Chưa có tờ khai kỳ trước (tháng {thangTruoc}/{namTruoc}) "
                             + "nên chưa xuất được XML. Hãy tải file XML tờ khai kỳ đó lên.",
-                    thangTruoc, namTruoc,
+                    thangTruoc,
+                    namTruoc,
                 });
 
-            var tk = await _toKhai.Lap(code, nam, thang, mst, ten, diaChi, req?.XmlKyTruoc);
+            if (req?.ChonHd is { Count: > MaxChonHd })
+                return BadRequest(new
+                { message = $"Danh sách hóa đơn chọn quá dài (tối đa {MaxChonHd})" });
+
+            var tk = await _toKhai.Lap(code, nam, thang, mst, ten, diaChi,
+                                       req?.XmlKyTruoc, req?.ChonHd);
 
             try
             {
