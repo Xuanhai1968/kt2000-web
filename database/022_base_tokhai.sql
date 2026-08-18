@@ -312,3 +312,30 @@ BEGIN
         ALTER TABLE TOKHAI ADD xml_nap_luc DATETIME2 NULL;
 END
 GO
+
+-- ######## PHẦN 4 — CỘT ct23a_nnt / ct24a_nnt: HÀNG NHẬP KHẨU (gộp từ 024) ########
+--
+-- Hai chỉ tiêu [23a]/[24a] "trong đó: hàng hóa, dịch vụ nhập khẩu" là dòng CON của
+-- [23]/[24] trên mẫu 01/GTGT. Khuôn Excel kế toán đang dùng (tkhai_2026_mau_xls.xls)
+-- không có hai cột này nên bảng TOKHAI dựng theo khuôn ở PHẦN 1 cũng thiếu, và
+-- BangToKhai.tsx phải KHÓA hai ô lại — gõ vào thì lưu xong là mất trắng.
+--
+-- Đối soát 18/08 trên hai đơn vị cho thấy đây là số liệu THẬT, không phải nhu cầu
+-- giả định — API lập tờ khai đang trả 0 trong khi tờ khai đã nộp có số:
+--   USA_MEVA        T7/2026   ct23a = 5.481.000.000   ct24a = 438.480.000
+--   DAT_VIET_THANH  T7/2026   ct23a =   411.992.790   ct24a =  25.245.661
+-- Thuế khâu nhập khẩu KHÔNG nằm trong bảng kê hóa đơn điện tử (nó ở chứng từ nộp thuế
+-- khâu nhập khẩu / tờ khai hải quan) nên API không thể tự suy ra — buộc phải nhập tay.
+-- Thiếu nó thì ct23/ct24/ct25 hụt → ct36 sai → ct41/ct43 sai và CỘNG DỒN sang kỳ sau.
+--
+-- AN TOÀN: chỉ THÊM cột NULL. Dòng cũ để NULL, code đọc bằng ISNULL(...,0) nên tờ khai
+-- đã lưu giữ nguyên số. Chạy lại nhiều lần vô hại.
+
+IF OBJECT_ID('TOKHAI') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('TOKHAI','ct23a_nnt') IS NULL
+        ALTER TABLE TOKHAI ADD ct23a_nnt DECIMAL(18,0) NULL;
+    IF COL_LENGTH('TOKHAI','ct24a_nnt') IS NULL
+        ALTER TABLE TOKHAI ADD ct24a_nnt DECIMAL(18,0) NULL;
+END
+GO

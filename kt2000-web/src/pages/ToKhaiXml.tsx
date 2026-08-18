@@ -4,14 +4,16 @@ import { Modal, Table, Typography, Empty, Upload, Button, Tag, message,
 import { FileTextOutlined, InboxOutlined, FileExcelOutlined,
          FileDoneOutlined, DownloadOutlined, FilePdfOutlined,
          ReloadOutlined, EyeOutlined, DeleteOutlined,
-         ExclamationCircleFilled, SearchOutlined } from "@ant-design/icons";
+         ExclamationCircleFilled, SearchOutlined,
+         ImportOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { thueBaoCao, thueBaoCaoDonVi, thueDocBangKe, thueKhoBangKe, thueRaSoat,
          thueLapToKhai, thueToKhaiXml, thueHtmlHoaDon, thueXoaHoaDon,
-         loiApi } from "../api";
+         thueTkHaiQuan, thueHdLechMuaVao, thueHdLechBanRa, loiApi } from "../api";
 import HtmlHoaDon from "./HtmlHoaDon";
 import type { BaoCaoThue, BangKeHoaDon, DongBangKe, HoaDonFile, KetQuaRaSoat,
-              NhomSuat, NhomSuatHd, ToKhaiGtgt } from "../api";
+              NhomSuat, NhomSuatHd, ToKhaiGtgt, KetQuaHaiQuan,
+              KetQuaHdLech, HoaDonLech } from "../api";
 import BangToKhai from "./BangToKhai";
 import "./bang-to-khai.css";
 import "./to-khai-xml.css";
@@ -20,10 +22,58 @@ const tien = (v: number | null | undefined) =>
   v == null ? "" : v.toLocaleString("vi-VN", { minimumFractionDigits: 2,
                                                maximumFractionDigits: 2 });
 
-const boDau = (s: string) =>
-  s.normalize("NFD").replace(/[̀-ͯ]/g, "")
-   .replace(/đ/g, "d").replace(/Đ/g, "D")
-   .toLowerCase().trim();
+const boDauCache = new Map<string, string>();
+const boDau = (s: string) => {
+  const daCo = boDauCache.get(s);
+  if (daCo !== undefined) return daCo;
+  const kq = s.normalize("NFD").replace(/[̀-ͯ]/g, "")
+              .replace(/đ/g, "d").replace(/Đ/g, "D")
+              .toLowerCase().trim();
+  if (boDauCache.size < 20000) boDauCache.set(s, kq);
+  return kq;
+};
+
+const khoChuoiTim = new WeakMap<BangKeHoaDon, string>();
+const chuoiTim = (m: BangKeHoaDon) => {
+  let v = khoChuoiTim.get(m);
+  if (v === undefined) {
+    v = boDau(`${m.khHd ?? ""} ${m.soHd ?? ""} ${m.tenDoiTac ?? ""} `
+            + `${m.mstDoiTac ?? ""} ${m.matHang ?? ""} ${m.ghiChu ?? ""}`);
+    khoChuoiTim.set(m, v);
+  }
+  return v;
+};
+
+// Cộng [23a]/[24a] vào tờ khai rồi tính lại các ô phụ thuộc.
+//
+// [23a]/[24a] là dòng CON của [23]/[24] nên phải CỘNG vào — bảng kê hóa đơn không
+// chứa hàng nhập khẩu, [23] tính từ sổ đang thiếu đúng phần này. Cộng rồi thì [25]
+// và các ô sau phải tính lại theo, nếu không tờ khai mất cân và cơ quan thuế trả về.
+//
+// Gọi lại nhiều lần KHÔNG cộng dồn: mỗi lần đều trừ [23a]/[24a] đang có ra trước.
+// Công thức [40]/[41]/[43] giữ ĐÚNG bản backend (ToKhai.cs TinhLaiKetQua) — lệch là
+// số trên màn khác số khi bấm "Tạo lại tờ khai".
+const congHaiQuan = (c: ToKhaiGtgt, triGia: number, tienThue: number): ToKhaiGtgt => {
+  const themTg = triGia - c.ct23a;
+  const themTh = tienThue - c.ct24a;
+  const ct23 = c.ct23 + themTg;
+  const ct24 = c.ct24 + themTh;
+  const ct25 = c.ct25 + themTh;          // thuế mua vào được khấu trừ kỳ này
+  const ct36 = c.ct35 - ct25;            // [36] = [35] - [25]
+
+  let ct40: number, ct41: number;
+  if (ct36 >= 0) {
+    const conLai = ct36 - c.ct22;
+    ct40 = Math.max(0, conLai);
+    ct41 = Math.max(0, -conLai);
+  } else {
+    ct40 = 0;
+    ct41 = c.ct22 + Math.abs(ct36);
+  }
+
+  return { ...c, ct23a: triGia, ct24a: tienThue,
+           ct23, ct24, ct25, ct36, ct40, ct41, ct43: ct41 - c.ct42 };
+};
 
 const tienTron = (v: number | null | undefined) =>
   v == null ? "" : v.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
@@ -184,8 +234,8 @@ const khoaHd = (khhd: string | null, soHd: string | null) =>
 //               ở khâu đầu nguồn                            → tờ khai chỉ tiêu [32a]
 //   -2 = KCT    Không Chịu Thuế (Điều 5 Luật GTGT) — thiết bị y tế, bảo hiểm,
 //               dịch vụ tài chính                            → tờ khai chỉ tiêu [26]
-//   -3 = CTTC   Chiết khấu thương mại
-const SUAT_HOP_LE = new Set([-3, -2, -1, 0, 5, 8, 10]);
+
+const SUAT_HOP_LE = new Set([-2, -1, 0, 5, 8, 10]);
 const suatLa = (s: number) => !SUAT_HOP_LE.has(s);
 const SUAT_LA_KHONG_DONG = -99;
 interface Props {
@@ -328,7 +378,6 @@ export default function ToKhaiXml(
 
     const raKct = lay(nhomRa, -2);      // Không Chịu Thuế
     const raKkknt = lay(nhomRa, -1);    // Không Kê Khai Nộp Thuế
-    const raCttc = lay(nhomRa, -3);     // Chiết khấu thương mại
 
     const raLa = (nhomRa ?? []).filter((x) => suatLa(x.thueSuat))
       .reduce((t, x) => ({ dt: t.dt + x.doanhThu, vat: t.vat + x.thue, soHd: t.soHd + x.soHd }),
@@ -336,7 +385,7 @@ export default function ToKhaiXml(
     return {
       ra0: lay(nhomRa, 0), ra5: lay(nhomRa, 5),
       ra8: lay(nhomRa, 8), ra10: lay(nhomRa, 10),
-      raKct, raKkknt, raCttc, raLa,
+      raKct, raKkknt, raLa,
       raDt: ra.reduce((t, x) => t + x.doanhThuChuaVat, 0),
       raVat: ra.reduce((t, x) => t + x.thueGtgt, 0),
       vaoDt: vao.reduce((t, x) => t + x.doanhThuChuaVat, 0),
@@ -353,6 +402,13 @@ export default function ToKhaiXml(
   const [dangTuSoat, setDangTuSoat] = useState(false);
   const luotSoatRef = useRef(0);
   const [hdDangXem, setHdDangXem] = useState<BangKeHoaDon | null>(null);
+
+  // Hai lưới, hai kết quả, KHÔNG dùng chung state: bấm nút bên mua vào không được
+  // xóa kết quả đang xem bên bán ra. Đây là lý do tách hai API riêng ở server.
+  const [lechVao, setLechVao] = useState<KetQuaHdLech | null>(null);
+  const [lechRa, setLechRa] = useState<KetQuaHdLech | null>(null);
+  const [dangLechVao, setDangLechVao] = useState(false);
+  const [dangLechRa, setDangLechRa] = useState(false);
 
   const [locLech, setLocLech] = useState<{
     huong: "VAO" | "RA";
@@ -424,10 +480,43 @@ export default function ToKhaiXml(
       kq = kq.filter((m) => locLech.maHd.has(m.maHd));
     const k = boDau(tu);
     if (!k) return kq;
-    return kq.filter((m) =>
-      boDau(`${m.khHd ?? ""} ${m.soHd ?? ""} ${m.tenDoiTac ?? ""} `
-          + `${m.mstDoiTac ?? ""} ${m.matHang ?? ""} ${m.ghiChu ?? ""}`).includes(k));
+    return kq.filter((m) => chuoiTim(m).includes(k));
   };
+
+  // Báo kết quả — tách riêng để hai nhánh dưới không lặp lại bốn dòng message.
+  const baoLech = useCallback((kq: KetQuaHdLech) => {
+    if (kq.loi.length > 0) message.error(kq.loi.join(" / "), 8);
+    else if (kq.soLech === 0) message.success(`Khớp hoàn toàn với ${kq.nhan}`);
+    else message.warning(`${kq.soLech} hóa đơn lệch trong ${kq.nhan}`);
+  }, []);
+
+  const timHdLechVao = useCallback(async () => {
+    setDangLechVao(true);
+    try {
+      const r = await thueHdLechMuaVao(thang, maDonVi || undefined);
+      setLechVao(r.data);
+      baoLech(r.data);
+    } catch (e) {
+      setLechVao(null);
+      message.error(loiApi(e, "Không tìm được hóa đơn lệch"));
+    } finally {
+      setDangLechVao(false);
+    }
+  }, [thang, maDonVi, baoLech]);
+
+  const timHdLechRa = useCallback(async () => {
+    setDangLechRa(true);
+    try {
+      const r = await thueHdLechBanRa(thang, maDonVi || undefined);
+      setLechRa(r.data);
+      baoLech(r.data);
+    } catch (e) {
+      setLechRa(null);
+      message.error(loiApi(e, "Không tìm được hóa đơn lệch"));
+    } finally {
+      setDangLechRa(false);
+    }
+  }, [thang, maDonVi, baoLech]);
 
   const doiMotHd = useCallback((maHd: string, tick: boolean) => {
     setHdDaChon((cu) => {
@@ -452,6 +541,10 @@ export default function ToKhaiXml(
     };
   };
 
+  // KHÔNG bọc useMemo tay ở đây: dự án bật React Compiler, nó tự memo hóa cả hai lưới
+  // lẫn hai mảng columns. Memo tay chỉ làm compiler thấy dependency không khớp rồi BỎ
+  // tối ưu cả component (react-hooks/preserve-manual-memoization) — nhận ít hơn chứ
+  // không nhiều hơn. Phần tăng tốc thật nằm ở cache boDau + chuoiTim phía trên.
   const hdVaoHien = locHd(bc?.muaVao, timVao, "VAO");
   const hdRaHien = locHd(bc?.banRa, timRa, "RA");
 
@@ -483,6 +576,8 @@ export default function ToKhaiXml(
 
   const [dangLapTk, setDangLapTk] = useState(false);
   const [toKhai, setToKhai] = useState<ToKhaiGtgt | null>(null);
+  const [hq, setHq] = useState<KetQuaHaiQuan | null>(null);
+  const [dangHq, setDangHq] = useState(false);
   const [dangXuatPdf, setDangXuatPdf] = useState(false);
   const tkRef = useRef<HTMLDivElement | null>(null);
 
@@ -753,7 +848,30 @@ export default function ToKhaiXml(
     try {
       const r = await thueLapToKhai(thang, xmlKyTruoc ?? undefined,
                                     maDonVi || undefined, dsChon());
-      setToKhai(r.data);
+
+      // Tờ khai lập từ sổ luôn để trống [23a]/[24a] — thuế khâu nhập khẩu nằm ở tờ
+      // khai hải quan chứ không có trong bảng kê hóa đơn điện tử. CÓ thư mục hải quan
+      // của kỳ thì đọc và cộng vào luôn, để tờ khai vừa tạo đã đủ số, kế toán không
+      // phải nhớ bấm thêm một nút nữa mới đúng.
+      //
+      // Đọc lỗi thì KHÔNG chặn việc lập tờ khai: tờ khai phần sổ vẫn dùng được, chỉ
+      // báo để kế toán tự bấm "Tờ khai hải quan" xem vì sao.
+      let tk = r.data;
+      try {
+        const h = await thueTkHaiQuan(maDonVi, thang, nam);
+        setHq(h.data);
+        if (h.data.soToKhai > 0) {
+          tk = congHaiQuan(tk, h.data.tongTriGia, h.data.tongTienThue);
+          message.success(
+            `Đã cộng thuế nhập khẩu từ ${h.data.soToKhai} tờ khai hải quan `
+            + `vào [23a]/[24a]`);
+        }
+      } catch {
+        message.warning(
+          "Lập được tờ khai nhưng chưa đọc được kho tờ khai hải quan — "
+          + "[23a]/[24a] đang để trống, bấm 'Tờ khai hải quan' để xem lại");
+      }
+      setToKhai(tk);
     } catch (e) {
       const loi = loiApi(e, "Không lập được tờ khai");
       if (loi.includes("tờ khai kỳ trước")) {
@@ -764,6 +882,34 @@ export default function ToKhaiXml(
     } finally {
       setDangLapTk(false);
     }
+  };
+
+  // [23a]/[24a] — thuế GTGT hàng NHẬP KHẨU. Không có trong bảng kê hóa đơn điện tử
+  // (nó nằm ở tờ khai hải quan) nên tờ khai lập từ sổ luôn để trống hai ô này.
+  // Đọc kho Excel tờ khai hải quan của kỳ rồi kế toán tự bấm "Lấy số".
+  const layHaiQuan = async () => {
+    setDangHq(true);
+    try {
+      const r = await thueTkHaiQuan(maDonVi, thang, nam);
+      setHq(r.data);
+      if (!r.data.coThuMuc)
+        message.warning(`Không có thư mục tờ khai hải quan kỳ ${thang}/${nam}`);
+      else if (r.data.soToKhai === 0)
+        message.warning("Thư mục có nhưng không đọc được tờ khai nào");
+      else
+        message.success(`Đọc được ${r.data.soToKhai} tờ khai hải quan`);
+    } catch (e) {
+      setHq(null);
+      message.error(loiApi(e, "Không đọc được tờ khai hải quan"));
+    } finally {
+      setDangHq(false);
+    }
+  };
+
+  const dienHaiQuan = () => {
+    if (!toKhai || !hq) return;
+    setToKhai((c) => (c ? congHaiQuan(c, hq.tongTriGia, hq.tongTienThue) : c));
+    message.success("Đã cộng [23a]/[24a] vào [23]/[24] — kiểm tra lại trước khi xuất XML");
   };
 
   const tenFilePdf = () =>
@@ -883,6 +1029,24 @@ export default function ToKhaiXml(
   };
 
 
+  // Tổng chênh sổ ↔ bảng kê của MỘT hướng, cộng từ chính danh sách hóa đơn lệch đã
+  // tìm được. null = chưa bấm "Tìm HĐ lệch" (khác hẳn 0 = đã soát và khớp).
+  //
+  // Công thức từng dòng: bảng kê − sổ. Hóa đơn "Sổ chưa có" thì vế sổ là 0, nên cả
+  // giá trị bảng kê là phần thiếu — đúng thứ cần thấy ở ô tổng.
+  const tongLech = (huong: "VAO" | "RA") => {
+    const kq = huong === "VAO" ? lechVao : lechRa;
+    if (!kq) return null;
+    let hang = 0, vat = 0;
+    for (const d of kq.dong) {
+      if (d.tienHangFile != null)
+        hang += d.tienHangFile - (d.coTrongSo ? d.doanhThuChuaVat : 0);
+      if (d.tienVatFile != null)
+        vat += d.tienVatFile - (d.coTrongSo ? d.thueGtgt : 0);
+    }
+    return { hang, vat };
+  };
+
   const luoi = (
     ten: string, viTat: string, huong: "VAO" | "RA",
     ds: BangKeHoaDon[] | undefined,
@@ -901,13 +1065,26 @@ export default function ToKhaiXml(
           <span className="ct-nhan">VAT {viTat} Tờ khai</span>
           <span className="ct-gia gia-xanh">{tien(vat)}</span>
         </div>
-        <div className="ct-o" title="Chênh tiền hàng giữa tờ khai và bảng kê cổng TCT — chưa nối bảng kê nên tạm 0">
+        {/* Chênh giữa SỔ và bảng kê cổng TCT, cộng từ chính danh sách hóa đơn lệch của
+            hướng này — bấm "Tìm HĐ lệch" xong mới có số, chưa bấm thì hiện "—" chứ
+            KHÔNG hiện 0: số 0 nghĩa là "đã soát, khớp", còn đây là "chưa soát". */}
+        <div className="ct-o"
+             title={tongLech(huong)
+               ? "Chênh tiền hàng giữa sổ và bảng kê cổng TCT (bảng kê − sổ)"
+               : "Bấm 'Tìm HĐ lệch' để soát với bảng kê cổng TCT"}>
           <span className="ct-nhan">Lệch GT{viTat}</span>
-          <span className="ct-gia">{tien(0)}</span>
+          <span className={`ct-gia ${tongLech(huong)?.hang ? "gia-lech" : ""}`}>
+            {tongLech(huong) ? tien(tongLech(huong)!.hang) : "—"}
+          </span>
         </div>
-        <div className="ct-o" title="Chênh tiền VAT giữa tờ khai và bảng kê cổng TCT — chưa nối bảng kê nên tạm 0">
+        <div className="ct-o"
+             title={tongLech(huong)
+               ? "Chênh tiền VAT giữa sổ và bảng kê cổng TCT (bảng kê − sổ)"
+               : "Bấm 'Tìm HĐ lệch' để soát với bảng kê cổng TCT"}>
           <span className="ct-nhan">Lệch VAT{viTat}</span>
-          <span className="ct-gia">{tien(0)}</span>
+          <span className={`ct-gia ${tongLech(huong)?.vat ? "gia-lech" : ""}`}>
+            {tongLech(huong) ? tien(tongLech(huong)!.vat) : "—"}
+          </span>
         </div>
         {phuThem}
 
@@ -920,13 +1097,14 @@ export default function ToKhaiXml(
                    e.target.value = "";
                    if (f) void soatBangKe(f, huong);
                  }} />
-          <Button size="small" icon={<FileExcelOutlined />} loading={dangSoat}
+          <Button size="small" icon={<FileExcelOutlined />}
+                  loading={huong === "VAO" ? dangLechVao : dangLechRa}
                   onClick={(e) => {
                     if (e.ctrlKey || e.metaKey) {
                       (huong === "VAO" ? oFileVao : oFileRa).current?.click();
                       return;
                     }
-                    void soatKho(huong);
+                    void (huong === "VAO" ? timHdLechVao() : timHdLechRa());
                   }}
                   title={`Đọc hết bảng kê Excel ${huong === "VAO" ? "mua vào" : "bán ra"}`
                          + ` của kỳ ${thang}/${nam} trong kho rồi so với sổ`
@@ -947,6 +1125,116 @@ export default function ToKhaiXml(
           />
         </div>
       </div>
+
+      {(huong === "VAO" ? lechVao : lechRa) && (() => {
+        const kq = (huong === "VAO" ? lechVao : lechRa)!;
+        const nhanLoai = (l: string) =>
+          l === "lech-tien" ? "Lệch tiền"
+          : l === "thieu-trong-so" ? "Sổ chưa có"
+          : "Bảng kê chưa có";
+        const mauLoai = (l: string) =>
+          l === "lech-tien" ? "orange"
+          : l === "thieu-trong-so" ? "red" : "blue";
+        // null = không so được (bảng kê không có số để đối chiếu) → ô để trống.
+        const lechHang = (d: HoaDonLech) =>
+          d.tienHangFile == null ? null
+          : d.tienHangFile - (d.coTrongSo ? d.doanhThuChuaVat : 0);
+        const lechVat = (d: HoaDonLech) =>
+          d.tienVatFile == null ? null
+          : d.tienVatFile - (d.coTrongSo ? d.thueGtgt : 0);
+        return (
+          <div className="khoi-hd-lech">
+            <div className="dai-loc-lech">
+              <Tag color="orange">Hóa đơn lệch</Tag>
+              <span className="loc-nguon">{kq.nhan}</span>
+              <span className="loc-dem">
+                {kq.soLech} lệch · sổ {kq.soHdSo} HĐ · bảng kê {kq.soHdFile} HĐ
+              </span>
+              <span className="day" />
+              <Button size="small"
+                      onClick={() => (huong === "VAO" ? setLechVao : setLechRa)(null)}>
+                Đóng
+              </Button>
+            </div>
+
+            {kq.soLech === 0 ? (
+              <div className="hd-lech-khop">
+                Sổ khớp hoàn toàn với bảng kê — không có hóa đơn nào lệch.
+              </div>
+            ) : (
+              <div className="hd-lech-cuon">
+              <table className="hd-lech-bang">
+                <thead>
+                  <tr>
+                    <th>STT</th>
+                    <th>Loại</th>
+                    <th>KHHD</th>
+                    <th>Số HĐ</th>
+                    <th>Ngày</th>
+                    <th>{huong === "VAO" ? "Tên người bán" : "Tên người mua"}</th>
+                    <th>MST</th>
+                    <th>Tên hàng</th>
+                    <th className="phai">Tiền hàng sổ</th>
+                    <th className="giua">VAT</th>
+                    <th className="phai">Tiền VAT sổ</th>
+                    <th className="phai">Tiền hàng bảng kê</th>
+                    <th className="phai">Tiền VAT bảng kê</th>
+                    <th className="phai">Lệch hàng</th>
+                    <th className="phai">Lệch VAT</th>
+                    <th className="o-xem" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {kq.dong.map((d) => (
+                    <tr key={`${d.maHd}|${d.khHd}|${d.soHd}`}
+                        className={d.coTrongSo ? undefined : "hd-lech-thieu"}>
+                      <td className="giua">{d.stt}</td>
+                      <td><Tag color={mauLoai(d.loai)}>{nhanLoai(d.loai)}</Tag></td>
+                      <td>{d.khHd ?? ""}</td>
+                      <td>{d.soHd ?? ""}</td>
+                      <td>{d.ngay ? new Date(d.ngay).toLocaleDateString("vi-VN") : ""}</td>
+                      <td className="ten-doi-tac" title={d.tenDoiTac ?? ""}>
+                        {d.tenDoiTac ?? ""}
+                      </td>
+                      <td>{d.mstDoiTac ?? ""}</td>
+                      <td className="ten-hang" title={d.matHang ?? ""}>
+                        {d.matHang ?? ""}
+                      </td>
+                      <td className="phai">{d.coTrongSo ? tien(d.doanhThuChuaVat) : ""}</td>
+                      <td className="giua">{d.thueSuat ?? ""}</td>
+                      <td className="phai">{d.coTrongSo ? tien(d.thueGtgt) : ""}</td>
+                      <td className="phai">{d.tienHangFile == null ? "" : tien(d.tienHangFile)}</td>
+                      <td className="phai">{d.tienVatFile == null ? "" : tien(d.tienVatFile)}</td>
+                      <td className={`phai ${lechHang(d) ? "o-lech" : ""}`}>
+                        {lechHang(d) === null ? "" : tien(lechHang(d)!)}
+                      </td>
+                      <td className={`phai ${lechVat(d) ? "o-lech" : ""}`}>
+                        {lechVat(d) === null ? "" : tien(lechVat(d)!)}
+                      </td>
+                      <td className="giua o-xem">
+                        {d.coTrongSo && d.maHd && (
+                          <Button type="text" size="small" icon={<EyeOutlined />}
+                                  title={`Xem hóa đơn ${d.khHd ?? ""}/${d.soHd ?? ""}`}
+                                  onClick={() => setHdDangXem({
+                                    stt: d.stt, maHd: d.maHd,
+                                    khHd: d.khHd, soHd: d.soHd, ngay: d.ngay,
+                                    tenDoiTac: d.tenDoiTac, mstDoiTac: d.mstDoiTac,
+                                    matHang: d.matHang,
+                                    doanhThuChuaVat: d.doanhThuChuaVat,
+                                    thueSuat: d.thueSuat, thueGtgt: d.thueGtgt,
+                                    ghiChu: d.ghiChu,
+                                  })} />
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {locLech?.huong === huong && (
         <div className="dai-loc-lech">
@@ -1042,6 +1330,16 @@ export default function ToKhaiXml(
                     </span>}
           </span>
 
+          {/* Hiện NGAY, không đợi có tờ khai: đọc kho hải quan là việc CHUẨN BỊ số
+              [23a]/[24a], kế toán cần xem trước rồi mới bấm tạo. Bắt tạo tờ khai xong
+              mới cho đọc là ngược quy trình. */}
+          <Button icon={<ImportOutlined />} loading={dangHq}
+                  onClick={layHaiQuan}
+                  title={"Đọc kho tờ khai hải quan của kỳ để lấy [23a]/[24a] — "
+                         + "thuế GTGT hàng nhập khẩu không có trong bảng kê hóa đơn"}>
+            Tờ khai hải quan
+          </Button>
+
           {toKhai && (
             <>
               <Button icon={<FilePdfOutlined />} loading={dangXuatPdf}
@@ -1085,8 +1383,11 @@ export default function ToKhaiXml(
             {o("Doanh thu 8%", tong.ra8.dt)}
             {o("Doanh thu 10%", tong.ra10.dt)}
             {o("Doanh thu KCT", tong.raKct.dt)}
-            {o("Doanh thu KKKNT", tong.raKkknt.dt)}
-            {o("Doanh thu CTTC", tong.raCttc.dt)}
+            {/* KKKNT (không kê khai nộp thuế — xăng dầu, hàng đã nộp thuế khâu đầu
+                nguồn) hầu như chỉ phát sinh bên MUA VÀO. Đo 18/08: bán ra không có
+                dòng nào ở cả DAT_VIET_THANH lẫn USA_MEVA. Ẩn khi bằng 0 cho gọn cột,
+                nhưng vẫn hiện nếu có phát sinh — giấu số khác 0 là giấu lỗi. */}
+            {tong.raKkknt.dt !== 0 && o("Doanh thu KKKNT", tong.raKkknt.dt)}
             {tong.raLa.soHd > 0
               && o(`Doanh thu thuế suất LẠ (${tong.raLa.soHd} HĐ)`,
                    tong.raLa.dt, "", "nhan-do")}
@@ -1102,8 +1403,7 @@ export default function ToKhaiXml(
             {o("VAT 8%", tong.ra8.vat)}
             {o("VAT 10%", tong.ra10.vat)}
             {o("VAT KCT", tong.raKct.vat)}
-            {o("VAT KKKNT", tong.raKkknt.vat)}
-            {o("VAT CTTC", tong.raCttc.vat)}
+            {tong.raKkknt.vat !== 0 && o("VAT KKKNT", tong.raKkknt.vat)}
             {tong.raLa.soHd > 0
               && o("VAT thuế suất lạ", tong.raLa.vat, "", "nhan-do")}
             {o("Tổng VAT bán ra", tong.raVat, "gia-dam")}
@@ -1186,11 +1486,11 @@ export default function ToKhaiXml(
                 <div className="ky-so">
                   <span className="ky-nhom">
                     <span className="ky-mo">Mua vào</span>
-                    <b>{k.soVao}</b> HĐ / {tienTron(k.hangVao)} / VAT <b>{tienTron(k.vatVao)}</b>
+                    <b>{k.soVao}</b> HĐ  {tienTron(k.hangVao)}  VAT <b>{tienTron(k.vatVao)}</b>
                   </span>
                   <span className="ky-nhom">
                     <span className="ky-mo">Bán ra</span>
-                    <b>{k.soRa}</b> HĐ / {tienTron(k.hangRa)} / VAT <b>{tienTron(k.vatRa)}</b>
+                    <b>{k.soRa}</b> HĐ  {tienTron(k.hangRa)}  VAT <b>{tienTron(k.vatRa)}</b>
                   </span>
                 </div>
               </div>
@@ -1202,11 +1502,11 @@ export default function ToKhaiXml(
                   ? <span className="ky-ok">Dữ liệu file khớp với sổ</span>
                   : <span className="ky-loi">
                       {tongVanDe} điểm lệch giữa file và sổ
-                      {kqRaSoat.thieuTrongSo.length > 0 && <> / thiếu trong sổ: {kqRaSoat.thieuTrongSo.length}</>}
-                      {kqRaSoat.lechTien.length > 0 && <> / lệch tiền: {kqRaSoat.lechTien.length}</>}
-                      {kqRaSoat.trung.length > 0 && <> / trùng: {kqRaSoat.trung.length}</>}
+                      {kqRaSoat.thieuTrongSo.length > 0 && <> thiếu trong sổ: {kqRaSoat.thieuTrongSo.length}</>}
+                      {kqRaSoat.lechTien.length > 0 && <> lệch tiền: {kqRaSoat.lechTien.length}</>}
+                      {kqRaSoat.trung.length > 0 && <> trùng: {kqRaSoat.trung.length}</>}
                     </span>}
-                {soFileHong > 0 && <span className="ky-bo"> / bỏ qua {soFileHong} file</span>}
+                {soFileHong > 0 && <span className="ky-bo"> bỏ qua {soFileHong} file</span>}
               </div>
             )}
           </div>
@@ -1234,6 +1534,66 @@ export default function ToKhaiXml(
               </>)}
 
  
+        {hq && (
+          <div className="dc-khoi khong-in">
+            <div className="dc-dau">
+              <b>Tờ khai hải quan {thang}/{nam}</b>
+              <span className="dc-mo">{hq.soFile} file · {hq.soToKhai} tờ khai</span>
+              <span className="dc-day" />
+              {hq.soToKhai > 0 && (
+                <Button size="small" type="primary" onClick={dienHaiQuan}
+                        disabled={!toKhai}
+                        title={toKhai
+                          ? "Cộng [23a]/[24a] vào [23]/[24] rồi tính lại [36]/[41]/[43]"
+                          : "Tạo tờ khai trước đã — số này điền vào tờ khai, "
+                            + "chưa có tờ khai thì chưa có chỗ điền"}>
+                  Lấy số vào [23a]/[24a]
+                </Button>
+              )}
+              <Button size="small" onClick={() => setHq(null)}>Đóng</Button>
+            </div>
+
+            {hq.soToKhai === 0 ? (
+              <div className="dc-khop">Không có tờ khai hải quan nào đọc được ở kỳ này.</div>
+            ) : (
+              <table className="dc-bang">
+                <thead>
+                  <tr>
+                    <th>Số tờ khai</th>
+                    <th>Ngày đăng ký</th>
+                    <th>Trị giá tính thuế</th>
+                    <th>Thuế suất</th>
+                    <th>Tiền thuế GTGT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hq.dong.map((d, i) => (
+                    <tr key={`${d.soToKhai}-${i}`}>
+                      <td>{d.soToKhai}</td>
+                      <td>{d.ngayDangKy ?? ""}</td>
+                      <td className="phai">{tien(d.triGia)}</td>
+                      <td className="giua">{d.thueSuat ?? ""}</td>
+                      <td className="phai">{tien(d.tienThue)}</td>
+                    </tr>
+                  ))}
+                  <tr className="d-dam">
+                    <td colSpan={2}>Tổng — vào [23a] / [24a]</td>
+                    <td className="phai">{tien(hq.tongTriGia)}</td>
+                    <td />
+                    <td className="phai">{tien(hq.tongTienThue)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+
+            {hq.canhBao.length > 0 && (
+              <ul className="hq-canhbao">
+                {hq.canhBao.map((c, i) => <li key={i}>{c}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+
         {toKhai && (
           <div className="khoi-to-khai" ref={tkRef}>
             <BangToKhai tk={toKhai} />

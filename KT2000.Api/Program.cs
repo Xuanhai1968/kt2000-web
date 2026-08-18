@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -29,6 +29,7 @@ builder.Services.AddScoped<NoiBoService>();   // phần nội bộ: danh mục +
 builder.Services.AddScoped<ThueService>();    // sổ thuế: đọc HOA_DON của đơn vị đang đăng nhập
 builder.Services.AddScoped<RaSoatService>();  // đối chiếu file vs sổ trước khi khai thuế — CHỈ ĐỌC
 builder.Services.AddScoped<ToKhaiService>();  // lập tờ khai 01/GTGT — CHỈ ĐỌC
+builder.Services.AddScoped<ToKhaiHaiQuanService>();  // đọc thuế GTGT hàng nhập khẩu ([23a]/[24a]) — CHỈ ĐỌC
 // Viên gạch tồn kho dùng chung (SPEC-BAO-CAO-TON-KHO mục 3) — CHỈ ĐỌC, BR-BC-01.
 // Mọi module cần số tồn kho gọi qua đây, không module nào tự viết lại công thức.
 builder.Services.AddScoped<TonKhoService>();

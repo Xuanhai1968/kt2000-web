@@ -1248,6 +1248,7 @@ export interface ToKhaiTay {
   diaChiNnt?: string | null;
   ghiChu?: string | null;
   ct21: number; ct22: number; ct23: number; ct24: number;
+  ct23a: number; ct24a: number;   // trong đó: hàng nhập khẩu (gõ tay)
   ct25: number; ct26: number; ct27: number; ct28: number;
   ct29: number; ct30: number; ct31: number; ct32: number;
   ct33: number; ct32a: number; ct34: number; ct35: number;
@@ -1261,6 +1262,80 @@ export const thueDocToKhaiTay = (ma: string, thang: number, nam?: number,
                                  lanNop = 0) =>
   api.get<ToKhaiTay | "">("/thue/to-khai-tay",
                           { params: { ma, thang, nam, lanNop } });
+
+// ===== HÓA ĐƠN LỆCH: hai lưới, hai API, chạy độc lập =====
+// Trả về NGUYÊN DÒNG theo đúng khuôn cột của lưới sổ (không phải danh sách mã để
+// client tự lọc): hóa đơn "có trong bảng kê mà sổ chưa có" không có dòng nào trong
+// lưới để lọc ra — cách lọc cũ luôn giấu mất đúng loại lệch nguy hiểm nhất.
+export interface HoaDonLech {
+  stt: number;
+  maHd: string;
+  khHd: string | null;
+  soHd: string | null;
+  ngay: string | null;
+  tenDoiTac: string | null;
+  mstDoiTac: string | null;
+  matHang: string | null;
+  doanhThuChuaVat: number;   // số của SỔ (0 nếu sổ chưa có)
+  thueSuat: number | null;
+  thueGtgt: number;          // số của SỔ
+  ghiChu: string | null;
+  loai: string;              // thieu-trong-so | thieu-trong-file | lech-tien
+  moTa: string;
+  coTrongSo: boolean;        // false = chỉ có ở bảng kê, sổ chưa nạp
+  tienHangFile: number | null;
+  tienVatFile: number | null;
+  tenFile: string | null;
+}
+
+export interface KetQuaHdLech {
+  nam: number;
+  thang: number;
+  huong: "VAO" | "RA";
+  nhan: string | null;
+  soFile: number;
+  soHdSo: number;
+  soHdFile: number;
+  soLech: number;
+  dong: HoaDonLech[];
+  loi: string[];
+}
+
+export const thueHdLechMuaVao = (thang: number, maDonVi?: string) =>
+  api.get<KetQuaHdLech>("/thue/hd-lech/mua-vao", { params: { thang, maDonVi } });
+
+export const thueHdLechBanRa = (thang: number, maDonVi?: string) =>
+  api.get<KetQuaHdLech>("/thue/hd-lech/ban-ra", { params: { thang, maDonVi } });
+
+// ===== TỜ KHAI HẢI QUAN: nguồn của [23a]/[24a] (thuế GTGT hàng nhập khẩu) =====
+// Thuế khâu nhập khẩu KHÔNG có trong bảng kê hóa đơn điện tử, nên tờ khai lập tự động
+// luôn thiếu phần này — phải đọc từ kho Excel tờ khai hải quan rồi kế toán tự điền.
+export interface DongThueHq {
+  soToKhai: string;
+  ngayDangKy?: string | null;
+  triGia: number;
+  thueSuat?: string | null;   // "8%" / "10%" — giữ nguyên chuỗi như file
+  tienThue: number;
+  file: string;
+  thang: number;
+}
+
+export interface KetQuaHaiQuan {
+  maDonVi: string;
+  nam: number;
+  thang: number;
+  thuMuc?: string | null;
+  coThuMuc: boolean;
+  soFile: number;
+  soToKhai: number;
+  tongTriGia: number;        // gợi ý cho [23a]
+  tongTienThue: number;      // gợi ý cho [24a]
+  dong: DongThueHq[];
+  canhBao: string[];
+}
+
+export const thueTkHaiQuan = (ma: string, thang: number, nam?: number) =>
+  api.get<KetQuaHaiQuan>("/thue/tk-hai-quan", { params: { ma, thang, nam } });
 
 // ===== ĐỐI CHIẾU BA NGUỒN: tờ khai · sổ hóa đơn · bản TCT trả về =====
 export interface DongDoiChieu {

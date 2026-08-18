@@ -110,6 +110,53 @@
     }
 
 
+    /// <summary>
+    /// Một dòng trong lưới "hóa đơn lệch" — GIỮ NGUYÊN khuôn cột của
+    /// <see cref="BangKeHoaDonDto"/> để lưới kết quả đọc y hệt lưới gốc, kế toán không
+    /// phải học lại bố cục khi soi.
+    ///
+    /// Khác BangKeHoaDonDto ở ba trường cuối: hóa đơn lệch phải nói rõ LỆCH Ở ĐÂU nên
+    /// mang thêm số bên bảng kê để đặt cạnh số của sổ.
+    /// </summary>
+    public class HoaDonLechDto
+    {
+        public int Stt { get; set; }
+        public string MaHd { get; set; } = "";
+        public string? KhHd { get; set; }
+        public string? SoHd { get; set; }
+        public DateTime? Ngay { get; set; }
+        public string? TenDoiTac { get; set; }
+        public string? MstDoiTac { get; set; }
+        public string? MatHang { get; set; }
+        public decimal DoanhThuChuaVat { get; set; }   // số của SỔ (0 nếu sổ chưa có)
+        public int? ThueSuat { get; set; }
+        public decimal ThueGtgt { get; set; }          // số của SỔ
+        public string? GhiChu { get; set; }
+
+        /// thieu-trong-so | thieu-trong-file | lech-tien
+        public string Loai { get; set; } = "";
+        public string MoTa { get; set; } = "";
+        public bool CoTrongSo { get; set; }            // false = chỉ có ở bảng kê
+        public decimal? TienHangFile { get; set; }     // số bên BẢNG KÊ, để đặt cạnh số sổ
+        public decimal? TienVatFile { get; set; }
+        public string? TenFile { get; set; }
+    }
+
+    public class KetQuaHdLechDto
+    {
+        public int Nam { get; set; }
+        public int Thang { get; set; }
+        public string Huong { get; set; } = "";        // VAO | RA
+        public string? Nhan { get; set; }              // "kho mua vào / 2 file"
+        public int SoFile { get; set; }
+        public int SoHdSo { get; set; }
+        public int SoHdFile { get; set; }
+        public int SoLech { get; set; }
+        public List<HoaDonLechDto> Dong { get; set; } = new();
+        public List<string> Loi { get; set; } = new();
+    }
+
+
     public class ChiTieuTongHopDto
     {
         public string Stt { get; set; } = "";      // "1", "2a", "3c"... KHÔNG phải số
@@ -316,6 +363,8 @@
         public decimal Ct22 { get; set; }
         public decimal Ct23 { get; set; }
         public decimal Ct24 { get; set; }
+        public decimal Ct23a { get; set; }
+        public decimal Ct24a { get; set; }
         public decimal Ct25 { get; set; }
         public decimal Ct26 { get; set; }
         public decimal Ct27 { get; set; }
@@ -342,6 +391,7 @@
         public IEnumerable<(string Ten, object Gia)> ChiTieu() => new (string, object)[]
         {
             ("@ct21", Ct21), ("@ct22", Ct22), ("@ct23", Ct23), ("@ct24", Ct24),
+            ("@ct23a", Ct23a), ("@ct24a", Ct24a),
             ("@ct25", Ct25), ("@ct26", Ct26), ("@ct27", Ct27), ("@ct28", Ct28),
             ("@ct29", Ct29), ("@ct30", Ct30), ("@ct31", Ct31), ("@ct32", Ct32),
             ("@ct33", Ct33), ("@ct32a", Ct32a), ("@ct34", Ct34), ("@ct35", Ct35),
@@ -360,7 +410,6 @@
         public int Thang { get; set; }
         public string KyKeKhai { get; set; } = "";
         public int LanNop { get; set; }          // 0 = chính thức, 1+ = bổ sung
-
         public decimal? TonDau { get; set; }      // ct22
         public decimal? GtMuaVao { get; set; }    // ct23
         public decimal? VatVao { get; set; }      // ct24
@@ -369,17 +418,14 @@
         public decimal? VatRa { get; set; }       // ct35
         public decimal? VatPhaiNop { get; set; }  // ct40
         public decimal? TonCuoi { get; set; }     // ct43
-
         public decimal? GtHdVao { get; set; }
         public decimal? GtVatVao { get; set; }
         public decimal? GtHdRa { get; set; }
         public decimal? GtVatRa { get; set; }
-
         public decimal? LechGtHdVao { get; set; }
         public decimal? LechVatVao { get; set; }
         public decimal? LechGtHdRa { get; set; }
         public decimal? LechVatRa { get; set; }
-
         public string? XmlName { get; set; }
         public string? XmlPath { get; set; }
         public bool DaNop { get; set; }

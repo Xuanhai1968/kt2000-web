@@ -21,11 +21,13 @@ namespace KT2000.Api.Controllers
         private readonly AppDbContext _db;
         private readonly ImportService _import;
         private readonly IMemoryCache _cache;
+        private readonly ToKhaiHaiQuanService _hqan;
         public ThueController(ThueService thue, RaSoatService raSoat, ToKhaiService toKhai,
                               IConfiguration config, AppDbContext db, ImportService import,
                               BangToKhaiService bangToKhai,
                               IMemoryCache cache,
-                               GhiChuHdLienQuan ghiChuLq
+                               GhiChuHdLienQuan ghiChuLq,
+                               ToKhaiHaiQuanService hqan
                               )
         {
             _thue = thue;
@@ -37,6 +39,7 @@ namespace KT2000.Api.Controllers
             _db = db;
             _import = import;
             _cache = cache;
+            _hqan = hqan;
         }
 
         private async Task<string?> MstDonVi()
@@ -346,6 +349,41 @@ namespace KT2000.Api.Controllers
                 duongDan = duong,
                 daCo = Directory.Exists(duong),   // chưa có thì lúc lưu sẽ tự tạo
             });
+        }
+
+        /// <summary>
+        /// GET api/thue/tk-hai-quan?thang=&amp;ma=&amp;nam= — đọc kho tờ khai HẢI QUAN của
+        /// kỳ, trả tổng trị giá + tổng thuế GTGT hàng nhập khẩu để điền [23a]/[24a].
+        /// </summary>
+        /// <remarks>
+        /// CHỈ ĐỌC, KHÔNG tự ghi vào tờ khai: kế toán xem chi tiết từng tờ khai hải quan
+        /// rồi tự quyết có lấy số hay không — hai ô [23a]/[24a] vẫn gõ tay được.
+        ///
+        /// Vì sao cần: thuế khâu nhập khẩu không có trong bảng kê hóa đơn điện tử, nên
+        /// tờ khai lập tự động luôn thiếu phần này (xem ToKhaiHaiQuanService).
+        ///
+        /// bqTruoc=false để TẮT việc loại tờ khai đã tính ở kỳ trước — chỉ dùng khi cần
+        /// nhìn nguyên trạng thư mục, không nên dùng để lấy số vào tờ khai.
+        /// </remarks>
+        [HttpGet("tk-hai-quan")]
+        public async Task<IActionResult> TkHaiQuan(
+            [FromQuery] string? ma, [FromQuery] int thang, [FromQuery] int? nam,
+            [FromQuery] bool bqTruoc = true)
+        {
+            var code = await DonViThaoTac(ma);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {ma}" });
+            if (thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
+
+            var year = nam is >= 2000 and <= 2100 ? nam.Value : FiscalYear();
+
+            // Tờ khai hải quan hay bị lưu ở cả hai thư mục tháng (đã gặp 3 lần trong
+            // 7 tháng). Không lọc thì kỳ sau cộng lại số của kỳ trước.
+            var daDung = bqTruoc ? _hqan.SoToKhaiTruocKy(code, year, thang) : null;
+
+            var kq = _hqan.DocKy(code, year, thang, daDung);
+            return Ok(kq);
         }
 
         /// <summary>
@@ -915,6 +953,147 @@ namespace KT2000.Api.Controllers
                 return BadRequest(new { message = ex.Message });
             }
         }
+
+        /// <summary>
+        /// GET api/thue/hd-lech/mua-vao — hóa đơn MUA VÀO lệch giữa sổ và bảng kê cổng.
+        /// </summary>
+        /// <remarks>
+        /// Tách hẳn khỏi bán ra (xem <see cref="HdLechBanRa"/>): hai lưới trên màn là hai
+        /// bảng độc lập, mỗi bảng có nút riêng, bấm bên này không được đụng bên kia.
+        /// </remarks>
+        [HttpGet("hd-lech/mua-vao")]
+        public Task<IActionResult> HdLechMuaVao([FromQuery] int thang,
+                                                [FromQuery] string? maDonVi,
+                                                CancellationToken huy)
+            => HdLechTheoChieu("VAO", thang, maDonVi, huy);
+
+        /// <summary>
+        /// GET api/thue/hd-lech/ban-ra — hóa đơn BÁN RA lệch giữa sổ và bảng kê cổng.
+        /// </summary>
+        [HttpGet("hd-lech/ban-ra")]
+        public Task<IActionResult> HdLechBanRa([FromQuery] int thang,
+                                               [FromQuery] string? maDonVi,
+                                               CancellationToken huy)
+            => HdLechTheoChieu("RA", thang, maDonVi, huy);
+
+        /// <summary>
+        /// Lõi chung của hai endpoint trên — đọc kho Excel của kỳ, đối chiếu với sổ, rồi
+        /// trả về danh sách hóa đơn lệch THEO ĐÚNG KHUÔN CỘT của lưới sổ.
+        ///
+        /// VÌ SAO TRẢ NGUYÊN DÒNG chứ không trả danh sách mã để client tự lọc: hóa đơn
+        /// "có trong bảng kê mà sổ chưa có" KHÔNG có dòng nào trong lưới để lọc ra, nên
+        /// cách lọc cũ luôn giấu mất đúng loại lệch nguy hiểm nhất — chính là loại đã
+        /// làm sót HĐ 830 (DAT_VIET_THANH) và 51,8 triệu thuế mua vào (USA_MEVA).
+        /// Ở đây dòng đó vẫn hiện, với CoTrongSo = false và tiền sổ = 0.
+        /// </summary>
+        private async Task<IActionResult> HdLechTheoChieu(
+            string chieu, int thang, string? maDonVi, CancellationToken huy)
+        {
+            var laNoiBoQuanTri = User.FindFirst("tenant_type")?.Value == "internal";
+            if (!laNoiBoQuanTri)
+            {
+                var chan = ChanNeuLaNoiBo();
+                if (chan != null) return chan;
+                maDonVi = null;
+            }
+
+            if (thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ phải trong khoảng tháng 1..12" });
+
+            var code = await DonViThaoTac(maDonVi);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {maDonVi}" });
+
+            var nam = FiscalYear();
+            var kq = new Models.KetQuaHdLechDto { Nam = nam, Thang = thang, Huong = chieu };
+
+            var kho = await _raSoat.DoKhoAsync(code, nam, thang, huy)
+                      ?? new RaSoatService.KhoKy();
+            var fileCanDoc = chieu == "RA" ? kho.ExcelRa : kho.ExcelVao;
+            kq.SoFile = fileCanDoc.Count;
+            kq.Nhan = $"kho {(chieu == "RA" ? "bán ra" : "mua vào")} / {fileCanDoc.Count} file";
+
+            if (fileCanDoc.Count == 0)
+            {
+                kq.Loi.Add($"Không thấy file Excel bảng kê {(chieu == "RA" ? "bán ra" : "mua vào")} "
+                         + $"của kỳ {thang}/{nam} trong kho");
+                return Ok(kq);
+            }
+
+            var (mstDv, _, _) = await HoSoDonVi(code);
+            var (tuExcel, loiExcel) = await RaSoatService.DocNhieuBangKe(fileCanDoc, mstDv, huy);
+            kq.Loi.AddRange(loiExcel);
+
+            var dung = tuExcel.Where(x => (x.Huong ?? chieu) == chieu).ToList();
+            kq.SoHdFile = dung.Count;
+            if (dung.Count == 0) return Ok(kq);
+
+            var dc = await _raSoat.Soat(code, nam, thang, dung, huy, chieu);
+
+            // Sổ theo ĐÚNG khuôn cột của lưới — dòng lệch phải đọc y hệt dòng gốc.
+            var soSach = await _thue.BangKeMotChieu(code, nam, chieu, thang);
+            kq.SoHdSo = soSach.Count;
+
+            var theoMa = soSach.ToDictionary(x => x.MaHd, StringComparer.OrdinalIgnoreCase);
+            var theoKhoa = new Dictionary<string, Models.BangKeHoaDonDto>(StringComparer.OrdinalIgnoreCase);
+            foreach (var x in soSach)
+                theoKhoa[KhoaLech(x.KhHd, x.SoHd)] = x;
+
+            var dong = new List<Models.HoaDonLechDto>();
+            var daCo = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var v in dc.LechTien.Concat(dc.ThieuTrongFile).Concat(dc.ThieuTrongSo))
+            {
+                // Tra dòng sổ: ưu tiên mã (server trả sẵn ở nhánh lệch tiền), không có
+                // thì tra ngược theo ký hiệu + số hóa đơn.
+                Models.BangKeHoaDonDto? g = null;
+                if (!string.IsNullOrWhiteSpace(v.MaHd)) theoMa.TryGetValue(v.MaHd!, out g);
+                g ??= theoKhoa.GetValueOrDefault(KhoaLech(v.Khhd, v.SoHd));
+
+                var khoa = g?.MaHd ?? KhoaLech(v.Khhd, v.SoHd);
+                if (!daCo.Add(khoa)) continue;   // một hóa đơn chỉ hiện một dòng
+
+                dong.Add(new Models.HoaDonLechDto
+                {
+                    MaHd = g?.MaHd ?? v.MaHd ?? "",
+                    KhHd = g?.KhHd ?? v.Khhd,
+                    SoHd = g?.SoHd ?? v.SoHd,
+                    Ngay = g?.Ngay,
+                    TenDoiTac = g?.TenDoiTac ?? v.TenDoiTac,
+                    MstDoiTac = g?.MstDoiTac ?? v.Mst,
+                    MatHang = g?.MatHang,
+                    DoanhThuChuaVat = g?.DoanhThuChuaVat ?? 0m,
+                    ThueSuat = g?.ThueSuat,
+                    ThueGtgt = g?.ThueGtgt ?? 0m,
+                    GhiChu = g?.GhiChu,
+                    Loai = v.Loai,
+                    MoTa = v.MoTa,
+                    CoTrongSo = g != null,
+                    TienHangFile = v.TienHangFile,
+                    TienVatFile = v.TienVatFile,
+                    TenFile = v.TenFile,
+                });
+            }
+
+            // Lệch tiền lên trước (soi được ngay), rồi tới thiếu sổ, cuối là thiếu file.
+            static int Uu(string loai) => loai switch
+            {
+                "lech-tien" => 0,
+                "thieu-trong-so" => 1,
+                _ => 2,
+            };
+            kq.Dong = dong.OrderBy(x => Uu(x.Loai))
+                          .ThenBy(x => x.Ngay ?? DateTime.MaxValue)
+                          .ThenBy(x => x.SoHd, StringComparer.Ordinal)
+                          .Select((x, i) => { x.Stt = i + 1; return x; })
+                          .ToList();
+            kq.SoLech = kq.Dong.Count;
+            return Ok(kq);
+        }
+
+        /// <summary>Khóa tra hóa đơn: ký hiệu bỏ mẫu số + số HĐ bỏ số 0 đệm.</summary>
+        private static string KhoaLech(string? khhd, string? soHd)
+            => $"{RaSoatService.ChuanKhhd(khhd)}|{ImportService.ChuanSoHd(soHd ?? "")}";
 
         /// <param name="maDonVi">
 

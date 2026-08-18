@@ -644,6 +644,13 @@ namespace KT2000.Api.Services
             return ds;
         }
 
+        public async Task<List<BangKeHoaDonDto>> BangKeMotChieu(
+            string code, int year, string huong, int? thang)
+        {
+            using var c = await OpenAsync(code, year);
+            return await DocBangKe(c, huong, thang);
+        }
+
         public async Task<BaoCaoThueDto> BaoCaoThue(string code, int year, int? thang)
         {
             var vVao = Task.Run(async () =>

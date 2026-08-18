@@ -152,7 +152,7 @@ namespace KT2000.Api.Services
             => $"{huong}|{ChuanKhhd(khhd)}|{ImportService.ChuanSoHd(soHd ?? "")}";
 
         /// <summary>Ký hiệu HĐ bỏ mẫu số đứng đầu: '1C26TNT' → 'C26TNT'.</summary>
-        private static string ChuanKhhd(string? khhd)
+        internal static string ChuanKhhd(string? khhd)
         {
             var s = (khhd ?? "").Trim().ToUpperInvariant();
             var i = 0;
@@ -373,7 +373,31 @@ namespace KT2000.Api.Services
             ("tienhang", new[] { "tổng tiền chưa thuế", "tong tien chua thue" }),
             ("tienvat",  new[] { "tổng tiền thuế", "tong tien thue" }),
             ("tienck",   new[] { "tổng tiền chiết khấu", "tong tien chiet khau" }),
+            // Cột dự phòng, chỉ dùng khi cột tiền hàng bị bỏ trống — xem TienHangDong.
+            ("tientt",   new[] { "tổng tiền thanh toán", "tong tien thanh toan" }),
         };
+
+        /// <summary>
+        /// Tiền chưa thuế của MỘT dòng bảng kê, có vá trường hợp cổng bỏ trống cột đó.
+        /// </summary>
+        /// <remarks>
+        /// Ca thật DAT_VIET_THANH T7/2026, file HD_VAO_..._MTT.xlsx dòng 7 — hóa đơn
+        /// C26MYY/0002158 của HỘ KINH DOANH NAM HƯƠNG:
+        ///     Tổng tiền chưa thuế = (TRỐNG)
+        ///     Tổng tiền thuế      = (TRỐNG)
+        ///     Tổng tiền thanh toán = 512.000
+        /// Sổ ghi đúng 512.000 (2 dòng chi tiết, VAT 0), nên màn rà soát báo lệch
+        /// -512.000 — lệch GIẢ, do bảng kê thiếu cột chứ sổ không sai.
+        ///
+        /// Vá HẸP có chủ ý: chỉ suy khi CẢ HAI cột tiền hàng và tiền thuế đều trống.
+        /// Lúc đó tổng thanh toán chính là tiền chưa thuế (không có thuế để trừ ra).
+        /// Nếu chỉ tiền hàng trống mà vẫn có tiền thuế thì KHÔNG suy — trừ ngược ra
+        /// tiền hàng dễ sai, và đó mới là lệch thật cần cho kế toán thấy.
+        /// </remarks>
+        private static decimal TienHangDong(decimal tienHang, decimal tienVat,
+                                            decimal tienTt, bool coCotTt)
+            => tienHang == 0 && tienVat == 0 && coCotTt && tienTt != 0
+             ? tienTt : tienHang;
 
         /// <summary>
         /// Đọc bảng kê Excel của cổng TCT thành danh sách hóa đơn để đối chiếu.
@@ -446,7 +470,8 @@ namespace KT2000.Api.Services
                     Khhd = S(dong, "khhd"),
                     SoHd = soHd,
                     Ngay = ChuanNgay(S(dong, "ngay")),
-                    TienHang = D(dong, "tienhang"),
+                    TienHang = TienHangDong(D(dong, "tienhang"), D(dong, "tienvat"),
+                                            D(dong, "tientt"), viTri.ContainsKey("tientt")),
                     TienVat = D(dong, "tienvat"),
                 });
             }
@@ -1015,7 +1040,16 @@ namespace KT2000.Api.Services
             {
                 n.DoanhThu = Math.Round(n.TienHangGop - n.ChietKhau, 0, MidpointRounding.AwayFromZero);
                 n.ChietKhau = Math.Round(n.ChietKhau, 0, MidpointRounding.AwayFromZero);
-                n.Thue = Math.Round(n.DoanhThu * n.ThueSuat / 100m, 0, MidpointRounding.AwayFromZero);
+                // Thuế suất ÂM là MÃ LOẠI HÀNG, không phải phần trăm:
+                //   -1 = KKKNT (không kê khai nộp thuế)   -2 = KCT (không chịu thuế)
+                // Nhân thẳng thì sinh ra thuế ÂM không có thật — đo 18/08 trên
+                // DAT_VIET_THANH T7: nhóm KCT bán ra ra -31.820.000 (đúng -2% của
+                // 1.591.000.000), mua vào KCT+KKKNT ra -49.483.345. Hai con số này
+                // chính là "chênh vượt ngưỡng làm tròn" của cảnh báo BR-TK-03, tức
+                // cảnh báo báo động vì lỗi của chính công thức này chứ sổ không sai.
+                n.Thue = n.ThueSuat <= 0 ? 0m
+                       : Math.Round(n.DoanhThu * n.ThueSuat / 100m, 0,
+                                    MidpointRounding.AwayFromZero);
             }
 
             var thueHeader = dsHd.Sum(h => h.TienVat);
@@ -1039,13 +1073,62 @@ namespace KT2000.Api.Services
                         Muc = "CHAN",
                         MoTa = $"Thuế {(huong == "RA" ? "bán ra" : "mua vào")} cộng theo nhóm "
                              + $"({thueNhom:N0}) lệch với tổng tien_vat của hóa đơn "
-                             + $"({thueHeader:N0}) — chênh {lech:N0} đ, vượt ngưỡng làm tròn",
+                             + $"({thueHeader:N0}) — chênh {lech:N0} đ, vượt ngưỡng làm tròn"
+                             + ThuPhamLech(dsHd, dong),
                         ChenhLech = lech,
                     });
                 }
             }
 
             return gom.Values.OrderBy(n => n.ThueSuat).ToList();
+        }
+
+        /// <summary>
+        /// Chỉ đích danh vài hóa đơn lệch nhiều nhất để kế toán mở ra soi, thay vì chỉ
+        /// đưa một con số tổng rồi phải tự dò trong vài trăm hóa đơn.
+        ///
+        /// So TỪNG hóa đơn: tien_vat ở header với thuế cộng lại từ các dòng của chính nó
+        /// (mỗi nhóm thuế suất tính riêng rồi cộng — giống cách PhanBo làm cho cả kỳ).
+        /// Bỏ qua chênh ≤ 5đ vì đó là làm tròn bình thường.
+        /// </summary>
+        private static string ThuPhamLech(List<HoaDonKy> dsHd, List<DongTheoSuat> dong)
+        {
+            var theoHd = dong
+                .GroupBy(d => d.MaHd, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Sum(x => x.PtVat <= 0 ? 0m
+                                  : Math.Round(x.TienHang * x.PtVat / 100m, 0,
+                                               MidpointRounding.AwayFromZero)),
+                    StringComparer.OrdinalIgnoreCase);
+
+            var thuPham = dsHd
+                .Select(h => new
+                {
+                    h.MaHd,
+                    Lech = h.TienVat - theoHd.GetValueOrDefault(h.MaHd),
+                })
+                .Where(x => Math.Abs(x.Lech) > 5m)
+                .OrderByDescending(x => Math.Abs(x.Lech))
+                .Take(5)
+                .ToList();
+
+            if (thuPham.Count == 0) return "";
+
+            // ma_hd dạng "VAO_0100107564_K26THT_2380537" — cắt lấy hai mảnh cuối
+            // (ký hiệu + số hóa đơn) cho kế toán tra, bỏ tiền tố hướng và MST.
+            static string NhanHd(string maHd)
+            {
+                var m = maHd.Split('_');
+                return m.Length >= 2 ? $"{m[^2]}/{m[^1]}" : maHd;
+            }
+
+            var ke = string.Join("; ", thuPham.Select(
+                x => $"{NhanHd(x.MaHd)} lệch {x.Lech:N0}đ"));
+            var them = dsHd.Count(h => Math.Abs(h.TienVat - theoHd.GetValueOrDefault(h.MaHd)) > 5m)
+                     - thuPham.Count;
+            return $". Hóa đơn lệch nhiều nhất: {ke}"
+                 + (them > 0 ? $" (và {them} hóa đơn khác)" : "");
         }
 
         // ---------- Chỉ tiêu tờ khai chính (§3 spec) ----------
@@ -1554,6 +1637,7 @@ namespace KT2000.Api.Services
                     ma_cct = @maCct, ten_cct = @tenCct, ngay_lap = @ngayLap,
                     mst_nnt = @mst, ten_nnt = @tenNnt, dia_chi_nnt = @diaChi,
                     ct21_nnt=@ct21, ct22_nnt=@ct22, ct23_nnt=@ct23, ct24_nnt=@ct24,
+                    ct23a_nnt=@ct23a, ct24a_nnt=@ct24a,
                     ct25_nnt=@ct25, ct26_nnt=@ct26, ct27_nnt=@ct27, ct28_nnt=@ct28,
                     ct29_nnt=@ct29, ct30_nnt=@ct30, ct31_nnt=@ct31, ct32_nnt=@ct32,
                     ct33_nnt=@ct33, ct32a_nnt=@ct32a, ct34_nnt=@ct34, ct35_nnt=@ct35,
@@ -1565,7 +1649,8 @@ namespace KT2000.Api.Services
                     (ma_donvi, ky_kekhai, lan_nop, nam, thang,
                      ma_tk, ten_tk, xml_ver, loai_tk, ma_cct, ten_cct, ngay_lap,
                      mst_nnt, ten_nnt, dia_chi_nnt,
-                     ct21_nnt, ct22_nnt, ct23_nnt, ct24_nnt, ct25_nnt, ct26_nnt,
+                     ct21_nnt, ct22_nnt, ct23_nnt, ct24_nnt,
+                     ct23a_nnt, ct24a_nnt, ct25_nnt, ct26_nnt,
                      ct27_nnt, ct28_nnt, ct29_nnt, ct30_nnt, ct31_nnt, ct32_nnt,
                      ct33_nnt, ct32a_nnt, ct34_nnt, ct35_nnt, ct36_nnt, ct37_nnt,
                      ct38_nnt, ct39_nnt, ct40a_nnt, ct40b_nnt, ct40_nnt, ct41_nnt,
@@ -1574,7 +1659,8 @@ namespace KT2000.Api.Services
                     (@ma, @ky, @lan, @nam, @thang,
                      @maTk, @tenTk, @xmlVer, @loaiTk, @maCct, @tenCct, @ngayLap,
                      @mst, @tenNnt, @diaChi,
-                     @ct21, @ct22, @ct23, @ct24, @ct25, @ct26,
+                     @ct21, @ct22, @ct23, @ct24,
+                     @ct23a, @ct24a, @ct25, @ct26,
                      @ct27, @ct28, @ct29, @ct30, @ct31, @ct32,
                      @ct33, @ct32a, @ct34, @ct35, @ct36, @ct37,
                      @ct38, @ct39, @ct40a, @ct40b, @ct40, @ct41,
@@ -2124,7 +2210,8 @@ namespace KT2000.Api.Services
                        ct27_nnt, ct28_nnt, ct29_nnt, ct30_nnt, ct31_nnt, ct32_nnt,
                        ct33_nnt, ct32a_nnt, ct34_nnt, ct35_nnt, ct36_nnt, ct37_nnt,
                        ct38_nnt, ct39_nnt, ct40a_nnt, ct40b_nnt, ct40_nnt, ct41_nnt,
-                       ct42_nnt, ct43_nnt
+                       ct42_nnt, ct43_nnt,
+                       ct23a_nnt, ct24a_nnt
                   FROM TOKHAI
                  WHERE ma_donvi = @ma AND nam = @nam AND thang = @thang
                    AND lan_nop = @lan AND not_use = 0";
@@ -2179,6 +2266,8 @@ namespace KT2000.Api.Services
                 Ct41 = D(33),
                 Ct42 = D(34),
                 Ct43 = D(35),
+                Ct23a = D(36),
+                Ct24a = D(37),
             };
         }
 
