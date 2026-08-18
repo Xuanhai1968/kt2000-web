@@ -49,7 +49,13 @@ export default function DonViKhachHang() {
 
   const reload = () => {
     setLoading(true);
-    getAdminTenants().then((r) => setTenants(r.data)).finally(() => setLoading(false));
+    // Sắp A→Z theo MÃ ngay khi nhận: server trả theo thứ tự thêm vào nên danh sách
+    // xáo trộn, và mỗi lần thêm đơn vị mới là chỗ cũ xê dịch. Lưới này không phân
+    // trang, người dùng dò bằng mắt nên phải có thứ tự cố định mới quen chỗ được.
+    getAdminTenants()
+      .then((r) => setTenants([...r.data]
+        .sort((a, b) => a.code.localeCompare(b.code, "vi"))))
+      .finally(() => setLoading(false));
   };
   // setTimeout 0: reload() bật cờ loading NGAY khi gọi, mà setState đồng bộ trong thân
   // effect bị React coi là render dây chuyền.
@@ -121,13 +127,19 @@ export default function DonViKhachHang() {
                Thêm đơn vị
              </Button>}
     >
-      {/* Cuộn ~10 dòng thay vì lật trang — quy ước UI toàn cục, xem CLAUDE.md */}
+      {/* Cuộn thay vì lật trang — quy ước UI toàn cục, xem CLAUDE.md.
+          Chiều cao CỐ ĐỊNH theo màn hình: lưới đứng yên, không co theo số dòng, nên
+          mọi thứ bên dưới không nhảy chỗ mỗi lần lọc. 290px cũ chỉ vừa ~9 dòng và để
+          trống cả nửa dưới trang. */}
       <Table
         className="luoi-gon"
         rowKey="id" size="small" loading={loading} dataSource={tenants}
         pagination={false}
-        scroll={{ y: 290 }}
+        scroll={{ y: "calc(100vh - 300px)" }}
         columns={[
+          // STT theo thứ tự ĐANG HIỆN (đã sắp A→Z), không phải id
+          { title: "STT", width: 46, align: "center",
+            render: (_: unknown, __: AdminTenant, i: number) => i + 1 },
           // BR-GD-01: màu trả lời một câu duy nhất — "đơn vị này thuộc thế giới nào".
           // Mã màu lấy từ theme/donViColors, cấm gõ hex tại chỗ.
           { title: "Mã", dataIndex: "code", width: 130,

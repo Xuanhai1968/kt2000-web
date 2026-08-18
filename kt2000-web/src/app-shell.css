@@ -81,3 +81,57 @@
     padding: 6px 4px;
   }
 }
+
+.vo__ben {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.vo__ben > .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.vo__ben-menu {
+  flex: 1;
+  min-height: 0;      /* bắt buộc: không có nó thì flex item không co, mất chỗ đáy */
+  overflow: auto;
+}
+
+.vo__chan-menu {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-top: 1px solid #f0f0f0;
+  background: #fff;
+}
+
+.vo__chan-ten {
+  font-size: 15px;
+  font-weight: 700;
+  color: #cf1322;               /* cùng thang đỏ với nhãn đầu VÀO, xem mau-huong.css */
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Nút Đăng xuất: đỏ đặc để nhìn ra ngay ở đáy cột — nó là thao tác rời hệ thống,
+   không phải một mục menu bình thường. */
+.vo__chan-menu .ant-btn {
+  height: 34px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: #cf1322;
+  border-color: #cf1322;
+}
+
+.vo__chan-menu .ant-btn:hover,
+.vo__chan-menu .ant-btn:focus {
+  color: #fff !important;
+  background: #a8071a !important;
+  border-color: #a8071a !important;
+}

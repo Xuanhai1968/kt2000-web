@@ -61,9 +61,9 @@ const menuMdnNb = [
     type: "group" as const, label: "LẤY DỮ LIỆU",
     children: [
       { key: "/app/hoa-don-vao",
-        label: nhanHd("Lấy HĐ GTGT đầu Vào", MAU_HD_VAO) },
+        label: nhanHd("HĐ GTGT đầu Vào", MAU_HD_VAO) },
       { key: "/app/hoa-don-ra",
-        label: nhanHd("Lấy HĐ GTGT đầu Ra", MAU_HD_RA) },
+        label: nhanHd("HĐ GTGT đầu Ra", MAU_HD_RA) },
     ],
   },
   {
@@ -73,6 +73,13 @@ const menuMdnNb = [
     ],
   },
 ];
+
+const NHOM_QUAN_TRI = [
+  { key: "/app/don-vi", label: "Đơn vị khách hàng" },
+  { key: "/app/mo-nam", label: "Mở năm làm việc" },
+  { key: "/app/nhat-ky", label: "Nhật ký hệ thống" },
+  { key: "/app/quan-ly-user", label: "Quản lý người dùng" },
+].sort((a, b) => a.label.localeCompare(b.label, "vi"));
 
 // Đơn vị NB KHÔNG dùng gói hàng. Gói (BR-NB-08) là chứng từ gom nhiều đơn lên một
 // chuyến xe — đơn vị nào giao lẻ từng đơn thì màn đó chỉ tổ rối.
@@ -140,18 +147,14 @@ export default function AppShell() {
           ...menuMdnNb,
           {
             type: "group" as const, label: "QUẢN TRỊ",
-            children: [
-              { key: "/app/don-vi", label: "Đơn vị khách hàng" },
-              { key: "/app/mo-nam", label: "Mở năm làm việc" },
-              { key: "/app/quan-ly-user", label: "Quản lý người dùng" },
-              { key: "/app/nhat-ky", label: "Nhật ký hệ thống" },
-            ],
+            children: NHOM_QUAN_TRI,
           },
         ]
       : menuThue;
 
   const menu = (
     <Menu
+      className="vo__menu"
       mode="inline"
       items={cacMuc}
       selectedKeys={[loc.pathname]}
@@ -205,17 +208,30 @@ export default function AppShell() {
             </span>
           )}
         </Space>
-        <Space>
-          <span className="vo__ten-nguoi">{session.user.realName}</span>
-          <Button size="small" onClick={() => { signOut(); nav("/"); }}>
-            Đăng xuất
-          </Button>
-        </Space>
+        {!manRong && (
+          <Space>
+            <span className="vo__ten-nguoi">{session.user.realName}</span>
+            <Button size="small" onClick={() => { signOut(); nav("/"); }}>
+              Đăng xuất
+            </Button>
+          </Space>
+        )}
       </Layout.Header>
       <Layout style={{ minHeight: 0 }}>
         {manRong ? (
-          <Layout.Sider width={260} theme="light" style={{ overflow: "auto" }}>
-            {menu}
+          // Cột dọc: MENU cuộn ở trên, khối tài khoản GHIM ở đáy. Bỏ overflow:auto của
+          // Sider và đẩy xuống riêng phần menu — để nguyên trên Sider thì khối đáy cuộn
+          // theo menu, không còn "ghim" nữa.
+          <Layout.Sider width={220} theme="light" className="vo__ben">
+            <div className="vo__ben-menu">{menu}</div>
+            <div className="vo__chan-menu">
+              <div className="vo__chan-ten" title={session.user.realName}>
+                {session.user.realName}
+              </div>
+              <Button block onClick={() => { signOut(); nav("/"); }}>
+                Đăng xuất
+              </Button>
+            </div>
           </Layout.Sider>
         ) : (
           <Drawer
