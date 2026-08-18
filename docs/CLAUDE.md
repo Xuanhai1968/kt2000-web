@@ -51,7 +51,9 @@ Spec nghiệp vụ: `docs/` (thuế) và `docs/nb/` (nội bộ). Quyết địn
     (sẵn sàng ghi DB). Không dùng tên chung chung `data`, `list`, `temp`.
     - Lý do: reviewer nhìn tên biến biết ngay dữ liệu đã qua khâu nào, chưa qua khâu nào.
     - Dấu hiệu trả PR: biến giữa pipeline tên không phân biệt được trạm.
-    
+
+14. **NGUYÊN TẮC VIÊN GẠCH.** Mỗi chức năng nghiệp vụ phải viết thành MỘT viên gạch duy nhất (một service/step độc lập): nhận tham số tường minh (tenant nào, phạm vi nào), tự chạy trọn vẹn, không biết và không cần biết ai gọi mình. Nút bấm trên UI, vòng lặp nhiều đơn vị, và bước trong dây chuyền tự động/scheduler PHẢI gọi chung viên gạch đó — chỉ khác cách kích hoạt. CẤM tồn tại bản code thứ hai làm cùng một việc cho một cách chạy khác (logic nghiệp vụ nằm trong controller/handler của nút bấm là vi phạm). Khi viết, dev phải hình dung viên gạch sẽ được xếp vào ít nhất 2 chỗ; code chỉ chạy được 1 chỗ là sai thiết kế — PR không được duyệt.
+
 ## Nếp làm việc
 
 - **Spec trước code**: không code tính năng chưa có spec trong `docs/`. Yêu cầu đổi giữa chừng → PR sửa spec trước, code sau.

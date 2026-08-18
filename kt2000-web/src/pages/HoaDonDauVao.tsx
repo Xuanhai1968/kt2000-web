@@ -44,6 +44,11 @@ interface Props { huongMacDinh: "vao" | "ra" }
 //   chênh 8.390.648 = 2 × 4.195.324 (đúng số TTCKTMai).
 const laDongChietKhau = (m: MatHang) => m.tinhChat === "3";
 
+// Sai số cho phép giữa Σ dòng hàng và tiền hàng của hóa đơn. Phải bằng đúng
+// SAI_SO_CHO_PHEP bên ImportService — lệch nhau thì hóa đơn backend đã nhận vẫn hiện đỏ
+// ở đây, đọc như còn lỗi.
+const NGUONG_LECH = 10;
+
 // getMonth() đếm từ 0. Tính một lần lúc nạp module là đủ — giá trị này chỉ dùng làm
 // mặc định lúc dựng state, mở màn qua nửa đêm sang tháng mới cũng không sao.
 const THANG_HIEN_TAI = new Date().getMonth() + 1;
@@ -68,10 +73,30 @@ const toanChietKhau = (mh: MatHang[]) => mh.length > 0 && mh.every(laDongChietKh
 // NGOẠI LỆ giữ nguyên: hóa đơn CHIẾT KHẤU THƯƠNG MẠI đứng riêng (mọi dòng đều TC=3) thì
 // người bán khai tiền hàng là số DƯƠNG nên Σ cũng phải dương mới khớp — cộng đều ở đây
 // sẽ ra âm và báo lệch gấp đôi. Khớp đúng ngoại lệ toanChietKhau bên ImportJob.
+// Tiền hàng của MỘT dòng, tính y hệt ImportService.TongTienHangTuLine:
+//   SL × ĐG, LÀM TRÒN VỀ ĐỒNG ở từng dòng, rồi trừ chiết khấu của dòng.
+//
+// Phải là SL × ĐG chứ KHÔNG phải Thành tiền. Người bán làm tròn khi in hóa đơn nên hai
+// số này lệch nhau vài đồng, mà phép kiểm lúc nạp dùng SL × ĐG — lấy Thành tiền thì cột
+// Lệch Σ line hiện 0 trong khi hóa đơn vẫn bị đá ra vì lệch.
+//   Ca thật DAT_VIET_THANH T7, K26THT/2578264: 22,988 × 21.750 = 499.989 nhưng XML ghi
+//   Thành tiền 500.000. Lưới trên hiện Lệch = 0, ngay cạnh dòng chữ đỏ "chênh 11".
+//
+// Lùi về Thành tiền khi thiếu SL/ĐG — đúng khuôn ImportService.SoLuongDonGia. Nhờ vậy
+// dòng TC=3 (tiền đã chuyển sang cột Chiết khấu, Thành tiền = 0) vẫn ra đúng số âm.
+const tienHangDong = (m: MatHang) => {
+  let sl = m.soLuong, dg = m.donGia;
+  if (m.thanhTien !== 0) {
+    if (sl === 0 && dg === 0) { sl = 1; dg = m.thanhTien; }
+    else if (dg === 0 && sl !== 0) { dg = m.thanhTien / sl; }
+  }
+  return Math.round(sl * dg) - (m.chietKhau || 0);
+};
+
 const sumLine = (hd: HoaDonConLai) =>
   toanChietKhau(hd.matHangs)
     ? hd.matHangs.reduce((s, m) => s + (m.chietKhau || 0), 0)
-    : hd.matHangs.reduce((s, m) => s + m.thanhTien - (m.chietKhau || 0), 0);
+    : hd.matHangs.reduce((s, m) => s + tienHangDong(m), 0);
 
 // Dời số tiền của dòng TC=3 sang cột Chiết khấu ngay lúc nhận dữ liệu, KHÔNG làm ở tầng
 // hiển thị: lưới sửa thẳng vào mảng này, có hai cách đọc song song là chỗ nào cũng phải
@@ -441,6 +466,65 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
     } finally {
       setDangBatDau(false);
     }
+  };
+
+  // ===== Tính lại tiền hàng cho khớp Thành tiền =====
+  //
+  // Người bán làm tròn khi in hóa đơn nên SL × ĐG không đúng bằng Thành tiền, và hóa đơn
+  // bị đá ra vì lệch Σ dù bản thân nó chẳng sai gì.
+  //   Ca thật DAT_VIET_THANH T7 K26THT/2578264: 22,988 × 21.750 = 499.989 còn cổng khai
+  //   500.000 — chênh 11, quá ngưỡng 10đ.
+  //
+  // Chữa bằng cách tính NGƯỢC một trong hai số từ Thành tiền. Thử CẢ HAI rồi lấy cái sai
+  // số nhỏ hơn, vì không hướng nào luôn thắng — nó phụ thuộc số nào tròn hơn.
+  //
+  // LÀM TRÒN ĐÚNG ĐỘ CHÍNH XÁC CỦA CỘT: so_luong là decimal(18,3), don_gia là
+  // decimal(18,2). Đây mới là chỗ quyết định, không phải phép chia.
+  //   Nếu để 4 số lẻ như lưới đang hiện: 22,9885 × 21.750 = 499.999,87 — màn hình báo
+  //   khớp, nhưng SQL cắt còn 22,989 và số THẬT vào sổ là 500.010,75, lệch 10,75 → hóa
+  //   đơn lại bị đá ra, mà lần này không ai hiểu vì sao vì trên màn hình vẫn xanh.
+  //   Đo trên chính ba hóa đơn đang lệch: giữ đơn giá & sửa số lượng còn lệch
+  //   10,75 / 0,74 / 1,60; giữ số lượng & sửa đơn giá còn 0,03 / 0,15 / 0,20.
+  // Đúng bằng decimal(18,4) của cả hai cột sau bản vá 024. TRƯỚC bản vá chúng là (18,3)
+  // và (18,2), nên database nào chưa nạp lại lượt nào vẫn cắt bớt số lẻ — bản vá chỉ áp
+  // lúc NẠP. Nạp lại một lượt là hết.
+  const SO_LE_SL = 4, SO_LE_DG = 4;
+  const lamTron = (v: number, n: number) => Math.round(v * 10 ** n) / 10 ** n;
+
+  const tinhLaiTienHang = (hd: HoaDonConLai) => {
+    let daSua = 0, khongCuuDuoc = 0, boQua = 0;
+
+    for (const m of hd.matHangs) {
+      // Dòng chiết khấu không có cặp SL × ĐG để cân — tiền của nó nằm ở cột Chiết khấu.
+      if (laDongChietKhau(m) || m.thanhTien === 0) { boQua++; continue; }
+
+      // Dòng đã khớp thì KHÔNG đụng vào. Sửa một con số đang đúng chỉ để nó "đúng hơn"
+      // là tự tay làm sai lệch chứng từ.
+      if (Math.abs(m.soLuong * m.donGia - m.thanhTien) < NGUONG_LECH) { boQua++; continue; }
+
+      const slMoi = m.donGia  !== 0 ? lamTron(m.thanhTien / m.donGia,  SO_LE_SL) : null;
+      const dgMoi = m.soLuong !== 0 ? lamTron(m.thanhTien / m.soLuong, SO_LE_DG) : null;
+      const saiSl = slMoi === null ? Infinity : Math.abs(slMoi * m.donGia  - m.thanhTien);
+      const saiDg = dgMoi === null ? Infinity : Math.abs(m.soLuong * dgMoi - m.thanhTien);
+
+      // Không kéo nổi xuống dưới ngưỡng thì để NGUYÊN. Ghi đè bằng một con số vẫn sai mà
+      // lại mất số gốc là đánh đổi tồi — số gốc còn thì kế toán còn đối chiếu được.
+      if (Math.min(saiSl, saiDg) >= NGUONG_LECH) { khongCuuDuoc++; continue; }
+
+      // Hòa thì giữ đơn giá và sửa số lượng: đơn giá là giá niêm yết của người bán,
+      // sửa số lượng dễ giải thích hơn khi thanh tra hỏi.
+      if (saiSl <= saiDg) suaMatHang(hd.tenFile, m.stt, { soLuong: slMoi! });
+      else                suaMatHang(hd.tenFile, m.stt, { donGia:  dgMoi! });
+      daSua++;
+    }
+
+    if (daSua === 0 && khongCuuDuoc === 0)
+      message.info(`Không có dòng nào cần tính lại (${boQua} dòng đã khớp hoặc là dòng chiết khấu)`);
+    else if (khongCuuDuoc === 0)
+      message.success(`Đã tính lại ${daSua} dòng — kiểm cột Lệch Σ line rồi mới Ghi vào Hóa đơn`);
+    else
+      message.warning(`Đã tính lại ${daSua} dòng, còn ${khongCuuDuoc} dòng không kéo được `
+                    + `xuống dưới ${NGUONG_LECH}đ nên giữ nguyên số gốc`);
   };
 
   const [dangNap, setDangNap] = useState<string | null>(null);
@@ -913,7 +997,7 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                   const lech = hdDangChon.tienHang - sum;
                   // Ngưỡng 10đ khớp SAI_SO_CHO_PHEP bên ImportService — không thì hóa
                   // đơn backend đã nhận vẫn hiện đỏ ở đây, đọc như còn lỗi.
-                  return Math.abs(lech) < 10
+                  return Math.abs(lech) < NGUONG_LECH
                     ? <Tag color="green">Σ line khớp tiền hàng</Tag>
                     : <Tag color="red">
                         Σ line {sum.toLocaleString("vi-VN")} — lệch {lech.toLocaleString("vi-VN")}
@@ -925,6 +1009,12 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
                   </Tag>
                 )}
                 <Button size="small" onClick={() => xemHtml(hdDangChon)}>Xem ảnh HĐ (HTML)</Button>
+                <Button size="small" className="nut-cam"
+                        onClick={() => tinhLaiTienHang(hdDangChon)}
+                        title={"Người bán làm tròn nên SL × ĐG không đúng bằng Thành tiền. "
+                             + "Nút này tính ngược lại một trong hai số cho khớp."}>
+                  Tính lại tiền hàng
+                </Button>
                 <Popconfirm
                   title="Nạp hóa đơn này vào database?"
                   description={`Mã sẽ ghi: ${hdDangChon.huong}_${hdDangChon.mstBan}`
