@@ -657,7 +657,13 @@ namespace KT2000.Api.Services
                         p.AddWithValue("@sl", m.SoLuong);
                         p.AddWithValue("@dg", m.DonGia);
                         string thueSuat = (m.ThueSuat ?? "").Trim();
-                        p.AddWithValue("@pt_vat", DocThueSuat(thueSuat));
+                        decimal ptVatTay = DocThueSuat(thueSuat);
+                        // Cùng luật với ReplaceLines: cổng ghi thuế suất bằng chữ lạ
+                        // ('CTTC') thì suy từ tổng tiền của hóa đơn. Hai đường nạp phải
+                        // cho ra cùng một con số, không thì nạp lại tay lại đổi kết quả.
+                        if (ptVatTay == 0 && ThueSuatLaChuLa(thueSuat.ToUpperInvariant()))
+                            ptVatTay = SuyThueSuatTuTong(req.TienHang, req.TienVat);
+                        p.AddWithValue("@pt_vat", ptVatTay);
                         if (coLoaiThue)
                         {
                             // Giữ nguyên chuỗi gốc — xem giải thích ở ReplaceLines
@@ -787,6 +793,48 @@ namespace KT2000.Api.Services
 
         internal const decimal PT_VAT_KHONG_KE_KHAI   = -1m;
         internal const decimal PT_VAT_KHONG_CHIU_THUE = -2m;
+
+        // Các mức thuế suất GTGT có thật trong luật. Dùng để chặn suy diễn bừa — xem
+        // SuyThueSuatTuTong.
+        private static readonly int[] MUC_THUE_HOP_LE = { 0, 5, 8, 10 };
+
+        // Dung sai khi đối chiếu tỷ lệ suy ra với mức hợp lệ, tính bằng ĐIỂM phần trăm.
+        // 0,05 đủ rộng để nuốt sai lệch làm tròn tới từng đồng, mà vẫn đủ chặt để loại
+        // hóa đơn trộn nhiều thuế suất — xem con số đo thật ở SuyThueSuatTuTong.
+        private const decimal DUNG_SAI_THUE = 0.05m;
+
+        /// <summary>
+        /// Cổng ghi thuế suất bằng CHỮ mà không phải hai mã đã biết (KCT / KKKNT).
+        /// Đo 18/08 trên toàn bộ dữ liệu: 'CTTC' (cho thuê tài chính, 2 dòng) và 'KHAC'
+        /// (6 dòng). Không có chữ số nào nên DocPhanTram đọc ra 0.
+        /// </summary>
+        private static bool ThueSuatLaChuLa(string s)
+            => s.Length > 0 && !s.Any(char.IsDigit) && s != "KCT" && s != "KKKNT";
+
+        /// <summary>
+        /// Suy thuế suất của DÒNG từ tổng tiền của HÓA ĐƠN, chỉ nhận khi kết quả rơi
+        /// đúng một mức hợp lệ.
+        /// </summary>
+        /// <remarks>
+        /// Vì sao phải chặn theo mức thay vì "làm tròn về mức gần nhất": hóa đơn trộn
+        /// nhiều thuế suất cho ra tỷ lệ bình quân KHÔNG tồn tại trong luật, mà mức gần
+        /// nhất của nó vẫn là một con số trông rất hợp lý.
+        ///   Đo 18/08, hai ca thật nằm hai phía:
+        ///     CTTC  VAO_…_K26TBA_29340: 2.012.905 / 20.129.053 = 10,0000% → nhận, 10
+        ///     CTTC  VAO_…_K26TBA_29342: 1.120.000 / 14.000.000 =  8,0000% → nhận, 8
+        ///     KHAC  VAO_…_C26THD_8262:    414.979 /  7.884.600 =  5,2632% → TỪ CHỐI
+        ///   Hóa đơn 8262 có SÁU dòng phí lẫn lộn; ép nó về 5% là bịa ra một thuế suất
+        ///   chưa ai khai, và số thuế khấu trừ sẽ sai theo.
+        /// Từ chối thì trả 0 — đúng bằng hành vi cũ, nên không mất gì so với trước.
+        /// </remarks>
+        internal static decimal SuyThueSuatTuTong(decimal tienHang, decimal tienThue)
+        {
+            if (tienHang <= 0) return 0m;
+            decimal tyLe = tienThue * 100m / tienHang;
+            foreach (int muc in MUC_THUE_HOP_LE)
+                if (Math.Abs(tyLe - muc) <= DUNG_SAI_THUE) return muc;
+            return 0m;
+        }
 
         internal static decimal DocThueSuat(string tho)
         {
@@ -1433,6 +1481,23 @@ namespace KT2000.Api.Services
                 if (ptVat == 0 && khongCoXml && masterTienVat != 0 && masterTienHang > 0)
                     ptVat = Math.Round(masterTienVat * 100m / masterTienHang, 0,
                                        MidpointRounding.AwayFromZero);
+
+                // Hóa đơn CÓ XML nhưng cổng ghi thuế suất bằng CHỮ lạ ('CTTC' — cho thuê
+                // tài chính). Không có chữ số nên DocPhanTram ra 0, và hóa đơn vốn CÓ thuế
+                // GTGT được khấu trừ lại nằm chung nhóm 0% ở tờ khai.
+                //   Ca thật DAT_VIET_THANH T7: hai hóa đơn K26TBA/29340 và /29342 của
+                //   CHAILEASE, thuế thật 10% và 8%, đang cùng ra 0.
+                //
+                // KHÁC nhánh trên ở chỗ có kiểm mức hợp lệ: nhánh trên xử lý hóa đơn không
+                // XML — mỗi hóa đơn đúng một dòng nên tỷ lệ luôn là thuế suất thật. Còn ở
+                // đây hóa đơn có thể nhiều dòng nhiều thuế suất, tỷ lệ bình quân là số
+                // không có thật, nên phải từ chối thay vì đắp bừa lên dòng.
+                //
+                // loai_thue vẫn giữ nguyên chuỗi 'CTTC' (ghi ở khối trên) — pt_vat để
+                // TÍNH, loai_thue để PHÂN LOẠI, đúng như KCT với 0%.
+                if (ptVat == 0 && !khongCoXml
+                    && ThueSuatLaChuLa(thueSuatTho.ToUpperInvariant()))
+                    ptVat = SuyThueSuatTuTong(masterTienHang, masterTienVat);
 
                 p.AddWithValue("@pt_vat", ptVat);
                 decimal tienCk = N(r, L, "CK_LINE_G");
