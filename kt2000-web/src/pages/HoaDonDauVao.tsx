@@ -485,7 +485,10 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
   //   đơn lại bị đá ra, mà lần này không ai hiểu vì sao vì trên màn hình vẫn xanh.
   //   Đo trên chính ba hóa đơn đang lệch: giữ đơn giá & sửa số lượng còn lệch
   //   10,75 / 0,74 / 1,60; giữ số lượng & sửa đơn giá còn 0,03 / 0,15 / 0,20.
-  const SO_LE_SL = 3, SO_LE_DG = 2;   // đúng bằng decimal(18,3) và decimal(18,2)
+  // Đúng bằng decimal(18,4) của cả hai cột sau bản vá 024. TRƯỚC bản vá chúng là (18,3)
+  // và (18,2), nên database nào chưa nạp lại lượt nào vẫn cắt bớt số lẻ — bản vá chỉ áp
+  // lúc NẠP. Nạp lại một lượt là hết.
+  const SO_LE_SL = 4, SO_LE_DG = 4;
   const lamTron = (v: number, n: number) => Math.round(v * 10 ** n) / 10 ** n;
 
   const tinhLaiTienHang = (hd: HoaDonConLai) => {

@@ -143,7 +143,8 @@ namespace KT2000.Api.Services
                 // Bản gốc TCT của hướng này, gom lại để ghi MỘT lượt cuối vòng — mỗi kỳ kê
                 // khai chỉ mở một transaction thay vì mỗi hóa đơn một cái.
                 var dsGoc = new List<DoiChieuService.DongGoc>();
-                var maHdTrongSo = new HashSet<string>(StringComparer.Ordinal);
+                // khóa-theo-giá-trị -> mã THẬT trong sổ (xem KhoaGiaTriMaHd)
+                var maHdTrongSo = new Dictionary<string, string>(StringComparer.Ordinal);
 
                 // ---- Gom LINE theo MA_HD ----
                 var linesByHd = new Dictionary<string, List<IXLRow>>();
@@ -342,10 +343,26 @@ namespace KT2000.Api.Services
                 //   Ca thật NHAT_TUAN T7 (17/08): 4 hóa đơn, lệch tới 2.823.947đ.
                 using (var docSo = new SqlCommand("SELECT ma_hd FROM HOA_DON", conn))
                 using (var rSo = docSo.ExecuteReader())
-                    while (rSo.Read()) maHdTrongSo.Add(rSo.GetString(0));
+                    while (rSo.Read())
+                    {
+                        string m = rSo.GetString(0);
+                        maHdTrongSo[KhoaGiaTriMaHd(m)] = m;
+                    }
 
+                // Nối theo GIÁ TRỊ và ghi lại ĐÚNG mã đang nằm trong sổ.
+                //
+                // So chuỗi nguyên văn là trượt khi hai bên đệm số 0 khác nhau: sổ giữ
+                // '..._C26MTH_0057165' (nạp tay dựng lại mã đầy đủ) còn bản gốc dựng từ
+                // Excel ra '..._C26MTH_57165'. Trượt thì ma_hd để NULL, và màn so sánh
+                // tách một hóa đơn thành hai dòng — một dòng có sổ mà không gốc, một dòng
+                // có gốc mà không sổ, kèm lệch bằng trọn giá trị hóa đơn.
+                //   Ca thật DAT_VIET_THANH 1C26MTH/0057165: lệch hiện −650.000.
+                // Lấy mã của SỔ chứ không giữ mã tự dựng: cột này tồn tại để trỏ sang
+                // HOA_DON, trỏ bằng chuỗi không có trong đó thì vô nghĩa.
                 var kqGoc = _dc.Ghi(conn, huong, tenant.KhaiQuy,
-                    dsGoc.Select(d => maHdTrongSo.Contains(d.MaHd!) ? d : d with { MaHd = null })
+                    dsGoc.Select(d => maHdTrongSo.TryGetValue(KhoaGiaTriMaHd(d.MaHd!), out var mThat)
+                                    ? d with { MaHd = mThat }
+                                    : d with { MaHd = null })
                          .ToList(),
                     userName);
                 dongGocMoi += kqGoc.Them; dongGocSua += kqGoc.Sua;
@@ -1040,6 +1057,22 @@ namespace KT2000.Api.Services
             return p.Length >= 4 ? (p[^3], p[^2], p[^1]) : ("", "", "");
         }
 
+        /// <summary>
+        /// Khóa nhận dạng hóa đơn theo GIÁ TRỊ, để dò được giữa hai mã đệm số 0 khác nhau:
+        /// 'VAO_09…_C26MTH_57165' và 'VAO_09…_C26MTH_0057165' cùng ra một khóa.
+        /// </summary>
+        /// <remarks>
+        /// CHỈ dùng để SO. Cách lưu ma_hd giữ nguyên như cũ — đo 18/08 thấy 701 hóa đơn
+        /// trên 4 database đang mang mã dạng chưa đệm; đổi cách sinh mã là chúng hóa thành
+        /// hóa đơn lạ ở lần nạp sau, hoặc chết vì unique index UX_HOA_DON_BR01, hoặc đẻ
+        /// bản ghi trùng. Sửa phép so thì không đụng lấy một dòng dữ liệu (chốt Trường 18/08).
+        /// </remarks>
+        internal static string KhoaGiaTriMaHd(string maHd)
+        {
+            var (mst, khhd, so) = TachMaHd(maHd);
+            return $"{mst}|{khhd}|{SoHdTheoGiaTri(so)}".ToUpperInvariant();
+        }
+
         // Đệm phần ĐUÔI số hóa đơn của ma_hd. Cố tình KHÔNG dựng lại ma_hd từ các mảnh:
         // BR-HD-01 dùng MST NGƯỜI PHÁT HÀNH (luôn là người bán), còn biến mst ở UpsertMaster
         // là của ĐỐI TÁC — dựng lại là sai MST với hóa đơn RA. Sửa đúng cái đuôi thì phần
@@ -1114,10 +1147,16 @@ namespace KT2000.Api.Services
             // Mã hóa đơn ĐÃ CÓ trong sổ. Chỉ những mã này mới được gắn vào cột ma_hd —
             // hóa đơn nằm trong Excel mà chưa nạp vào sổ thì vẫn ghi dòng gốc (đó chính
             // là thứ đối chiếu cần thấy) nhưng để ma_hd trống, đúng quy ước NULL = chưa khớp.
-            var maHdTrongSo = new HashSet<string>(StringComparer.Ordinal);
+            // khóa-theo-giá-trị -> mã THẬT trong sổ. Cùng lý do như ở ImportJob: sổ và bản
+            // gốc có thể đệm số 0 khác nhau, so chuỗi nguyên văn là không bao giờ nối được.
+            var maHdTrongSo = new Dictionary<string, string>(StringComparer.Ordinal);
             using (var doc = new SqlCommand("SELECT ma_hd FROM HOA_DON", conn))
             using (var r = await doc.ExecuteReaderAsync())
-                while (await r.ReadAsync()) maHdTrongSo.Add(r.GetString(0));
+                while (await r.ReadAsync())
+                {
+                    string m = r.GetString(0);
+                    maHdTrongSo[KhoaGiaTriMaHd(m)] = m;
+                }
 
             int soFile = 0, them = 0, sua = 0;
             var loi = new List<string>();
@@ -1172,7 +1211,10 @@ namespace KT2000.Api.Services
                             var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
                             var d = DongGocTuExcel(r, M, h, maHd, ngay.Value,
                                                    TongTienHangTuLine(lines, L));
-                            dsGoc.Add(maHdTrongSo.Contains(maHd) ? d : d with { MaHd = null });
+                            // Nối theo giá trị, ghi lại đúng mã của sổ — xem ImportJob.
+                            dsGoc.Add(maHdTrongSo.TryGetValue(KhoaGiaTriMaHd(maHd), out var mThat)
+                                    ? d with { MaHd = mThat }
+                                    : d with { MaHd = null });
                         }
 
                         var kq = _dc.Ghi(conn, h, tenant.KhaiQuy, dsGoc, userName);
