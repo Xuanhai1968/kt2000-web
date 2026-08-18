@@ -287,7 +287,10 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
   const soFileCuaDonViChon = donViDangChon
     ? fileLoi[donViDangChon.id]?.soFileConLai ?? 0 : 0;
 
-  const dangHoatDong = useMemo(() => tenants.filter((t) => t.isActive), [tenants]);
+  const dangHoatDong = useMemo(
+    () => tenants.filter((t) => t.isActive)
+                 .sort((a, b) => a.code.localeCompare(b.code, "vi")),
+    [tenants]);
 
   // NT-05: mở được từ nút, và mở được bằng cách bấm thẳng vào con số ở cột V/R
   const moModalConLai = async (dv?: AdminTenant) => {
@@ -683,15 +686,24 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
         </div>
 
         <Table
-          className="luoi-gon"
+          className="luoi-gon luoi-don-vi"
           rowKey="id"
           size="small"
           loading={loading}
           dataSource={dangHoatDong}
           rowSelection={{ selectedRowKeys: selected, onChange: setSelected }}
           pagination={false}
-          scroll={{ y: 290 }}
+          // Chiều cao CỐ ĐỊNH theo màn hình — lưới đứng yên, KHÔNG co theo số dòng.
+          // Ít đơn vị hay nhiều đơn vị thì khung vẫn nguyên chỗ, nên mọi thứ bên dưới
+          // (dòng đếm, khối lịch sử) không nhảy lên nhảy xuống mỗi lần lọc.
+          // 290px cũ chỉ vừa ~9 dòng, để trống cả nửa dưới trang; lấy theo 100vh thì
+          // dùng hết chiều cao thật của màn hình.
+          scroll={{ y: "calc(100vh - 430px)" }}
           columns={[
+            // STT theo thứ tự ĐANG HIỆN (đã sắp A→Z), không phải id — để đếm và gọi
+            // nhau theo số dòng trên màn hình.
+            { title: "STT", width: 46, align: "center",
+              render: (_: unknown, __: AdminTenant, i: number) => i + 1 },
             // BR-GD-01: mã màu lấy từ theme/donViColors, không gõ hex tại chỗ
             { title: "Mã", dataIndex: "code", width: 150,
               render: (v: string, r: AdminTenant) =>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, Table, Button, InputNumber, Space, Tag, message, Alert } from "antd";
 import { getAdminTenants, openFiscalYears, loiApi } from "../api";
 import type { AdminTenant, OpenYearResult } from "../api";
@@ -21,6 +21,11 @@ export default function MoNamLamViec() {
     // QT-02: màn này là chỗ DUY NHẤT cần thấy MDN_NB — mở năm cho chính tenant quản lý
     // đi chung đường OpenYears, không đặc cách. Các màn khác vẫn giữ mặc định (ẩn).
     useEffect(() => { getAdminTenants(true).then((r) => setTenants(r.data)); }, []);
+
+    const dsHoatDong = useMemo(
+      () => tenants.filter((t) => t.isActive)
+                   .sort((a, b) => a.code.localeCompare(b.code, "vi")),
+      [tenants]);
     const run = async () => {
         setRunning(true);
         try {
@@ -57,14 +62,16 @@ export default function MoNamLamViec() {
           Mở năm {year} cho {selected.length} đơn vị
         </Button>
       </Space>
-      {/* Cuộn ~10 dòng thay vì lật trang — quy ước UI toàn cục, xem CLAUDE.md */}
       <Table
         className="luoi-gon"
-        rowKey="id" size="small" dataSource={tenants.filter((t) => t.isActive)}
+        rowKey="id" size="small"
+        dataSource={dsHoatDong}
         rowSelection={{ selectedRowKeys: selected, onChange: setSelected }}
         pagination={false}
-        scroll={{ y: 290 }}
+        scroll={{ y: "calc(100vh - 340px)" }}
         columns={[
+          { title: "STT", width: 46, align: "center",
+            render: (_: unknown, __: AdminTenant, i: number) => i + 1 },
           // BR-GD-01: màu áp lên chữ cột Mã + Tên, mã màu lấy từ theme/donViColors
           { title: "Mã", dataIndex: "code", width: 150,
             render: (v: string, r: AdminTenant) =>

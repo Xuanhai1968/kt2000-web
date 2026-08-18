@@ -28,13 +28,6 @@ const boDau = (s: string) =>
 const tienTron = (v: number | null | undefined) =>
   v == null ? "" : v.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
 
-// Làm tròn kiểu .NET MidpointRounding.AwayFromZero — KHÔNG dùng Math.round trần.
-//
-// Math.round làm tròn .5 về phía DƯƠNG vô cực: Math.round(-2.5) = -2, trong khi server
-// (Math.Round mặc định AwayFromZero ở các chỗ tính tiền) ra -3. Doanh thu ÂM là chuyện
-// có thật — hóa đơn điều chỉnh giảm, dòng chiết khấu đảo dấu — nên client và server
-// phải tròn cùng một kiểu, nếu không cùng một kỳ hiện hai con số khác nhau tùy chỗ
-// nhìn.
 const tronRaXa = (v: number) =>
   v < 0 ? -Math.round(-v) : Math.round(v);
 
@@ -185,15 +178,16 @@ const chuanKhhd = (kh: string | null) =>
 const khoaHd = (khhd: string | null, soHd: string | null) =>
   `${chuanKhhd(khhd)}|${chuanSoHd(soHd ?? "")}`;
 
-const SUAT_HOP_LE = new Set([-2, -1, 0, 5, 8, 10]);
+// Ba mã ÂM là ba loại hàng KHÔNG có thuế suất phần trăm — cổng dùng số âm để đánh
+// dấu, không phải "thuế suất âm":
+//   -1 = KKKNT  Không Kê Khai Nộp Thuế (TT219 Điều 5) — xăng dầu, hàng đã nộp thuế
+//               ở khâu đầu nguồn                            → tờ khai chỉ tiêu [32a]
+//   -2 = KCT    Không Chịu Thuế (Điều 5 Luật GTGT) — thiết bị y tế, bảo hiểm,
+//               dịch vụ tài chính                            → tờ khai chỉ tiêu [26]
+//   -3 = CTTC   Chiết khấu thương mại
+const SUAT_HOP_LE = new Set([-3, -2, -1, 0, 5, 8, 10]);
 const suatLa = (s: number) => !SUAT_HOP_LE.has(s);
-
-// Mức giả để xếp hóa đơn được tick mà phân rã theo dòng KHÔNG có (hóa đơn không có
-// dòng hàng). Chọn một giá trị không bao giờ là thuế suất thật, và nằm ngoài
-// SUAT_HOP_LE nên tự rơi vào dòng "thuế suất LẠ" của khối chỉ tiêu — tức là hiện ra
-// cho người dùng thấy, thay vì mất hút. Xem gomTheoChon.
 const SUAT_LA_KHONG_DONG = -99;
-
 interface Props {
   mo: boolean;
   onDong: () => void;
@@ -292,26 +286,6 @@ export default function ToKhaiXml(
       return { dt: n?.doanhThu ?? 0, vat: n?.thue ?? 0 };
     };
 
-    /**
-     * Gom lại các mức thuế suất từ phân rã (hóa đơn × mức) của server, chỉ lấy hóa
-     * đơn đang được chọn.
-     *
-     * Phải đi đường này chứ không lọc thẳng bc.nhomBanRa: bản đó đã cộng hết cả kỳ về
-     * từng mức, không tách ngược ra được hóa đơn nào đóng góp bao nhiêu. Còn cộng theo
-     * thueSuat ở header của bảng kê thì sai hẳn — header là %VAT BÌNH QUÂN, hóa đơn
-     * trộn 5%+8% cho ra 6%/7% không có trong luật (BR-TK-18).
-     *
-     * Làm tròn SAU khi cộng xong và tròn RA XA số 0, đúng hai điểm mà server làm với
-     * bản cả kỳ. Tròn từng hóa đơn rồi mới cộng thì lệch vài đồng so với lúc không lọc.
-     *
-     * dsSo là bảng kê của cùng chiều: dùng để BẮT hóa đơn được tick mà phân rã không
-     * có dòng nào. Phân rã đi từ HOA_DON_LINE (JOIN), còn bảng kê đi từ HOA_DON
-     * (OUTER APPLY) — nên hóa đơn KHÔNG CÓ DÒNG HÀNG vẫn hiện trong lưới và tick được,
-     * nhưng lại vắng mặt ở phân rã. Im lặng bỏ qua thì tổng theo thuế suất thiếu đúng
-     * phần đó trong khi tổng doanh thu (cộng từ lưới) vẫn có — hai ô cạnh nhau vênh
-     * nhau mà không ai giải thích được. Gom chúng vào một nhóm "thuế suất lạ" để con
-     * số hiện ra thay vì biến mất.
-     */
     const gomTheoChon = (chiTiet: NhomSuatHd[] | undefined,
                          dsSo: BangKeHoaDon[]): NhomSuat[] => {
       const theoSuat = new Map<number, { dt: number; hd: Set<string> }>();
@@ -329,9 +303,6 @@ export default function ToKhaiXml(
         them(x.thueSuat, x.maHd, x.doanhThu);
       }
 
-      // Hóa đơn đã tick nhưng phân rã không có → xếp vào mức LẠ để nhìn thấy được.
-      // Dùng SUAT_LA_KHONG_DONG (một mức không bao giờ có thật) chứ không nhét vào 0%:
-      // 0% là mức hợp lệ, trộn vào đó là giấu vấn đề đi.
       for (const m of dsSo) {
         if (!hdDaChon.has(m.maHd) || coPhanRa.has(m.maHd)) continue;
         them(SUAT_LA_KHONG_DONG, m.maHd, m.doanhThuChuaVat);
@@ -344,8 +315,7 @@ export default function ToKhaiXml(
             thueSuat,
             soHd: n.hd.size,
             doanhThu,
-            // Mức âm (không chịu thuế / không kê khai) thì thuế = 0 — cùng luật với
-            // DocNhomTheoSuat bên server.
+
             thue: thueSuat <= 0 ? 0 : tronRaXa(doanhThu * thueSuat / 100),
           };
         })
@@ -356,31 +326,22 @@ export default function ToKhaiXml(
       ? gomTheoChon(bc?.nhomBanRaTheoHd, bc?.banRa ?? [])
       : bc?.nhomBanRa;
 
-    // Mọi mức ÂM HỢP LỆ gộp vào một dòng "không chịu thuế": -1 và -2 đều là hàng không
-    // có thuế suất thông thường, tách ra chỉ thêm dòng mà không thêm thông tin.
-    //
-    // Phải kèm !suatLa: mức âm LẠ (-3, -99…) đã có dòng "thuế suất LẠ" riêng bên dưới,
-    // không loại ở đây thì nó nằm trong CẢ HAI nhóm và cộng đôi vào tổng đang hiện.
-    const raKct = (nhomRa ?? []).filter((x) => x.thueSuat < 0 && !suatLa(x.thueSuat))
-      .reduce((t, x) => ({ dt: t.dt + x.doanhThu, vat: t.vat + x.thue }),
-              { dt: 0, vat: 0 });
+    const raKct = lay(nhomRa, -2);      // Không Chịu Thuế
+    const raKkknt = lay(nhomRa, -1);    // Không Kê Khai Nộp Thuế
+    const raCttc = lay(nhomRa, -3);     // Chiết khấu thương mại
 
-    // Mức LẠ (không nằm trong bộ hợp lệ): gộp riêng để không âm thầm biến mất khỏi
-    // bảng. Bình thường bằng 0 — khác 0 là dấu hiệu dữ liệu có vấn đề, phải nhìn ra.
     const raLa = (nhomRa ?? []).filter((x) => suatLa(x.thueSuat))
       .reduce((t, x) => ({ dt: t.dt + x.doanhThu, vat: t.vat + x.thue, soHd: t.soHd + x.soHd }),
               { dt: 0, vat: 0, soHd: 0 });
     return {
       ra0: lay(nhomRa, 0), ra5: lay(nhomRa, 5),
       ra8: lay(nhomRa, 8), ra10: lay(nhomRa, 10),
-      raKct, raLa,
+      raKct, raKkknt, raCttc, raLa,
       raDt: ra.reduce((t, x) => t + x.doanhThuChuaVat, 0),
       raVat: ra.reduce((t, x) => t + x.thueGtgt, 0),
       vaoDt: vao.reduce((t, x) => t + x.doanhThuChuaVat, 0),
       vaoVat: vao.reduce((t, x) => t + x.thueGtgt, 0),
       soRa: ra.length, soVao: vao.length,
-      // Vế Excel của phần đối chiếu phải lọc theo cùng bộ hóa đơn thì ô "Lệch" mới
-      // là phép so cùng phạm vi — xem locExcelTheoChon.
       locTheoChon: loc,
     };
   }, [bc, hdDaChon]);
@@ -660,8 +621,7 @@ export default function ToKhaiXml(
       }
 
       const thieuTrongFile: KetQuaSoat["thieuTrongFile"] = [];
-      // Mã hóa đơn lệch, thu ngay trong lúc so — nhánh này chạy ở client nên đã cầm sẵn
-      // dòng sổ, không phải tra ngược như nhánh soatKho.
+
       const maLech = new Set<string>();
       for (const [k, s] of mSo) {
         if (mFile.has(k)) continue;
@@ -855,20 +815,7 @@ export default function ToKhaiXml(
       <span className={`o-gia ${lop}`}>{tien(gia)}</span>
     </div>
   );
-  /**
-   * BR-TK-20 — cộng lại vế Excel chỉ trên những hóa đơn ĐANG ĐƯỢC TICK.
-   *
-   * Tra bằng khóa (ký hiệu, số HĐ) đã chuẩn hóa — cùng khóa mà phép đối chiếu vẫn
-   * dùng, nên tìm ra đúng hóa đơn dù sổ ghi ký hiệu kèm mẫu số ('1C26TNT') còn bảng
-   * kê cổng chỉ ghi ký hiệu ('C26TNT'), và số HĐ hai bên khác cách đệm số 0.
-   *
-   * Phải làm vậy ô "Lệch" mới còn nghĩa: giữ vế Excel là cả kỳ trong khi vế sổ đã
-   * lọc thì hiệu số chỉ nói "đang chọn ít hơn", không phải sai lệch số liệu.
-   *
-   * Hóa đơn được tick mà bảng kê KHÔNG có thì đương nhiên không cộng được vào vế
-   * Excel — đúng bản chất "có trong sổ, thiếu trong bảng kê", và ô Lệch sẽ hiện ra
-   * đúng phần chênh đó, y như khi không lọc.
-   */
+
   const locExcelTheoChon = (tx: TongExcel, huong: "VAO" | "RA"): TongExcel => {
     const soSach = (huong === "VAO" ? bc?.muaVao : bc?.banRa) ?? [];
     const khoaChon = new Set(soSach
@@ -996,7 +943,7 @@ export default function ToKhaiXml(
             value={tuTim}
             onChange={(e) => doiTuTim(e.target.value)}
             prefix={<SearchOutlined />}
-            placeholder="Tìm ký hiệu, số HĐ, tên, MST, mặt hàng…"
+            placeholder="Tìm ký hiệu, số HĐ, tên, MST, mặt hàng"
           />
         </div>
       </div>
@@ -1137,7 +1084,9 @@ export default function ToKhaiXml(
             {o("Doanh thu 5%", tong.ra5.dt)}
             {o("Doanh thu 8%", tong.ra8.dt)}
             {o("Doanh thu 10%", tong.ra10.dt)}
-            {o("Doanh thu không chịu thuế", tong.raKct.dt)}
+            {o("Doanh thu KCT", tong.raKct.dt)}
+            {o("Doanh thu KKKNT", tong.raKkknt.dt)}
+            {o("Doanh thu CTTC", tong.raCttc.dt)}
             {tong.raLa.soHd > 0
               && o(`Doanh thu thuế suất LẠ (${tong.raLa.soHd} HĐ)`,
                    tong.raLa.dt, "", "nhan-do")}
@@ -1152,9 +1101,11 @@ export default function ToKhaiXml(
             {o("VAT 5%", tong.ra5.vat)}
             {o("VAT 8%", tong.ra8.vat)}
             {o("VAT 10%", tong.ra10.vat)}
-            {o("VAT không chịu thuế", tong.raKct.vat)}
+            {o("VAT KCT", tong.raKct.vat)}
+            {o("VAT KKKNT", tong.raKkknt.vat)}
+            {o("VAT CTTC", tong.raCttc.vat)}
             {tong.raLa.soHd > 0
-              && o("VAT thuế suất LẠ", tong.raLa.vat, "", "nhan-do")}
+              && o("VAT thuế suất lạ", tong.raLa.vat, "", "nhan-do")}
             {o("Tổng VAT bán ra", tong.raVat, "gia-dam")}
             {oDoiChieuExcel("Tổng VAT bán ra", tong.raVat, tongExcelRa, (t) => t.vat,
                             "RA")}
@@ -1248,7 +1199,7 @@ export default function ToKhaiXml(
             {kqRaSoat && (
               <div className="ky-tomtat">
                 {tongVanDe === 0
-                  ? <span className="ky-ok">✓ Dữ liệu file khớp với sổ</span>
+                  ? <span className="ky-ok">Dữ liệu file khớp với sổ</span>
                   : <span className="ky-loi">
                       {tongVanDe} điểm lệch giữa file và sổ
                       {kqRaSoat.thieuTrongSo.length > 0 && <> / thiếu trong sổ: {kqRaSoat.thieuTrongSo.length}</>}
