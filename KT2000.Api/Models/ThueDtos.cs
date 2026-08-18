@@ -21,12 +21,33 @@
 
     public class DoiChieuHdDto
     {
+        /// <summary>
+        /// Khóa ghép của lưới. Hóa đơn đã lên sổ thì đây là ma_hd; hóa đơn CHỈ có ở cổng
+        /// thì không có ma_hd nào để lấy, nên dùng "khhd|so_hd" — vẫn duy nhất trong một
+        /// hướng, và màn hình chỉ cần một khóa ổn định để làm getRowId.
+        /// </summary>
         public string MaHd { get; set; } = "";
         public decimal TienHangSo { get; set; }   // Σ(SL×ĐG có dấu) − chiết khấu
         public decimal TienVatSo { get; set; }
         public decimal TienHangGoc { get; set; }
         public decimal TienVatGoc { get; set; }
         public string? TthaiGoc { get; set; }   // 'Hóa đơn mới', 'Hóa đơn đã bị thay thế'…
+
+        // ----- Phần dưới chỉ có nghĩa với dòng CHƯA LÊN SỔ -----
+        //
+        // false = cổng có liệt kê mà HOA_DON không có dòng nào. Hai nguyên nhân thật đã
+        // gặp: file XML tải hỏng (không dựng nổi hóa đơn), và hóa đơn bị đá ra vì lệch Σ.
+        // Cả hai đều là thứ kế toán PHẢI thấy — giấu đi thì bảng đối chiếu chỉ còn đối
+        // chiếu được đúng những hóa đơn vốn đã không có vấn đề gì.
+        public bool CoTrongSo { get; set; } = true;
+
+        // Định danh lấy từ chính bản gốc, để lưới hiện được dòng chưa lên sổ mà không phải
+        // tra ngược sang HOA_DON — nơi theo đúng định nghĩa là không có gì để tra.
+        public string? Khhd { get; set; }
+        public string? SoHd { get; set; }
+        public DateTime? Ngay { get; set; }
+        public string? TenKh { get; set; }
+        public string? Mst { get; set; }
     }
 
     public class HoaDonThueDto

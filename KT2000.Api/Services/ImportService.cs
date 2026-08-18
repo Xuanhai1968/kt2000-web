@@ -166,12 +166,35 @@ namespace KT2000.Api.Services
 
                     // Ngày: chuẩn hóa → fallback _G (đều có thể là CHUỖI)
                     DateTime? ngay = D2(r, M, "NGAY_HD", "NGAY_HD_G");
-                    if (ngay == null) { skippedNoDate++;
-                        errors.Add(new LoiNap(maHd, huong, "KHONG_RO_NGAY",
-                            "Không đọc được NGAY_HD/NGAY_HD_G")); continue; }
-                    if (ngay.Value.Year != req.Nam) { skippedYear++; continue; }  // BR-IMP-01 lớp DÒNG
 
                     var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
+
+                    // Không đọc được ngày thì hóa đơn KHÔNG lên sổ được — thiếu ngày là
+                    // thiếu kỳ, thiếu hạn kê khai. Nhưng BẢN GỐC vẫn phải ghi: đó là chỗ
+                    // duy nhất trả lời được câu "cổng có liệt kê mà sổ không có".
+                    //
+                    // Đây chính là cửa mà file XML tải hỏng rơi vào. Bộ tải Python không
+                    // đọc được nội dung nên dòng master trong Excel chỉ còn phần vỏ (mã,
+                    // ký hiệu, số, tháng, năm) — mọi cột tiền và NGAY_HD đều trống.
+                    //   Ca thật NHAT_TUAN T1: VAO_0311812999_C26TMV_2451, file .xml chứa
+                    //   trang lỗi HTML của cổng chứ không phải hóa đơn. Vì cửa này trước
+                    //   đây continue thẳng nên IP3 có 82 dòng còn Excel có 83.
+                    //
+                    // Kỳ kê khai suy từ cột THANG/NAM của chính dòng đó: hai cột này do bộ
+                    // tải điền theo thư mục job nên còn nguyên kể cả khi nội dung hóa đơn
+                    // đọc không được. Suy được thì ghi, không suy được mới đành bỏ.
+                    if (ngay == null)
+                    {
+                        skippedNoDate++;
+                        errors.Add(new LoiNap(maHd, huong, "KHONG_RO_NGAY",
+                            "Không đọc được NGAY_HD/NGAY_HD_G"));
+                        var ngayKy = NgayDaiDienKy(r, M, req.Nam);
+                        if (ngayKy != null)
+                            dsGoc.Add(DongGocTuExcel(r, M, huong, maHd, ngayKy.Value,
+                                                     TongTienHangTuLine(lines, L)));
+                        continue;
+                    }
+                    if (ngay.Value.Year != req.Nam) { skippedYear++; continue; }  // BR-IMP-01 lớp DÒNG
 
                     // Bản gốc TCT: chép thẳng dòng Excel danh sách sang bảng đối chiếu,
                     // TRƯỚC mọi phép kiểm. Hóa đơn bị đá ra vì lệch Σ vẫn phải nằm đây —
@@ -1022,7 +1045,12 @@ namespace KT2000.Api.Services
                         {
                             string maHdTho = S(r, M, "MA_HD");
                             if (maHdTho == "") continue;
-                            DateTime? ngay = D2(r, M, "NGAY_HD", "NGAY_HD_G");
+                            // Cùng luật với ImportJob: thiếu ngày thì lùi về kỳ của cột
+                            // THANG/NAM chứ không bỏ dòng. Đây là đường "Lấy giá trị từ tờ
+                            // khai" — nơi người dùng bấm CHÍNH VÌ bản gốc đang thiếu, nên
+                            // bỏ im lặng ở đây là hỏng đúng lúc cần nhất.
+                            DateTime? ngay = D2(r, M, "NGAY_HD", "NGAY_HD_G")
+                                          ?? NgayDaiDienKy(r, M, nam);
                             if (ngay == null) continue;
                             if (ngay.Value.Year != nam) continue;   // BR-IMP-01 lớp DÒNG
 
@@ -1065,6 +1093,32 @@ namespace KT2000.Api.Services
         // lượt suy ngược (trừ thuế ra, đổi sang tổng đã gồm VAT cho HĐ không có gốc) để so
         // cho đúng cặp. Bảng này phải là bản chép của cổng, suy diễn thì hết là bản gốc.
         // khhd ghép KIEU_HD + ký hiệu, y hệt HOA_DON.khhd — hai bảng phải khớp được nhau.
+        // Ngày ĐẠI DIỆN cho kỳ, dùng KHI VÀ CHỈ KHI không đọc được ngày hóa đơn thật.
+        //
+        // Bản gốc gom vào kỳ kê khai qua Ngay.Month (xem DoiChieuService.Ghi), nên ngày
+        // nào trong tháng cũng cho ra cùng một kỳ — lấy mùng 1 để ai nhìn cột ngày cũng
+        // đoán được đây là số suy, không phải ngày trên hóa đơn.
+        //
+        // Vẫn kiểm 1..12: cột THANG hỏng thì thà bỏ dòng còn hơn nhét bản gốc vào một kỳ
+        // bịa ra — sai kỳ thì tờ khai lệch, mà lệch kiểu này rất khó lần ra.
+        private static DateTime? NgayDaiDienKy(IXLRow r, Dictionary<string,int> M, int nam)
+        {
+            int thang = I(r, M, "THANG");
+            return thang is >= 1 and <= 12 ? new DateTime(nam, thang, 1) : null;
+        }
+
+        // MST người phát hành, tách từ mã hóa đơn dạng <VAO|RA>_<mst>_<khhd>_<so>.
+        // Chỉ dùng làm nấc lùi khi cột MST_BAN/MST_MUA của Excel trống — tức là khi file
+        // XML hỏng nên không trích được gì từ nội dung hóa đơn.
+        // Ký hiệu và số hóa đơn không chứa '_' nên tách theo dấu này là đủ chắc; phần tử
+        // thứ hai luôn là MST. Mã không đúng khuôn thì trả rỗng, để Rong() ghi NULL chứ
+        // không nhét một chuỗi bịa vào cột MST.
+        private static string MstTuMaHd(string maHd)
+        {
+            var phan = (maHd ?? "").Split('_');
+            return phan.Length >= 4 ? phan[1] : "";
+        }
+
         private static DoiChieuService.DongGoc DongGocTuExcel(
             IXLRow r, Dictionary<string,int> M, string huong, string maHd, DateTime ngay,
             decimal tongTuLine)
@@ -1088,11 +1142,33 @@ namespace KT2000.Api.Services
             // Thuế vẫn 0: loại này không có thuế GTGT, đúng luật Trường đã chốt.
             if (value1 == 0 && tax == 0 && tongTuLine != 0) value1 = tongTuLine;
 
+            // NẤC LÙI ĐỊNH DANH — file XML hỏng thì mọi cột trích TỪ HÓA ĐƠN đều trống,
+            // kể cả ký hiệu, số và MST. Ba nguồn dưới đây vẫn còn vì chúng không đến từ
+            // nội dung hóa đơn:
+            //   • KHHD_TRA_C / SHD_TRA_CU — bộ tải điền theo YÊU CẦU tra cứu;
+            //   • MA_HD — ghép từ chính hai thứ đó cộng MST người phát hành.
+            // Không có nấc này thì dòng vỏ vào bảng với khhd/so_hd/mst đều NULL: màn hình
+            // hiện một dòng trắng không tra nổi, và từ hai hóa đơn hỏng trở lên là trùng
+            // khóa nhau, chỉ còn lại một.
+            //   Ca thật NHAT_TUAN T1: L83 của IP3 — ghi được nhưng gõ "2451" không ra.
+            //
+            // LƯU Ý khi tải lại thành công: khhd lúc đó có thêm tiền tố KIEU_HD ('1C26TMV'
+            // so với 'C26TMV' ở đây) nên khóa khác, dòng thật sẽ được THÊM chứ không thay
+            // dòng vỏ. Dòng vỏ nhận ra bằng value1 = 0 và ma_hd NULL.
+            string khhd = S(r, M, "KIEU_HD") + S2(r, M, "KHHD", "KHHD_G");
+            if (khhd.Trim().Length == 0) khhd = S(r, M, "KHHD_TRA_C");
+
+            string soHd = ChuanSoHd(S2(r, M, "SO_HD", "SO_HD_G"));
+            if (soHd.Trim().Length == 0) soHd = ChuanSoHd(S(r, M, "SHD_TRA_CU"));
+
+            string mst = huong == "VAO" ? S(r, M, "MST_BAN") : S(r, M, "MST_MUA");
+            if (mst.Trim().Length == 0) mst = MstTuMaHd(maHd);
+
             return new DoiChieuService.DongGoc(
-                S(r, M, "KIEU_HD") + S2(r, M, "KHHD", "KHHD_G"),
-                ChuanSoHd(S2(r, M, "SO_HD", "SO_HD_G")),
+                khhd,
+                soHd,
                 ngay,
-                huong == "VAO" ? S(r, M, "MST_BAN") : S(r, M, "MST_MUA"),
+                mst,
                 huong == "VAO" ? S(r, M, "TEN_BAN") : S(r, M, "TEN_MUA"),
                 value1, tax, N2(r, M, "TIEN_CK", "TIEN_CK_G"), maHd,
                 // Cột "Trạng thái hóa đơn" của Excel danh sách → ghi_chu_m. Cùng nguồn với
