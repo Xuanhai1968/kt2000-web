@@ -217,16 +217,33 @@ namespace KT2000.Api.Services
                 if (Convert.ToInt32(await doBang.ExecuteScalarAsync()) == 0)
                     return new List<DoiChieuHdDto>();
             var ds = new List<DoiChieuHdDto>();
+
+            // LEFT JOIN, KHÔNG phải JOIN — và bỏ luôn điều kiện g.ma_hd IS NOT NULL.
+            //
+            // Bản cũ làm cả hai, nên bảng đối chiếu chỉ nhìn thấy hóa đơn ĐÃ lên sổ. Đúng
+            // hai loại đáng ngờ nhất lại bị loại sạch:
+            //   • hóa đơn bị đá ra vì lệch Σ line — chưa có dòng nào trong HOA_DON;
+            //   • hóa đơn mà file XML tải về hỏng — cổng có liệt kê, sổ trống hoàn toàn.
+            // Ca thật NHAT_TUAN T1: VAO_0311812999_C26TMV_2451, bật chế độ so sánh không
+            // thấy dòng nào, dù cổng vẫn khai hóa đơn đó.
+            //
+            // Dòng chưa lên sổ thì hai cột "sổ" ra 0 (nhờ ISNULL trong SqlTienHang và
+            // tien_vat), còn co_trong_so = 0 để màn hình biết mà BỎ TRỐNG thay vì in 0:
+            // "sổ ghi bằng không" và "sổ không có dòng nào" là hai chuyện khác hẳn nhau.
+            //
+            // OUTER APPLY bên dưới bám vào h.ma_hd; h không khớp thì h.ma_hd NULL nên APPLY
+            // không trả dòng nào, và SqlTienHang đã bọc ISNULL nên vẫn ra 0 chứ không NULL.
             using var cmd = new SqlCommand(
-                @"SELECT g.ma_hd,
+                @"SELECT ISNULL(g.ma_hd, ISNULL(g.khhd,'') + '|' + ISNULL(g.so_hd,'')),
                          " + SqlTienHang + @"  AS tien_hang_so,
                          ISNULL(h.tien_vat, 0) AS tien_vat_so,
-                         g.value1, g.tax, g.ghi_chu_m
+                         g.value1, g.tax, g.ghi_chu_m,
+                         CASE WHEN h.ma_hd IS NULL THEN 0 ELSE 1 END AS co_trong_so,
+                         g.khhd, g.so_hd, g.ngay, g.ten_kh, g.mst
                     FROM IN_VALUE_LINE g
                     JOIN IN_VALUE v ON v.ma_input = g.ma_input
-                    JOIN HOA_DON  h ON h.ma_hd    = g.ma_hd" + SqlGopTuLine + @"
-                   WHERE g.ma_hd IS NOT NULL
-                     AND (@lc IS NULL OR v.loai_ct = @lc)", conn);
+               LEFT JOIN HOA_DON  h ON h.ma_hd    = g.ma_hd" + SqlGopTuLine + @"
+                   WHERE (@lc IS NULL OR v.loai_ct = @lc)", conn);
             cmd.Parameters.AddWithValue("@lc",
                 huong == null ? DBNull.Value
               : huong.Equals("RA", StringComparison.OrdinalIgnoreCase) ? "R" : "V");
@@ -241,6 +258,12 @@ namespace KT2000.Api.Services
                     TienHangGoc = r.GetDecimal(3),
                     TienVatGoc  = r.GetDecimal(4),
                     TthaiGoc    = r.IsDBNull(5) ? null : r.GetString(5),
+                    CoTrongSo   = r.GetInt32(6) == 1,
+                    Khhd        = r.IsDBNull(7) ? null : r.GetString(7),
+                    SoHd        = r.IsDBNull(8) ? null : r.GetString(8),
+                    Ngay        = r.IsDBNull(9) ? null : r.GetDateTime(9),
+                    TenKh       = r.IsDBNull(10) ? null : r.GetString(10),
+                    Mst         = r.IsDBNull(11) ? null : r.GetString(11),
                 });
             return ds;
         }

@@ -258,12 +258,23 @@ export const xemTctCredential = (tenantId: string) =>
 // còn cái này đã trừ chiết khấu và đảo dấu dòng chiết khấu — xem DoiChieuHdDto bên
 // backend. Đừng thay bằng x.tienHang cho tiện, mọi HĐ có chiết khấu sẽ báo lệch giả.
 export interface DoiChieuHd {
+  // Hóa đơn đã lên sổ: chính là ma_hd. Hóa đơn CHỈ có ở cổng: "khhd|so_hd" — không có
+  // ma_hd nào để lấy, mà lưới vẫn cần một khóa ổn định.
   maHd: string;
   tienHangSo: number;
   tienVatSo: number;
   tienHangGoc: number;
   tienVatGoc: number;
   tthaiGoc: string | null;
+  // false = cổng có liệt kê mà HOA_DON không có dòng nào (file XML tải hỏng, hoặc hóa
+  // đơn bị đá ra vì lệch Σ). Hai cột "sổ" khi đó về 0 nhưng KHÔNG được hiện 0: "sổ ghi
+  // bằng không" khác hẳn "sổ không có dòng nào".
+  coTrongSo: boolean;
+  khhd: string | null;
+  soHd: string | null;
+  ngay: string | null;      // ISO date
+  tenKh: string | null;
+  mst: string | null;
 }
 export const layDoiChieuHd = (huong: "vao" | "ra") =>
   api.get<DoiChieuHd[]>("/thue/hoa-don/doi-chieu", { params: { huong } });
