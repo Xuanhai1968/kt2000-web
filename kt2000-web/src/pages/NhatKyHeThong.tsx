@@ -145,6 +145,7 @@ export default function NhatKyHeThong() {
 
       <Table
         className="luoi-gon" rowKey="id" size="small" loading={dangTai} dataSource={ds}
+        scroll={{ y: "calc(100vh - 360px)" }}
         pagination={{
           current: trang, pageSize: soDong, total: tong, showSizeChanger: true,
           pageSizeOptions: [20, 50, 100, 200],
@@ -152,6 +153,9 @@ export default function NhatKyHeThong() {
           showTotal: (t, r) => `${r[0]}–${r[1]} trên ${t}`,
         }}
         columns={[
+          { title: "STT", width: 60, align: "center",
+            render: (_: unknown, __: NhatKyDong, i: number) =>
+              (trang - 1) * soDong + i + 1 },
           {
             title: "Thời điểm", dataIndex: "at", width: 165,
             render: (v: string) => new Date(v).toLocaleString("vi-VN"),

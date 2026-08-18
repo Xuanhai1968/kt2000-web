@@ -143,7 +143,8 @@ namespace KT2000.Api.Services
                 // Bản gốc TCT của hướng này, gom lại để ghi MỘT lượt cuối vòng — mỗi kỳ kê
                 // khai chỉ mở một transaction thay vì mỗi hóa đơn một cái.
                 var dsGoc = new List<DoiChieuService.DongGoc>();
-                var maHdTrongSo = new HashSet<string>(StringComparer.Ordinal);
+                // khóa-theo-giá-trị -> mã THẬT trong sổ (xem KhoaGiaTriMaHd)
+                var maHdTrongSo = new Dictionary<string, string>(StringComparer.Ordinal);
 
                 // ---- Gom LINE theo MA_HD ----
                 var linesByHd = new Dictionary<string, List<IXLRow>>();
@@ -166,12 +167,35 @@ namespace KT2000.Api.Services
 
                     // Ngày: chuẩn hóa → fallback _G (đều có thể là CHUỖI)
                     DateTime? ngay = D2(r, M, "NGAY_HD", "NGAY_HD_G");
-                    if (ngay == null) { skippedNoDate++;
-                        errors.Add(new LoiNap(maHd, huong, "KHONG_RO_NGAY",
-                            "Không đọc được NGAY_HD/NGAY_HD_G")); continue; }
-                    if (ngay.Value.Year != req.Nam) { skippedYear++; continue; }  // BR-IMP-01 lớp DÒNG
 
                     var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
+
+                    // Không đọc được ngày thì hóa đơn KHÔNG lên sổ được — thiếu ngày là
+                    // thiếu kỳ, thiếu hạn kê khai. Nhưng BẢN GỐC vẫn phải ghi: đó là chỗ
+                    // duy nhất trả lời được câu "cổng có liệt kê mà sổ không có".
+                    //
+                    // Đây chính là cửa mà file XML tải hỏng rơi vào. Bộ tải Python không
+                    // đọc được nội dung nên dòng master trong Excel chỉ còn phần vỏ (mã,
+                    // ký hiệu, số, tháng, năm) — mọi cột tiền và NGAY_HD đều trống.
+                    //   Ca thật NHAT_TUAN T1: VAO_0311812999_C26TMV_2451, file .xml chứa
+                    //   trang lỗi HTML của cổng chứ không phải hóa đơn. Vì cửa này trước
+                    //   đây continue thẳng nên IP3 có 82 dòng còn Excel có 83.
+                    //
+                    // Kỳ kê khai suy từ cột THANG/NAM của chính dòng đó: hai cột này do bộ
+                    // tải điền theo thư mục job nên còn nguyên kể cả khi nội dung hóa đơn
+                    // đọc không được. Suy được thì ghi, không suy được mới đành bỏ.
+                    if (ngay == null)
+                    {
+                        skippedNoDate++;
+                        errors.Add(new LoiNap(maHd, huong, "KHONG_RO_NGAY",
+                            "Không đọc được NGAY_HD/NGAY_HD_G"));
+                        var ngayKy = NgayDaiDienKy(r, M, req.Nam);
+                        if (ngayKy != null)
+                            dsGoc.Add(DongGocTuExcel(r, M, huong, maHd, ngayKy.Value,
+                                                     TongTienHangTuLine(lines, L)));
+                        continue;
+                    }
+                    if (ngay.Value.Year != req.Nam) { skippedYear++; continue; }  // BR-IMP-01 lớp DÒNG
 
                     // Bản gốc TCT: chép thẳng dòng Excel danh sách sang bảng đối chiếu,
                     // TRƯỚC mọi phép kiểm. Hóa đơn bị đá ra vì lệch Σ vẫn phải nằm đây —
@@ -319,10 +343,26 @@ namespace KT2000.Api.Services
                 //   Ca thật NHAT_TUAN T7 (17/08): 4 hóa đơn, lệch tới 2.823.947đ.
                 using (var docSo = new SqlCommand("SELECT ma_hd FROM HOA_DON", conn))
                 using (var rSo = docSo.ExecuteReader())
-                    while (rSo.Read()) maHdTrongSo.Add(rSo.GetString(0));
+                    while (rSo.Read())
+                    {
+                        string m = rSo.GetString(0);
+                        maHdTrongSo[KhoaGiaTriMaHd(m)] = m;
+                    }
 
+                // Nối theo GIÁ TRỊ và ghi lại ĐÚNG mã đang nằm trong sổ.
+                //
+                // So chuỗi nguyên văn là trượt khi hai bên đệm số 0 khác nhau: sổ giữ
+                // '..._C26MTH_0057165' (nạp tay dựng lại mã đầy đủ) còn bản gốc dựng từ
+                // Excel ra '..._C26MTH_57165'. Trượt thì ma_hd để NULL, và màn so sánh
+                // tách một hóa đơn thành hai dòng — một dòng có sổ mà không gốc, một dòng
+                // có gốc mà không sổ, kèm lệch bằng trọn giá trị hóa đơn.
+                //   Ca thật DAT_VIET_THANH 1C26MTH/0057165: lệch hiện −650.000.
+                // Lấy mã của SỔ chứ không giữ mã tự dựng: cột này tồn tại để trỏ sang
+                // HOA_DON, trỏ bằng chuỗi không có trong đó thì vô nghĩa.
                 var kqGoc = _dc.Ghi(conn, huong, tenant.KhaiQuy,
-                    dsGoc.Select(d => maHdTrongSo.Contains(d.MaHd!) ? d : d with { MaHd = null })
+                    dsGoc.Select(d => maHdTrongSo.TryGetValue(KhoaGiaTriMaHd(d.MaHd!), out var mThat)
+                                    ? d with { MaHd = mThat }
+                                    : d with { MaHd = null })
                          .ToList(),
                     userName);
                 dongGocMoi += kqGoc.Them; dongGocSua += kqGoc.Sua;
@@ -481,12 +521,49 @@ namespace KT2000.Api.Services
                         var hd = DocXmlHoaDon(f, h, thang);
                         if (hd == null) continue;
 
-                        // MA_HD kết thúc bằng _<KHHD>_<SO_HD>, tên file cũng vậy. Nhưng
-                        // hd.SoHd đọc THÔ từ XML ("4490") còn ImportError.MaHd đã đệm số 0
-                        // theo BR-HD-01 ("0004490") — so thẳng là không bao giờ khớp, cột
-                        // "Vì sao còn nằm lại" trống trơn. So bằng bản đã chuẩn hóa.
-                        string duoi = $"_{hd.KhHd}_{ChuanSoHd(hd.SoHd)}";
-                        var khop = loi.FirstOrDefault(x => x.MaHd.EndsWith(duoi, StringComparison.OrdinalIgnoreCase));
+                        // Dò lý do bằng cách TÁCH mã ra từng mảnh rồi so, KHÔNG ghép chuỗi
+                        // rồi so hậu tố.
+                        //
+                        // Số hóa đơn so theo GIÁ TRỊ ('00057165' = '0057165' = '57165'):
+                        // XML đọc số của người bán, còn ImportError giữ mã do ImportJob
+                        // dựng, hai bên đệm số 0 khác nhau nên so chuỗi là trượt.
+                        //   Ca thật DAT_VIET_THANH T7: XML ghi '00057165' → chuẩn hóa ra
+                        //   '0057165', còn ImportError lưu '..._C26MTH_57165'. Bốn hóa đơn
+                        //   LECH_TONG bị báo nhầm thành "file lạc của lần tải trước", trong
+                        //   đó có một hóa đơn BÁN RA điều chỉnh giảm −571.429.
+                        // Sửa ở đây chứ không sửa ChuanHoaMaHd: cách kia buộc nạp lại toàn
+                        // bộ mới có mã đồng nhất, còn cách này chạy ngay trên dữ liệu đang
+                        // có (chốt Trường 18/08).
+                        //
+                        // Xét thêm MST NGƯỜI PHÁT HÀNH — luôn là người bán, kể cả hóa đơn
+                        // ra. BR-HD-01 lấy (hướng, mst, khhd, số) làm danh tính; (khhd, số)
+                        // chỉ duy nhất TRONG TỪNG người bán nên hai nhà cung cấp vẫn có thể
+                        // trùng. Đo 18/08 trên 4 database: chưa có ca trùng nào, nhưng
+                        // chính bộ tải cũng phải chèn nbmst vào tên file vì lý do này.
+                        //
+                        // LÙI về so (khhd, số) khi không khớp cả ba: MST trong mã lấy từ
+                        // Excel còn hd.MstBan đọc từ XML — hai bên ghi lệch dạng (thiếu
+                        // đuôi chi nhánh '-003' chẳng hạn) là rơi lại đúng lỗi vừa sửa.
+                        // Chặt thì tốt, nhưng chặt tới mức mất khớp thì tệ hơn lỏng.
+                        //
+                        // Tách từng mảnh còn bịt một lỗ của EndsWith: '_C26TDV_819' là hậu
+                        // tố của '_XC26TDV_819', nên ký hiệu này ăn nhầm lý do của ký hiệu
+                        // kia. Chưa gặp ca thật, nhưng sửa cùng lúc thì không tốn thêm gì.
+                        string khhdHd = hd.KhHd.Trim();
+                        string soHdHd = SoHdTheoGiaTri(hd.SoHd);
+                        string mstHd  = hd.MstBan.Trim();
+
+                        bool Khop(ImportErrorDetail x, bool xetMst)
+                        {
+                            var (mst, khhd, so) = TachMaHd(x.MaHd);
+                            return string.Equals(khhd, khhdHd, StringComparison.OrdinalIgnoreCase)
+                                && SoHdTheoGiaTri(so) == soHdHd
+                                && (!xetMst
+                                    || string.Equals(mst, mstHd, StringComparison.OrdinalIgnoreCase));
+                        }
+
+                        var khop = loi.FirstOrDefault(x => Khop(x, true))
+                                ?? loi.FirstOrDefault(x => Khop(x, false));
                         kq.Add(khop != null
                             ? hd with { LyDo = khop.LyDo ?? "", CoTrongExcel = true }
                             : hd with
@@ -614,7 +691,9 @@ namespace KT2000.Api.Services
                     { del.Parameters.AddWithValue("@id", maHd); await del.ExecuteNonQueryAsync(); }
 
                     // Cùng lý do như ở ImportJob: database chưa chạy 017 thì bỏ cột ra.
-                    bool coLoaiThue = CoCot(conn, "HOA_DON_LINE", "loai_thue");
+                    // Chỗ này nằm TRONG transaction nên phải truyền tx — khác lời gọi ở
+                    // ImportJob (dòng 106) chạy trước khi mở giao dịch.
+                    bool coLoaiThue = CoCot(conn, "HOA_DON_LINE", "loai_thue", tx);
 
                     foreach (var m in req.MatHangs)
                     {
@@ -632,7 +711,13 @@ namespace KT2000.Api.Services
                         p.AddWithValue("@sl", m.SoLuong);
                         p.AddWithValue("@dg", m.DonGia);
                         string thueSuat = (m.ThueSuat ?? "").Trim();
-                        p.AddWithValue("@pt_vat", DocThueSuat(thueSuat));
+                        decimal ptVatTay = DocThueSuat(thueSuat);
+                        // Cùng luật với ReplaceLines: cổng ghi thuế suất bằng chữ lạ
+                        // ('CTTC') thì suy từ tổng tiền của hóa đơn. Hai đường nạp phải
+                        // cho ra cùng một con số, không thì nạp lại tay lại đổi kết quả.
+                        if (ptVatTay == 0 && ThueSuatLaChuLa(thueSuat.ToUpperInvariant()))
+                            ptVatTay = SuyThueSuatTuTong(req.TienHang, req.TienVat);
+                        p.AddWithValue("@pt_vat", ptVatTay);
                         if (coLoaiThue)
                         {
                             // Giữ nguyên chuỗi gốc — xem giải thích ở ReplaceLines
@@ -762,6 +847,48 @@ namespace KT2000.Api.Services
 
         internal const decimal PT_VAT_KHONG_KE_KHAI   = -1m;
         internal const decimal PT_VAT_KHONG_CHIU_THUE = -2m;
+
+        // Các mức thuế suất GTGT có thật trong luật. Dùng để chặn suy diễn bừa — xem
+        // SuyThueSuatTuTong.
+        private static readonly int[] MUC_THUE_HOP_LE = { 0, 5, 8, 10 };
+
+        // Dung sai khi đối chiếu tỷ lệ suy ra với mức hợp lệ, tính bằng ĐIỂM phần trăm.
+        // 0,05 đủ rộng để nuốt sai lệch làm tròn tới từng đồng, mà vẫn đủ chặt để loại
+        // hóa đơn trộn nhiều thuế suất — xem con số đo thật ở SuyThueSuatTuTong.
+        private const decimal DUNG_SAI_THUE = 0.05m;
+
+        /// <summary>
+        /// Cổng ghi thuế suất bằng CHỮ mà không phải hai mã đã biết (KCT / KKKNT).
+        /// Đo 18/08 trên toàn bộ dữ liệu: 'CTTC' (cho thuê tài chính, 2 dòng) và 'KHAC'
+        /// (6 dòng). Không có chữ số nào nên DocPhanTram đọc ra 0.
+        /// </summary>
+        private static bool ThueSuatLaChuLa(string s)
+            => s.Length > 0 && !s.Any(char.IsDigit) && s != "KCT" && s != "KKKNT";
+
+        /// <summary>
+        /// Suy thuế suất của DÒNG từ tổng tiền của HÓA ĐƠN, chỉ nhận khi kết quả rơi
+        /// đúng một mức hợp lệ.
+        /// </summary>
+        /// <remarks>
+        /// Vì sao phải chặn theo mức thay vì "làm tròn về mức gần nhất": hóa đơn trộn
+        /// nhiều thuế suất cho ra tỷ lệ bình quân KHÔNG tồn tại trong luật, mà mức gần
+        /// nhất của nó vẫn là một con số trông rất hợp lý.
+        ///   Đo 18/08, hai ca thật nằm hai phía:
+        ///     CTTC  VAO_…_K26TBA_29340: 2.012.905 / 20.129.053 = 10,0000% → nhận, 10
+        ///     CTTC  VAO_…_K26TBA_29342: 1.120.000 / 14.000.000 =  8,0000% → nhận, 8
+        ///     KHAC  VAO_…_C26THD_8262:    414.979 /  7.884.600 =  5,2632% → TỪ CHỐI
+        ///   Hóa đơn 8262 có SÁU dòng phí lẫn lộn; ép nó về 5% là bịa ra một thuế suất
+        ///   chưa ai khai, và số thuế khấu trừ sẽ sai theo.
+        /// Từ chối thì trả 0 — đúng bằng hành vi cũ, nên không mất gì so với trước.
+        /// </remarks>
+        internal static decimal SuyThueSuatTuTong(decimal tienHang, decimal tienThue)
+        {
+            if (tienHang <= 0) return 0m;
+            decimal tyLe = tienThue * 100m / tienHang;
+            foreach (int muc in MUC_THUE_HOP_LE)
+                if (Math.Abs(tyLe - muc) <= DUNG_SAI_THUE) return muc;
+            return 0m;
+        }
 
         internal static decimal DocThueSuat(string tho)
         {
@@ -901,6 +1028,51 @@ namespace KT2000.Api.Services
             return loi.Length >= DO_DAI_SO_HD ? loi : loi.PadLeft(DO_DAI_SO_HD, '0');
         }
 
+        /// <summary>
+        /// Số hóa đơn quy về GIÁ TRỊ để SO SÁNH — '00057165', '0057165' và '57165' cùng ra
+        /// '57165'. KHÔNG dùng để lưu hay hiển thị: chỗ đó vẫn là ChuanSoHd (đệm 7 chữ số
+        /// theo BR-HD-01), vì đổi cách lưu là phải nạp lại toàn bộ.
+        /// </summary>
+        /// <remarks>
+        /// Chỉ bỏ số 0 đầu khi chuỗi TOÀN chữ số. Số hóa đơn có chữ thì giữ nguyên để so
+        /// nguyên văn — cắt ký tự của thứ mình không hiểu là cách chắc chắn nhất để hai
+        /// hóa đơn khác nhau hóa thành một.
+        /// </remarks>
+        internal static string SoHdTheoGiaTri(string s)
+        {
+            string t = (s ?? "").Trim();
+            if (t.Length == 0 || !t.All(char.IsAsciiDigit)) return t;
+            string loi = t.TrimStart('0');
+            return loi.Length == 0 ? "0" : loi;      // "0000" -> "0"
+        }
+
+        /// <summary>
+        /// Tách ma_hd '&lt;VAO|RA&gt;_&lt;mst&gt;_&lt;khhd&gt;_&lt;số&gt;' thành ba mảnh cuối.
+        /// Lấy từ PHẢI sang: phần đầu có thể chứa '_' (hướng), còn mst/khhd/số thì không.
+        /// Mã không đủ bốn mảnh thì trả về rỗng — thà không khớp còn hơn khớp nhầm.
+        /// </summary>
+        internal static (string Mst, string Khhd, string So) TachMaHd(string maHd)
+        {
+            var p = (maHd ?? "").Split('_');
+            return p.Length >= 4 ? (p[^3], p[^2], p[^1]) : ("", "", "");
+        }
+
+        /// <summary>
+        /// Khóa nhận dạng hóa đơn theo GIÁ TRỊ, để dò được giữa hai mã đệm số 0 khác nhau:
+        /// 'VAO_09…_C26MTH_57165' và 'VAO_09…_C26MTH_0057165' cùng ra một khóa.
+        /// </summary>
+        /// <remarks>
+        /// CHỈ dùng để SO. Cách lưu ma_hd giữ nguyên như cũ — đo 18/08 thấy 701 hóa đơn
+        /// trên 4 database đang mang mã dạng chưa đệm; đổi cách sinh mã là chúng hóa thành
+        /// hóa đơn lạ ở lần nạp sau, hoặc chết vì unique index UX_HOA_DON_BR01, hoặc đẻ
+        /// bản ghi trùng. Sửa phép so thì không đụng lấy một dòng dữ liệu (chốt Trường 18/08).
+        /// </remarks>
+        internal static string KhoaGiaTriMaHd(string maHd)
+        {
+            var (mst, khhd, so) = TachMaHd(maHd);
+            return $"{mst}|{khhd}|{SoHdTheoGiaTri(so)}".ToUpperInvariant();
+        }
+
         // Đệm phần ĐUÔI số hóa đơn của ma_hd. Cố tình KHÔNG dựng lại ma_hd từ các mảnh:
         // BR-HD-01 dùng MST NGƯỜI PHÁT HÀNH (luôn là người bán), còn biến mst ở UpsertMaster
         // là của ĐỐI TÁC — dựng lại là sai MST với hóa đơn RA. Sửa đúng cái đuôi thì phần
@@ -975,10 +1147,16 @@ namespace KT2000.Api.Services
             // Mã hóa đơn ĐÃ CÓ trong sổ. Chỉ những mã này mới được gắn vào cột ma_hd —
             // hóa đơn nằm trong Excel mà chưa nạp vào sổ thì vẫn ghi dòng gốc (đó chính
             // là thứ đối chiếu cần thấy) nhưng để ma_hd trống, đúng quy ước NULL = chưa khớp.
-            var maHdTrongSo = new HashSet<string>(StringComparer.Ordinal);
+            // khóa-theo-giá-trị -> mã THẬT trong sổ. Cùng lý do như ở ImportJob: sổ và bản
+            // gốc có thể đệm số 0 khác nhau, so chuỗi nguyên văn là không bao giờ nối được.
+            var maHdTrongSo = new Dictionary<string, string>(StringComparer.Ordinal);
             using (var doc = new SqlCommand("SELECT ma_hd FROM HOA_DON", conn))
             using (var r = await doc.ExecuteReaderAsync())
-                while (await r.ReadAsync()) maHdTrongSo.Add(r.GetString(0));
+                while (await r.ReadAsync())
+                {
+                    string m = r.GetString(0);
+                    maHdTrongSo[KhoaGiaTriMaHd(m)] = m;
+                }
 
             int soFile = 0, them = 0, sua = 0;
             var loi = new List<string>();
@@ -1020,7 +1198,12 @@ namespace KT2000.Api.Services
                         {
                             string maHdTho = S(r, M, "MA_HD");
                             if (maHdTho == "") continue;
-                            DateTime? ngay = D2(r, M, "NGAY_HD", "NGAY_HD_G");
+                            // Cùng luật với ImportJob: thiếu ngày thì lùi về kỳ của cột
+                            // THANG/NAM chứ không bỏ dòng. Đây là đường "Lấy giá trị từ tờ
+                            // khai" — nơi người dùng bấm CHÍNH VÌ bản gốc đang thiếu, nên
+                            // bỏ im lặng ở đây là hỏng đúng lúc cần nhất.
+                            DateTime? ngay = D2(r, M, "NGAY_HD", "NGAY_HD_G")
+                                          ?? NgayDaiDienKy(r, M, nam);
                             if (ngay == null) continue;
                             if (ngay.Value.Year != nam) continue;   // BR-IMP-01 lớp DÒNG
 
@@ -1028,7 +1211,10 @@ namespace KT2000.Api.Services
                             var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
                             var d = DongGocTuExcel(r, M, h, maHd, ngay.Value,
                                                    TongTienHangTuLine(lines, L));
-                            dsGoc.Add(maHdTrongSo.Contains(maHd) ? d : d with { MaHd = null });
+                            // Nối theo giá trị, ghi lại đúng mã của sổ — xem ImportJob.
+                            dsGoc.Add(maHdTrongSo.TryGetValue(KhoaGiaTriMaHd(maHd), out var mThat)
+                                    ? d with { MaHd = mThat }
+                                    : d with { MaHd = null });
                         }
 
                         var kq = _dc.Ghi(conn, h, tenant.KhaiQuy, dsGoc, userName);
@@ -1063,6 +1249,32 @@ namespace KT2000.Api.Services
         // lượt suy ngược (trừ thuế ra, đổi sang tổng đã gồm VAT cho HĐ không có gốc) để so
         // cho đúng cặp. Bảng này phải là bản chép của cổng, suy diễn thì hết là bản gốc.
         // khhd ghép KIEU_HD + ký hiệu, y hệt HOA_DON.khhd — hai bảng phải khớp được nhau.
+        // Ngày ĐẠI DIỆN cho kỳ, dùng KHI VÀ CHỈ KHI không đọc được ngày hóa đơn thật.
+        //
+        // Bản gốc gom vào kỳ kê khai qua Ngay.Month (xem DoiChieuService.Ghi), nên ngày
+        // nào trong tháng cũng cho ra cùng một kỳ — lấy mùng 1 để ai nhìn cột ngày cũng
+        // đoán được đây là số suy, không phải ngày trên hóa đơn.
+        //
+        // Vẫn kiểm 1..12: cột THANG hỏng thì thà bỏ dòng còn hơn nhét bản gốc vào một kỳ
+        // bịa ra — sai kỳ thì tờ khai lệch, mà lệch kiểu này rất khó lần ra.
+        private static DateTime? NgayDaiDienKy(IXLRow r, Dictionary<string,int> M, int nam)
+        {
+            int thang = I(r, M, "THANG");
+            return thang is >= 1 and <= 12 ? new DateTime(nam, thang, 1) : null;
+        }
+
+        // MST người phát hành, tách từ mã hóa đơn dạng <VAO|RA>_<mst>_<khhd>_<so>.
+        // Chỉ dùng làm nấc lùi khi cột MST_BAN/MST_MUA của Excel trống — tức là khi file
+        // XML hỏng nên không trích được gì từ nội dung hóa đơn.
+        // Ký hiệu và số hóa đơn không chứa '_' nên tách theo dấu này là đủ chắc; phần tử
+        // thứ hai luôn là MST. Mã không đúng khuôn thì trả rỗng, để Rong() ghi NULL chứ
+        // không nhét một chuỗi bịa vào cột MST.
+        private static string MstTuMaHd(string maHd)
+        {
+            var phan = (maHd ?? "").Split('_');
+            return phan.Length >= 4 ? phan[1] : "";
+        }
+
         private static DoiChieuService.DongGoc DongGocTuExcel(
             IXLRow r, Dictionary<string,int> M, string huong, string maHd, DateTime ngay,
             decimal tongTuLine)
@@ -1086,11 +1298,33 @@ namespace KT2000.Api.Services
             // Thuế vẫn 0: loại này không có thuế GTGT, đúng luật Trường đã chốt.
             if (value1 == 0 && tax == 0 && tongTuLine != 0) value1 = tongTuLine;
 
+            // NẤC LÙI ĐỊNH DANH — file XML hỏng thì mọi cột trích TỪ HÓA ĐƠN đều trống,
+            // kể cả ký hiệu, số và MST. Ba nguồn dưới đây vẫn còn vì chúng không đến từ
+            // nội dung hóa đơn:
+            //   • KHHD_TRA_C / SHD_TRA_CU — bộ tải điền theo YÊU CẦU tra cứu;
+            //   • MA_HD — ghép từ chính hai thứ đó cộng MST người phát hành.
+            // Không có nấc này thì dòng vỏ vào bảng với khhd/so_hd/mst đều NULL: màn hình
+            // hiện một dòng trắng không tra nổi, và từ hai hóa đơn hỏng trở lên là trùng
+            // khóa nhau, chỉ còn lại một.
+            //   Ca thật NHAT_TUAN T1: L83 của IP3 — ghi được nhưng gõ "2451" không ra.
+            //
+            // LƯU Ý khi tải lại thành công: khhd lúc đó có thêm tiền tố KIEU_HD ('1C26TMV'
+            // so với 'C26TMV' ở đây) nên khóa khác, dòng thật sẽ được THÊM chứ không thay
+            // dòng vỏ. Dòng vỏ nhận ra bằng value1 = 0 và ma_hd NULL.
+            string khhd = S(r, M, "KIEU_HD") + S2(r, M, "KHHD", "KHHD_G");
+            if (khhd.Trim().Length == 0) khhd = S(r, M, "KHHD_TRA_C");
+
+            string soHd = ChuanSoHd(S2(r, M, "SO_HD", "SO_HD_G"));
+            if (soHd.Trim().Length == 0) soHd = ChuanSoHd(S(r, M, "SHD_TRA_CU"));
+
+            string mst = huong == "VAO" ? S(r, M, "MST_BAN") : S(r, M, "MST_MUA");
+            if (mst.Trim().Length == 0) mst = MstTuMaHd(maHd);
+
             return new DoiChieuService.DongGoc(
-                S(r, M, "KIEU_HD") + S2(r, M, "KHHD", "KHHD_G"),
-                ChuanSoHd(S2(r, M, "SO_HD", "SO_HD_G")),
+                khhd,
+                soHd,
                 ngay,
-                huong == "VAO" ? S(r, M, "MST_BAN") : S(r, M, "MST_MUA"),
+                mst,
                 huong == "VAO" ? S(r, M, "TEN_BAN") : S(r, M, "TEN_MUA"),
                 value1, tax, N2(r, M, "TIEN_CK", "TIEN_CK_G"), maHd,
                 // Cột "Trạng thái hóa đơn" của Excel danh sách → ghi_chu_m. Cùng nguồn với
@@ -1237,9 +1471,15 @@ namespace KT2000.Api.Services
         // mọi lần nạp vào đó chết với "Invalid column name". ThueService đã dính đúng
         // chuyện này với mấy cột của 015. Dò một lần mỗi job rồi ghi theo, đắt gần bằng
         // không mà không bao giờ vỡ.
-        private static bool CoCot(SqlConnection c, string bang, string cot)
+        //
+        // PHẢI nhận transaction: Microsoft.Data.SqlClient từ chối thẳng mọi câu lệnh chạy
+        // trên connection đang có giao dịch mở mà bản thân câu lệnh không gán Transaction
+        // ("ExecuteScalar requires the command to have a transaction..."). Bỏ quên tham số
+        // này ở NapMotHoaDon làm nút Ghi của modal hóa đơn lệch chết 500 đủ 100% số lần.
+        private static bool CoCot(SqlConnection c, string bang, string cot,
+                                  SqlTransaction? tx = null)
         {
-            using var cmd = new SqlCommand("SELECT COL_LENGTH(@b, @c)", c);
+            using var cmd = new SqlCommand("SELECT COL_LENGTH(@b, @c)", c, tx);
             cmd.Parameters.AddWithValue("@b", bang);
             cmd.Parameters.AddWithValue("@c", cot);
             var o = cmd.ExecuteScalar();
@@ -1349,6 +1589,23 @@ namespace KT2000.Api.Services
                 if (ptVat == 0 && khongCoXml && masterTienVat != 0 && masterTienHang > 0)
                     ptVat = Math.Round(masterTienVat * 100m / masterTienHang, 0,
                                        MidpointRounding.AwayFromZero);
+
+                // Hóa đơn CÓ XML nhưng cổng ghi thuế suất bằng CHỮ lạ ('CTTC' — cho thuê
+                // tài chính). Không có chữ số nên DocPhanTram ra 0, và hóa đơn vốn CÓ thuế
+                // GTGT được khấu trừ lại nằm chung nhóm 0% ở tờ khai.
+                //   Ca thật DAT_VIET_THANH T7: hai hóa đơn K26TBA/29340 và /29342 của
+                //   CHAILEASE, thuế thật 10% và 8%, đang cùng ra 0.
+                //
+                // KHÁC nhánh trên ở chỗ có kiểm mức hợp lệ: nhánh trên xử lý hóa đơn không
+                // XML — mỗi hóa đơn đúng một dòng nên tỷ lệ luôn là thuế suất thật. Còn ở
+                // đây hóa đơn có thể nhiều dòng nhiều thuế suất, tỷ lệ bình quân là số
+                // không có thật, nên phải từ chối thay vì đắp bừa lên dòng.
+                //
+                // loai_thue vẫn giữ nguyên chuỗi 'CTTC' (ghi ở khối trên) — pt_vat để
+                // TÍNH, loai_thue để PHÂN LOẠI, đúng như KCT với 0%.
+                if (ptVat == 0 && !khongCoXml
+                    && ThueSuatLaChuLa(thueSuatTho.ToUpperInvariant()))
+                    ptVat = SuyThueSuatTuTong(masterTienHang, masterTienVat);
 
                 p.AddWithValue("@pt_vat", ptVat);
                 decimal tienCk = N(r, L, "CK_LINE_G");

@@ -253,8 +253,6 @@ export default function BaoCaoThue() {
 
   const CAO_BANG_TH = "calc(100vh - 260px)";
 
-  const CAO_BANG_CHEO = "calc(100vh - 272px)";
-
   const thanhTong = (
     <div className="tong-bc-ngoai" ref={oTongRef}>
       <div className="tong-bc" style={{ width: RONG_BANG }}>
@@ -359,12 +357,12 @@ export default function BaoCaoThue() {
     <Card
       className="bc-thue"
       title="Báo cáo thuế GTGT"
+      extra={laMdnNb ? thanhLoc : undefined}
       styles={{ body: { paddingTop: 12 } }}
     >
 
       {laMdnNb ? (
         <>
-          <div className="thanh-loc-cheo">{thanhLoc}</div>
           <Table<DongRaSoatToKhai>
             className="bang-bc bang-ra-soat-cheo"
             size="small"
@@ -373,8 +371,12 @@ export default function BaoCaoThue() {
             columns={COT_RA_SOAT}
             loading={taiCheo}
             pagination={false}
-
-            scroll={{ x: RONG_RA_SOAT, y: CAO_BANG_CHEO }}
+            // y phải có mặt để antd bật chế độ thân cuộn (không có thì header không
+            // dính khi cuộn), nhưng con số này chỉ là MỒI — CSS .bang-ra-soat-cheo
+            // ghi đè bằng flex để lưới lấp đầy phần thân Card còn lại. Chốt số cứng
+            // ở đây không bao giờ khớp: đổi bố cục phần trên một chút là hoặc thừa
+            // mảng trắng dưới đáy, hoặc cắt cụt giữa dòng.
+            scroll={{ x: RONG_RA_SOAT, y: 1 }}
             rowSelection={{
               fixed: "left",
               columnWidth: 40,

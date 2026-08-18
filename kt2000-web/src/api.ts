@@ -258,12 +258,23 @@ export const xemTctCredential = (tenantId: string) =>
 // còn cái này đã trừ chiết khấu và đảo dấu dòng chiết khấu — xem DoiChieuHdDto bên
 // backend. Đừng thay bằng x.tienHang cho tiện, mọi HĐ có chiết khấu sẽ báo lệch giả.
 export interface DoiChieuHd {
+  // Hóa đơn đã lên sổ: chính là ma_hd. Hóa đơn CHỈ có ở cổng: "khhd|so_hd" — không có
+  // ma_hd nào để lấy, mà lưới vẫn cần một khóa ổn định.
   maHd: string;
   tienHangSo: number;
   tienVatSo: number;
   tienHangGoc: number;
   tienVatGoc: number;
   tthaiGoc: string | null;
+  // false = cổng có liệt kê mà HOA_DON không có dòng nào (file XML tải hỏng, hoặc hóa
+  // đơn bị đá ra vì lệch Σ). Hai cột "sổ" khi đó về 0 nhưng KHÔNG được hiện 0: "sổ ghi
+  // bằng không" khác hẳn "sổ không có dòng nào".
+  coTrongSo: boolean;
+  khhd: string | null;
+  soHd: string | null;
+  ngay: string | null;      // ISO date
+  tenKh: string | null;
+  mst: string | null;
 }
 export const layDoiChieuHd = (huong: "vao" | "ra") =>
   api.get<DoiChieuHd[]>("/thue/hoa-don/doi-chieu", { params: { huong } });
@@ -906,6 +917,15 @@ export interface NhomSuat {
   thue: number;
 }
 
+// BR-TK-20 — cùng phép gom như NhomSuat nhưng dừng ở cấp HÓA ĐƠN: một dòng cho mỗi
+// cặp (hóa đơn, mức thuế suất). Để màn rà soát tính lại khối chỉ tiêu theo những hóa
+// đơn được tick chọn. doanhThu CHƯA làm tròn — cộng xong mới tròn, đúng như server.
+export interface NhomSuatHd {
+  maHd: string;
+  thueSuat: number;
+  doanhThu: number;
+}
+
 export interface BaoCaoThue {
   nam: number;
   thang: number | null;
@@ -913,6 +933,8 @@ export interface BaoCaoThue {
   banRa: BangKeHoaDon[];
   nhomBanRa: NhomSuat[];
   nhomMuaVao: NhomSuat[];
+  nhomBanRaTheoHd: NhomSuatHd[];
+  nhomMuaVaoTheoHd: NhomSuatHd[];
   tongHop: ChiTieuTongHop[];
 }
 
@@ -1054,6 +1076,10 @@ export interface ToKhaiGtgt {
   diaChiNnt: string | null;
   maCqtNoiNop: string | null;
   tenCqtNoiNop: string | null;
+  // BR-TK-20 — tờ khai lập từ hóa đơn chọn tay, không phải cả kỳ
+  locTheoChon: boolean;
+  soHdDaChon: number;
+  soHdCaKy: number;
   ct21: number; ct22: number; ct23: number; ct24: number;
   ct23a: number; ct24a: number; ct25: number; ct26: number;
   ct27: number; ct28: number; ct29: number; ct30: number;
@@ -1266,6 +1292,15 @@ export const thueDocBangKe = (file: File, maDonVi?: string) => {
     { params: { maDonVi }, headers: { "Content-Type": "multipart/form-data" } });
 };
 
+// Một dòng của bảng kê Excel — BR-TK-20: để màn rà soát cộng lại vế Excel theo đúng
+// những hóa đơn được tick chọn, thay vì luôn so với tổng cả kỳ.
+export interface DongBangKe {
+  khhd: string;
+  soHd: string;
+  tienHang: number;
+  tienVat: number;
+}
+
 export interface KhoBangKe {
   thang: number;
   nam: number;
@@ -1273,6 +1308,7 @@ export interface KhoBangKe {
   soFile: number;
   thuMucDaDo: string[];
   tong: { soHd: number; tienHang: number; tienVat: number };
+  dong: DongBangKe[];
   loi: string[];
   doiChieu: KetQuaRaSoat | null;
 }
@@ -1283,14 +1319,16 @@ export const thueKhoBangKe = (thang: number, huong: "RA" | "VAO",
                      { params: { thang, huong, maDonVi, chiTong } });
 
 
+// chonHd — BR-TK-20: danh sách maHd người lập tick trên màn rà soát. Bỏ trống / mảng
+// rỗng = lấy CẢ KỲ như xưa nay.
 export const thueLapToKhai = (thang: number, xmlKyTruoc?: string,
-                              maDonVi?: string) =>
-  api.post<ToKhaiGtgt>("/thue/to-khai", { xmlKyTruoc },
+                              maDonVi?: string, chonHd?: string[]) =>
+  api.post<ToKhaiGtgt>("/thue/to-khai", { xmlKyTruoc, chonHd },
                        { params: { thang, maDonVi } });
 
 export const thueToKhaiXml = (thang: number, xmlKyTruoc?: string,
-                              maDonVi?: string) =>
-  api.post<Blob>("/thue/to-khai/xml", { xmlKyTruoc },
+                              maDonVi?: string, chonHd?: string[]) =>
+  api.post<Blob>("/thue/to-khai/xml", { xmlKyTruoc, chonHd },
                  { params: { thang, maDonVi }, responseType: "blob" });
 
 export const thueXuLyTtDc = (thang: number, maDonVi?: string) =>

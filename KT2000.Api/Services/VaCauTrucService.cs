@@ -38,6 +38,10 @@ namespace KT2000.Api.Services
             // loai_thue. Xem đầu file 023 để biết cách phát hiện và vì sao không sửa
             // ngược được. TRA CẢ database THẬT LẪN script của MỌI nhánh trước khi đặt số.
             (16, "KT2000.Api.va_023_bu_loai_thue.sql"),
+            // Số lượng / đơn giá lên 4 số thập phân. Lưới đã hiện 4 số từ 17/08 nhưng cột
+            // vẫn 3 và 2, nên màn hình cho gõ thứ mà sổ không giữ nổi: 22,9885 vào DB hóa
+            // 22,989, nhân lại lệch 10,75 và hóa đơn bị đá ra trong khi màn hình vẫn xanh.
+            (17, "KT2000.Api.va_024_4_so_le.sql"),
         };
 
         // KHÔNG có khái niệm "phiên bản mới nhất" — xem giải thích ở DocCacPhienBan.

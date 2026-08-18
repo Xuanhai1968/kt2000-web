@@ -783,25 +783,33 @@ namespace KT2000.Api.Services
         }
         /// <param name="xmlKyTruoc">
 
+        /// <param name="chonHd">
+        /// BR-TK-20 — LẬP TỜ KHAI TỪ MỘT PHẦN HÓA ĐƠN CỦA KỲ.
         public Task<ToKhaiGtgtDto> Lap(string code, int year, int thang,
                                        string mst, string tenNnt, string? diaChi,
-                                       string? xmlKyTruoc = null)
+                                       string? xmlKyTruoc = null,
+                                       IReadOnlyCollection<string>? chonHd = null)
         {
             var dauXml = string.IsNullOrWhiteSpace(xmlKyTruoc)
                 ? "0" : xmlKyTruoc.Length + "-" + xmlKyTruoc.GetHashCode();
-            var khoa = $"tokhai|{code}|{year}|{thang}|{mst}|{dauXml}";
+            var dauChon = chonHd == null || chonHd.Count == 0
+                ? "0"
+                : chonHd.Count + "-" + string.Join("|", chonHd.OrderBy(x => x,
+                      StringComparer.OrdinalIgnoreCase)).GetHashCode();
+            var khoa = $"tokhai|{code}|{year}|{thang}|{mst}|{dauXml}|{dauChon}";
 
             return _cache.GetOrCreateAsync(khoa, muc =>
             {
                 muc.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
                 muc.Size = 1;
-                return LapThat(code, year, thang, mst, tenNnt, diaChi, xmlKyTruoc);
+                return LapThat(code, year, thang, mst, tenNnt, diaChi, xmlKyTruoc, chonHd);
             })!;
         }
 
         private async Task<ToKhaiGtgtDto> LapThat(
             string code, int year, int thang,
-            string mst, string tenNnt, string? diaChi, string? xmlKyTruoc)
+            string mst, string tenNnt, string? diaChi, string? xmlKyTruoc,
+            IReadOnlyCollection<string>? chonHd = null)
         {
             var tk = new ToKhaiGtgtDto
             {
@@ -846,12 +854,52 @@ namespace KT2000.Api.Services
             var dongRa = await vDongRa;
             var dongVao = await vDongVao;
 
+            // BR-TK-20 — chỉ giữ hóa đơn người lập đã chọn. Lọc ở ĐÂY, ngay sau khi đọc
+            // và trước mọi phép cộng, nên toàn bộ engine phía dưới (PhanBo, TinhChiTieu,
+            // phụ lục, kiểm cân đối) không cần biết gì về chuyện chọn lọc.
+            var soHdCaKy = hoaDon.Count;
+            if (chonHd is { Count: > 0 })
+            {
+                var chon = new HashSet<string>(chonHd, StringComparer.OrdinalIgnoreCase);
+                hoaDon = hoaDon.Where(h => chon.Contains(h.MaHd)).ToList();
+                dongRa = dongRa.Where(d => chon.Contains(d.MaHd)).ToList();
+                dongVao = dongVao.Where(d => chon.Contains(d.MaHd)).ToList();
+
+                tk.LocTheoChon = true;
+                tk.SoHdDaChon = hoaDon.Count;
+                tk.SoHdCaKy = soHdCaKy;
+
+                // Hóa đơn được chọn mà kỳ này không có (bị lọc bởi BR-TK-06, hoặc client
+                // gửi mã cũ sau khi sổ đã đổi): phải nói ra, vì im lặng thì người lập
+                // tưởng đã kê đủ những gì mình tick.
+                var thieu = chon.Count - hoaDon.Count;
+                if (thieu > 0)
+                    tk.CanhBao.Add(new CanhBaoToKhaiDto
+                    {
+                        Ma = "BR-TK-20",
+                        Muc = "CANH_BAO",
+                        MoTa = $"Có {thieu} hóa đơn được chọn nhưng không nằm trong dữ liệu "
+                             + $"kê khai của kỳ {thang}/{year} — hóa đơn đã bị thay thế/điều "
+                             + "chỉnh hoặc đã xóa khỏi sổ, nên không được tính vào tờ khai",
+                    });
+
+                tk.CanhBao.Add(new CanhBaoToKhaiDto
+                {
+                    Ma = "BR-TK-20",
+                    Muc = "CANH_BAO",
+                    MoTa = $"Tờ khai lập từ {hoaDon.Count}/{soHdCaKy} hóa đơn được chọn tay, "
+                         + "KHÔNG phải toàn bộ hóa đơn của kỳ",
+                });
+            }
+
             if (hoaDon.Count == 0)
                 tk.CanhBao.Add(new CanhBaoToKhaiDto
                 {
                     Ma = "KT-00",
                     Muc = "CHAN",
-                    MoTa = $"Kỳ tháng {thang}/{year} không có hóa đơn nào trong sổ",
+                    MoTa = chonHd is { Count: > 0 }
+                        ? $"Không hóa đơn nào trong số đã chọn thuộc kỳ tháng {thang}/{year}"
+                        : $"Kỳ tháng {thang}/{year} không có hóa đơn nào trong sổ",
                 });
 
             await CanhBaoTrangThaiLa(conn, thang, tk.CanhBao);

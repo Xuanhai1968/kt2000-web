@@ -13,6 +13,11 @@
   flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
+  /* Cũng phải là flex container, không chỉ flex ITEM: con của nó (lưới rà soát chéo
+     của MDN_NB) cần nhận flex:1 để cao bằng khung. Thiếu dòng này thì lưới chỉ cao
+     bằng nội dung và chừa lại một mảng trắng dưới đáy. */
+  display: flex;
+  flex-direction: column;
 }
 
 .bc-thue .bang-bc .ant-table-body {
@@ -157,17 +162,60 @@
   background: #f0f0f0;
 }
 
+/* Lưới rà soát chéo (MDN_NB) — LẤP ĐẦY phần thân Card còn lại thay vì cao cứng.
+   Card đã là flex column và .ant-card-body có flex:1, nên chỉ cần nối chuỗi flex
+   xuống tới .ant-table-body là lưới tự ăn hết chỗ. Chiều cao cứng
+   (100vh - 272px) không bao giờ khớp đúng: dải nút chuyển lên cùng dòng tiêu đề
+   làm phần trên thấp đi, thừa ra một mảng trắng dưới đáy và lưới thì cắt giữa dòng. */
+.bc-thue .bang-ra-soat-cheo,
+.bc-thue .bang-ra-soat-cheo .ant-spin-nested-loading,
+.bc-thue .bang-ra-soat-cheo .ant-spin-container,
+.bc-thue .bang-ra-soat-cheo .ant-table,
+.bc-thue .bang-ra-soat-cheo .ant-table-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/* .ant-spin-container mang position:relative và antd không cho nó cao 100% —
+   thiếu cái này thì chuỗi flex đứt ngay tại đây. */
+.bc-thue .bang-ra-soat-cheo .ant-spin-nested-loading > div,
+.bc-thue .bang-ra-soat-cheo .ant-spin-container {
+  height: 100%;
+}
+
+/* Header của lưới KHÔNG co: chỉ phần thân được giãn. Không chốt thì flex chia đều
+   và hàng tiêu đề bị kéo cao ra. */
+.bc-thue .bang-ra-soat-cheo .ant-table-header {
+  flex: 0 0 auto;
+}
+
+/* !important cả height: lưới này mang KÈM class .bang-bc, mà .bang-bc đặt
+   height/max-height cứng (100vh - 300px) — không ghi đè thì luật đó thắng. */
 .bc-thue .bang-ra-soat-cheo .ant-table-body {
   overflow-x: auto !important;
   overflow-y: auto !important;
-  height: calc(100vh - 272px);
-  max-height: calc(100vh - 272px) !important;
+  flex: 1 1 auto;
+  height: auto !important;
+  min-height: 0;
+  max-height: none !important;
 }
 
-/* Thanh lọc của MDN_NB — vai này KHÔNG bọc Tabs (chỉ có một tab) nên thanh lọc
-   đứng thành khối riêng, dồn phải cho cân với dải nút. */
-.bc-thue .thanh-loc-cheo {
+/* Tiêu đề "Báo cáo thuế GTGT" — to hơn mặc định của antd (16px) để đứng cân với
+   dải nút nay nằm cùng dòng bên phải. */
+.bc-thue > .ant-card-head .ant-card-head-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+/* Thanh lọc của MDN_NB nay nằm ở extra của Card — CÙNG DÒNG với tiêu đề, không còn
+   là khối riêng bên dưới (lấy lại được nguyên một hàng chiều cao cho bảng).
+   Cho phép xuống dòng khi cửa sổ hẹp: dải này có tới 5 nút, không wrap thì nó ép
+   tiêu đề co lại rồi tràn ra ngoài. */
+.bc-thue > .ant-card-head .ant-card-extra {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  margin-bottom: 8px;
+  gap: 6px;
 }

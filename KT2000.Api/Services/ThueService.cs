@@ -217,16 +217,33 @@ namespace KT2000.Api.Services
                 if (Convert.ToInt32(await doBang.ExecuteScalarAsync()) == 0)
                     return new List<DoiChieuHdDto>();
             var ds = new List<DoiChieuHdDto>();
+
+            // LEFT JOIN, KHÔNG phải JOIN — và bỏ luôn điều kiện g.ma_hd IS NOT NULL.
+            //
+            // Bản cũ làm cả hai, nên bảng đối chiếu chỉ nhìn thấy hóa đơn ĐÃ lên sổ. Đúng
+            // hai loại đáng ngờ nhất lại bị loại sạch:
+            //   • hóa đơn bị đá ra vì lệch Σ line — chưa có dòng nào trong HOA_DON;
+            //   • hóa đơn mà file XML tải về hỏng — cổng có liệt kê, sổ trống hoàn toàn.
+            // Ca thật NHAT_TUAN T1: VAO_0311812999_C26TMV_2451, bật chế độ so sánh không
+            // thấy dòng nào, dù cổng vẫn khai hóa đơn đó.
+            //
+            // Dòng chưa lên sổ thì hai cột "sổ" ra 0 (nhờ ISNULL trong SqlTienHang và
+            // tien_vat), còn co_trong_so = 0 để màn hình biết mà BỎ TRỐNG thay vì in 0:
+            // "sổ ghi bằng không" và "sổ không có dòng nào" là hai chuyện khác hẳn nhau.
+            //
+            // OUTER APPLY bên dưới bám vào h.ma_hd; h không khớp thì h.ma_hd NULL nên APPLY
+            // không trả dòng nào, và SqlTienHang đã bọc ISNULL nên vẫn ra 0 chứ không NULL.
             using var cmd = new SqlCommand(
-                @"SELECT g.ma_hd,
+                @"SELECT ISNULL(g.ma_hd, ISNULL(g.khhd,'') + '|' + ISNULL(g.so_hd,'')),
                          " + SqlTienHang + @"  AS tien_hang_so,
                          ISNULL(h.tien_vat, 0) AS tien_vat_so,
-                         g.value1, g.tax, g.ghi_chu_m
+                         g.value1, g.tax, g.ghi_chu_m,
+                         CASE WHEN h.ma_hd IS NULL THEN 0 ELSE 1 END AS co_trong_so,
+                         g.khhd, g.so_hd, g.ngay, g.ten_kh, g.mst
                     FROM IN_VALUE_LINE g
                     JOIN IN_VALUE v ON v.ma_input = g.ma_input
-                    JOIN HOA_DON  h ON h.ma_hd    = g.ma_hd" + SqlGopTuLine + @"
-                   WHERE g.ma_hd IS NOT NULL
-                     AND (@lc IS NULL OR v.loai_ct = @lc)", conn);
+               LEFT JOIN HOA_DON  h ON h.ma_hd    = g.ma_hd" + SqlGopTuLine + @"
+                   WHERE (@lc IS NULL OR v.loai_ct = @lc)", conn);
             cmd.Parameters.AddWithValue("@lc",
                 huong == null ? DBNull.Value
               : huong.Equals("RA", StringComparison.OrdinalIgnoreCase) ? "R" : "V");
@@ -241,6 +258,12 @@ namespace KT2000.Api.Services
                     TienHangGoc = r.GetDecimal(3),
                     TienVatGoc  = r.GetDecimal(4),
                     TthaiGoc    = r.IsDBNull(5) ? null : r.GetString(5),
+                    CoTrongSo   = r.GetInt32(6) == 1,
+                    Khhd        = r.IsDBNull(7) ? null : r.GetString(7),
+                    SoHd        = r.IsDBNull(8) ? null : r.GetString(8),
+                    Ngay        = r.IsDBNull(9) ? null : r.GetDateTime(9),
+                    TenKh       = r.IsDBNull(10) ? null : r.GetString(10),
+                    Mst         = r.IsDBNull(11) ? null : r.GetString(11),
                 });
             return ds;
         }
@@ -495,6 +518,66 @@ namespace KT2000.Api.Services
              GROUP BY G.pt_vat
              ORDER BY G.pt_vat";
 
+        // BR-TK-20 — CÙNG phép gom như SqlNhomTheoSuat, nhưng DỪNG Ở CẤP HÓA ĐƠN thay
+        // vì cộng hết về từng mức thuế.
+        //
+        // Vì sao cần: màn rà soát cho tick chọn từng hóa đơn, và khối chỉ tiêu ở trên
+        // phải tính lại theo phần đã tick. Bản gom sẵn theo mức thuế không tách ngược
+        // ra từng hóa đơn được — nên phải trả thêm cấp chi tiết này, rồi client cộng
+        // lại đúng những dòng của hóa đơn đang chọn. Cộng ở client mà vẫn ra đúng số
+        // của server, vì cả hai cộng trên cùng một phân rã.
+        //
+        // Rẻ: mỗi hóa đơn chỉ đẻ 1–3 dòng (số mức thuế nó dùng), kỳ vài trăm hóa đơn
+        // thì cỡ vài trăm dòng, nhẹ hơn bảng kê hóa đơn đang trả sẵn.
+        private const string SqlNhomTheoSuatTheoHd = @"
+            WITH G AS (
+                SELECT l.ma_hd,
+                       CAST(ISNULL(l.pt_vat, 0) AS DECIMAL(18,3)) AS pt_vat,
+                       SUM(ISNULL(l.so_luong,0) * ISNULL(l.don_gia,0)) AS tien_hang
+                  FROM HOA_DON_LINE l
+                  JOIN HOA_DON h ON h.ma_hd = l.ma_hd
+                 WHERE h.huong = @huong
+                   AND ISNULL(l.tinh_chat, '1') <> '3'
+                   {0}
+                 GROUP BY l.ma_hd, CAST(ISNULL(l.pt_vat, 0) AS DECIMAL(18,3))
+            ), T AS (
+                SELECT ma_hd, SUM(tien_hang) AS tong_hd FROM G GROUP BY ma_hd
+            )
+            SELECT G.ma_hd,
+                   G.pt_vat,
+                   CAST(G.tien_hang
+                        - CASE WHEN T.tong_hd = 0 THEN 0
+                               ELSE ISNULL(h.tien_ck,0) * G.tien_hang / T.tong_hd END
+                        AS DECIMAL(18,2)) AS doanh_thu
+              FROM G
+              JOIN T ON T.ma_hd = G.ma_hd
+              JOIN HOA_DON h ON h.ma_hd = G.ma_hd";
+
+        private static async Task<List<NhomSuatHdDto>> DocNhomTheoSuatTheoHd(
+            SqlConnection conn, string huong, int? thang)
+        {
+            var sql = string.Format(SqlNhomTheoSuatTheoHd,
+                thang is > 0 ? "AND h.thang = @thang" : "");
+
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@huong", huong);
+            if (thang is > 0) cmd.Parameters.AddWithValue("@thang", thang);
+
+            var ds = new List<NhomSuatHdDto>();
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+                ds.Add(new NhomSuatHdDto
+                {
+                    MaHd = r.GetString(0),
+                    ThueSuat = r.GetDecimal(1),
+                    // KHÔNG làm tròn ở đây: bản gom theo mức thuế làm tròn SAU khi đã
+                    // cộng hết hóa đơn. Tròn từng hóa đơn rồi mới cộng thì lệch vài
+                    // đồng so với con số của cả kỳ — client cộng xong mới tròn.
+                    DoanhThu = r.GetDecimal(2),
+                });
+            return ds;
+        }
+
         private static async Task<List<NhomSuatDto>> DocNhomTheoSuat(
             SqlConnection conn, string huong, int? thang)
         {
@@ -586,13 +669,27 @@ namespace KT2000.Api.Services
                 using var c = await OpenAsync(code, year);
                 return await DocNhomTheoSuat(c, "RA", thang);
             });
-            await Task.WhenAll(vNhomVao, vNhomRa);
+            // BR-TK-20 — phân rã theo từng hóa đơn, để màn rà soát tính lại chỉ tiêu
+            // theo phần người dùng tick chọn.
+            var vNhomVaoHd = Task.Run(async () =>
+            {
+                using var c = await OpenAsync(code, year);
+                return await DocNhomTheoSuatTheoHd(c, "VAO", thang);
+            });
+            var vNhomRaHd = Task.Run(async () =>
+            {
+                using var c = await OpenAsync(code, year);
+                return await DocNhomTheoSuatTheoHd(c, "RA", thang);
+            });
+            await Task.WhenAll(vNhomVao, vNhomRa, vNhomVaoHd, vNhomRaHd);
 
             var kq = new BaoCaoThueDto { Nam = year, Thang = thang };
             kq.MuaVao = await vVao;
             kq.BanRa  = await vRa;
             kq.NhomMuaVao = await vNhomVao;
             kq.NhomBanRa  = await vNhomRa;
+            kq.NhomMuaVaoTheoHd = await vNhomVaoHd;
+            kq.NhomBanRaTheoHd  = await vNhomRaHd;
             kq.TongHop = TinhTongHop(kq.MuaVao, kq.BanRa);
             return kq;
         }

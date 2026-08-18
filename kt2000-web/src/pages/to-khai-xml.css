@@ -161,9 +161,6 @@
   margin-top: 6px;
 }
 
-/* ----- Dải trạng thái "đang lọc HĐ lệch" trên đầu lưới -----
-   Nền vàng cảnh báo chứ không phải nền xanh như dải chỉ tiêu: lưới đang GIẤU BỚT dòng,
-   đó là trạng thái bất thường và phải nhìn ra ngay, khỏi tưởng sổ mất hóa đơn. */
 .to-khai-xml .dai-loc-lech {
   display: flex;
   align-items: center;
@@ -189,18 +186,12 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Hóa đơn có trong bảng kê mà sổ CHƯA có — không lọc ra dòng nào được (sổ không có
-   dòng), nên tô đỏ để nó không chìm mất giữa dải. */
 .to-khai-xml .dai-loc-lech .loc-thieu {
   color: #cf1322;
   font-weight: 600;
   cursor: help;
 }
 
-/* Nhóm .kq-* (panel "Hóa đơn lệch" chia ba cột) đã BỎ 18/08 cùng với panel đó —
-   lượt soát nay lọc thẳng lưới hóa đơn, xem .dai-loc-lech ở trên. */
-
-/* ----- Lưới hóa đơn ----- */
 .to-khai-xml .khoi-luoi {
   background: #fff;
   border: 1px solid #b8d4e8;
@@ -269,6 +260,24 @@
 .to-khai-xml .dau-luoi .day { flex: 1; }
 .to-khai-xml .dem-hd { color: #666; font-size: 12px; }
 
+/* BR-TK-20 — tổng phần đã tick chọn, nằm ngay dưới lưới */
+.to-khai-xml .dem-chon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #0958d9;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.to-khai-xml .dem-chon .ant-tag { margin-inline-end: 0; }
+
+/* Ô tick trong lưới: bỏ padding thừa cho cột hẹp 40px */
+.to-khai-xml .luoi-tk .ant-table-tbody > tr > td:nth-child(2),
+.to-khai-xml .luoi-tk .ant-table-thead > tr > th:nth-child(2) {
+  padding-inline: 0;
+}
+
 .to-khai-xml .tong-nhan { color: #0000cd; }
 
 .to-khai-xml .tong-gia {
@@ -335,9 +344,6 @@
   justify-content: flex-end;
 }
 
-/* Ô TÌM của từng bảng — nằm cuối dải chỉ tiêu, ăn hết chỗ trống còn lại.
-   flex:1 + min-width:0 để nó co giãn theo bề ngang màn hình mà không đẩy vỡ dải
-   chỉ tiêu; min-width cho ô đủ rộng để đọc được chuỗi đang gõ. */
 .to-khai-xml .ct-tim {
   flex: 1;
   min-width: 220px;

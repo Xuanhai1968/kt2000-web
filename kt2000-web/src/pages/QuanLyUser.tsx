@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Card, Table, Button, Modal, Form, Input, Select, Switch, Tag, Space,
   Typography, Alert, Popconfirm, message,
@@ -37,6 +37,10 @@ export default function QuanLyUser() {
 
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [tenants, setTenants] = useState<AdminTenant[]>([]);
+
+  const dsUser = useMemo(
+    () => [...users].sort((a, b) => a.loginName.localeCompare(b.loginName, "vi")),
+    [users]);
   const [dangTai, setDangTai] = useState(true);
   const [moTao, setMoTao] = useState(false);
   const [dangLuu, setDangLuu] = useState(false);
@@ -162,8 +166,11 @@ export default function QuanLyUser() {
 
       <Table
         className="luoi-gon" rowKey="id" size="small" loading={dangTai}
-        dataSource={users} pagination={{ pageSize: 20 }}
+        dataSource={dsUser} pagination={false}
+        scroll={{ y: "calc(100vh - 300px)" }}
         columns={[
+          { title: "STT", width: 46, align: "center",
+            render: (_: unknown, __: AdminUser, i: number) => i + 1 },
           { title: "Tên đăng nhập", dataIndex: "loginName", width: 160,
             render: (v: string, r: AdminUser) => (
               <span style={{ textDecoration: r.isActive ? undefined : "line-through",

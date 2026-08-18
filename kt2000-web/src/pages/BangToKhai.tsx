@@ -103,6 +103,18 @@ export default function BangToKhai(
                    {nhac.map((c, i) => <li key={i}><b>[{c.ma}]</b> {c.moTa}</li>)}
                  </ul>} />
       )}
+      {/* BR-TK-20 — tờ khai chỉ gồm một phần hóa đơn của kỳ. Nêu riêng thành dải
+          màu chứ không để lẫn trong danh sách "điểm cần lưu ý": người cầm tờ khai
+          này đi nộp phải biết ngay nó KHÔNG phải toàn bộ kỳ. */}
+      {tk.locTheoChon && (
+        <Alert type="info" showIcon className="khong-in"
+               style={{ marginBottom: 12 }}
+               message={`Tờ khai lập từ ${tk.soHdDaChon}/${tk.soHdCaKy} hóa đơn `
+                      + "được chọn tay"}
+               description={"Số liệu dưới đây chỉ gồm những hóa đơn đã tick trên "
+                          + "lưới rà soát, không phải toàn bộ hóa đơn của kỳ. Bỏ hết "
+                          + "tick rồi tạo lại nếu muốn tờ khai đầy đủ."} />
+      )}
       {tk.nguonCt22 && (
         <Typography.Paragraph type="secondary" className="khong-in"
                               style={{ fontSize: 13, marginBottom: 10 }}>
@@ -687,6 +699,9 @@ export function NhapToKhaiTay(
     ct39a: tk.ct39,
     phuLucNq142: null, nhomBanRa: [], nhomMuaVao: [], canhBao: [],
     nguonCt22: null, choXuat: true, tenFileXml: "",
+    // BR-TK-20 không áp cho bản gõ tay: người dùng tự gõ chỉ tiêu, không có khái
+    // niệm "chọn một phần hóa đơn trong sổ".
+    locTheoChon: false, soHdDaChon: 0, soHdCaKy: 0,
   }), [tk, st, nam, thang, maDonVi, tenDonVi, mstDonVi]);
 
   // Tờ khai RỖNG = mọi chỉ tiêu tiền đều 0. Không cho lưu: lưới sẽ hiện một dòng
