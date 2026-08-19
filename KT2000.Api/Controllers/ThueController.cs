@@ -1034,6 +1034,15 @@ namespace KT2000.Api.Controllers
             var soSach = await _thue.BangKeMotChieu(code, nam, chieu, thang);
             kq.SoHdSo = soSach.Count;
 
+            // Tổng CẢ KỲ hai bên — đây mới là số ảnh hưởng lên [23]/[24] của tờ khai.
+            // Cộng riêng phần hóa đơn lệch KHÔNG ra con số này: sai số làm tròn nằm rải
+            // ở cả những hóa đơn không bị coi là lệch (đo 19/08: phần lệch cho VAT 0đ,
+            // trong khi cả kỳ thiếu 5.254đ).
+            kq.TongHangSo = soSach.Sum(x => x.DoanhThuChuaVat);
+            kq.TongVatSo = soSach.Sum(x => x.ThueGtgt);
+            kq.TongHangFile = dung.Sum(x => x.TienHang);
+            kq.TongVatFile = dung.Sum(x => x.TienVat);
+
             var theoMa = soSach.ToDictionary(x => x.MaHd, StringComparer.OrdinalIgnoreCase);
             var theoKhoa = new Dictionary<string, Models.BangKeHoaDonDto>(StringComparer.OrdinalIgnoreCase);
             foreach (var x in soSach)
@@ -1245,8 +1254,40 @@ namespace KT2000.Api.Controllers
                     IndentChars = "  ",
                 };
                 using (var w = System.Xml.XmlWriter.Create(ms, cai)) doc.Save(w);
+                var noiDung = ms.ToArray();
 
-                return File(ms.ToArray(), "application/xml", tk.TenFileXml);
+                // Tải XML = CHỐT tờ khai: vừa trả file cho người dùng, vừa lưu bản đó
+                // vào kho ScanDoc và ghi số liệu vào bảng TOKHAI.
+                //
+                // Vì sao gộp vào đây thay vì bắt bấm thêm nút "Lưu": bản XML tải về là
+                // bản đem nộp thuế, nên kho và sổ phải giữ ĐÚNG bản đó. Tách hai thao
+                // tác thì chỉ cần quên một lần là kho có file mà sổ không có số (hoặc
+                // ngược lại), kỳ sau lấy ct22 sai mà không ai biết vì sao.
+                //
+                // Lưu HỎNG KHÔNG chặn việc tải: file XML vẫn phải về tay người dùng,
+                // chỉ báo lại qua header để màn hình hiện cảnh báo.
+                try
+                {
+                    using var luu = new MemoryStream(noiDung);
+                    var duongDan = await _bangToKhai.LuuFileToKhai(
+                        code, nam, thang, tk.TenFileXml, luu,
+                        HttpContext.RequestAborted);
+
+                    await _bangToKhai.LuuToKhai(ToKhaiTayTu(tk, code, nam, thang),
+                                                CurrentUser(), HttpContext.RequestAborted);
+
+                    Response.Headers["X-Da-Luu"] = "1";
+                    Response.Headers["X-Duong-Dan"] =
+                        System.Net.WebUtility.UrlEncode(duongDan);
+                }
+                catch (Exception ex)
+                {
+                    Response.Headers["X-Da-Luu"] = "0";
+                    Response.Headers["X-Loi-Luu"] =
+                        System.Net.WebUtility.UrlEncode(ex.Message);
+                }
+
+                return File(noiDung, "application/xml", tk.TenFileXml);
             }
             catch (InvalidOperationException ex)
             {
@@ -1254,6 +1295,32 @@ namespace KT2000.Api.Controllers
                 return Conflict(new { message = ex.Message, canhBao = tk.CanhBao });
             }
         }
+
+        /// <summary>
+        /// Chuyển tờ khai vừa lập sang khuôn ToKhaiTayDto để ghi vào bảng TOKHAI.
+        /// </summary>
+        /// <remarks>
+        /// Hai DTO tách nhau vì hai nguồn khác nhau (một tính từ sổ, một gõ tay) nhưng
+        /// lưu chung một bảng. Ánh xạ 1-1 theo mã chỉ tiêu, riêng ct39a của bản tính
+        /// ứng với ct39 của bảng — khác tên, cùng chỉ tiêu (xem BangToKhai.tsx).
+        /// LanNop = 0: bản tự lập luôn là tờ khai chính thức lần đầu; bản bổ sung do
+        /// kế toán khai tay qua màn "Nhập tờ khai".
+        /// </remarks>
+        private static Models.ToKhaiTayDto ToKhaiTayTu(
+            Models.ToKhaiGtgtDto tk, string code, int nam, int thang) => new()
+            {
+                MaDonVi = code, Nam = nam, Thang = thang, LanNop = 0,
+                MaCct = tk.MaCqtNoiNop, TenCct = tk.TenCqtNoiNop,
+                Mst = tk.Mst, TenNnt = tk.TenNnt, DiaChiNnt = tk.DiaChiNnt,
+                Ct21 = tk.Ct21, Ct22 = tk.Ct22, Ct23 = tk.Ct23, Ct24 = tk.Ct24,
+                Ct23a = tk.Ct23a, Ct24a = tk.Ct24a, Ct25 = tk.Ct25, Ct26 = tk.Ct26,
+                Ct27 = tk.Ct27, Ct28 = tk.Ct28, Ct29 = tk.Ct29, Ct30 = tk.Ct30,
+                Ct31 = tk.Ct31, Ct32 = tk.Ct32, Ct33 = tk.Ct33, Ct32a = tk.Ct32a,
+                Ct34 = tk.Ct34, Ct35 = tk.Ct35, Ct36 = tk.Ct36, Ct37 = tk.Ct37,
+                Ct38 = tk.Ct38, Ct39 = tk.Ct39a, Ct40a = tk.Ct40a, Ct40b = tk.Ct40b,
+                Ct40 = tk.Ct40, Ct41 = tk.Ct41, Ct42 = tk.Ct42, Ct43 = tk.Ct43,
+                GhiChu = "Tự lập từ sổ hóa đơn (bấm Tải XML)",
+            };
 
         public record RaSoatRequest(List<Models.HoaDonFileDto>? HoaDon);
 

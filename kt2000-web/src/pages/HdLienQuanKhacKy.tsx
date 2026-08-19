@@ -71,6 +71,8 @@ export default function HdLienQuanKhacKy({ mo, onDong, nam, thang }: Props) {
   };
 
   const cot: ColumnsType<DongLienQuan> = [
+    { title: "STT", width: 56, align: "center", fixed: "left",
+      render: (_v, _m, i) => i + 1 },
     { title: "Đơn vị", dataIndex: "maDonVi", width: 130, fixed: "left" },
     { title: "Hướng", dataIndex: "huong", width: 78, align: "center",
       render: (v: string) => v === "RA"
@@ -86,9 +88,6 @@ export default function HdLienQuanKhacKy({ mo, onDong, nam, thang }: Props) {
           <Tag color={v === "Thay thế" ? "red"
                     : v === "Điều chỉnh" ? "orange" : "magenta"}>{v}</Tag>
         </Tooltip>) },
-    // Cột đáng nhìn nhất: kỳ GỐC — đó là kỳ phải kê khai lại.
-    // GỐC MỒ CÔI không có số hóa đơn gốc: hiện thẳng "không tìm thấy" chứ không để
-    // trống — ô trống nhìn như dữ liệu lỗi, mà đây là tình trạng có thật cần xử lý.
     { title: "HĐ gốc", width: 190,
       render: (_: unknown, m) => m.soHdGoc
         ? `${m.khhdGoc}/${m.soHdGoc}`
@@ -112,7 +111,7 @@ export default function HdLienQuanKhacKy({ mo, onDong, nam, thang }: Props) {
         : <Tag>Chưa đánh dấu</Tag> },
   ];
 
-  const RONG = 130 + 78 + 92 + 92 + 92 + 220 + 118 + 190 + 110 + 140 + 130 + 150;
+  const RONG = 56 + 130 + 78 + 92 + 92 + 92 + 220 + 118 + 190 + 110 + 140 + 130 + 150;
 
   return (
     <Modal
@@ -128,21 +127,23 @@ export default function HdLienQuanKhacKy({ mo, onDong, nam, thang }: Props) {
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="Màn này gom HAI loại hóa đơn cần theo dõi"
+        message="Tờ khai kỳ này ĐÚNG — nhưng có hóa đơn cần tra lại"
         description={
           <>
-            <div><Tag color="red">Thay thế</Tag><Tag color="orange">Điều chỉnh</Tag>
-              {" "}mà <b>hóa đơn gốc thuộc kỳ khác</b> — <b>KHÔNG</b> kê vào tờ khai kỳ
-              này (đúng như bản cổng TCT trả về), nhưng kỳ <b>GỐC</b> chưa được khai bổ
-              sung tự động.</div>
+            <div>
+              <Tag color="red">Thay thế</Tag><Tag color="orange">Điều chỉnh</Tag>
+              {" "}gốc ở <b>kỳ khác</b> — kỳ này không kê, nhưng <b>kỳ gốc phải khai
+              bổ sung</b> (hệ thống không tự làm).
+            </div>
             <div style={{ marginTop: 4 }}>
               <Tag color="magenta">Gốc mồ côi</Tag>
-              bị thay thế/điều chỉnh mà <b>không tìm thấy bản thay thế</b> trong kỳ —
-              liên kết trong sổ chỉ có một chiều, bản kia nằm ở kỳ khác hoặc chưa nạp.
-              Số tờ khai vẫn đúng, nhưng cần tra lại.</div>
+              không tìm thấy bản thay thế — nó nằm ở <b>kỳ khác hoặc chưa nạp</b>,
+              cần tra xem đã khai chưa.
+            </div>
             <div style={{ marginTop: 6, color: "#8c8c8c" }}>
-              Bấm <b>Xem trước</b> để liệt kê và xuất file, bấm <b>Đánh dấu vào sổ</b>{" "}
-              để ghi chú vào cột Ghi chú của từng hóa đơn.</div>
+              <b>Xem trước</b>: chỉ liệt kê và xuất file · <b>Đánh dấu vào sổ</b>:
+              ghi chú vào cột Ghi chú của từng hóa đơn.
+            </div>
           </>}
       />
 
@@ -152,9 +153,7 @@ export default function HdLienQuanKhacKy({ mo, onDong, nam, thang }: Props) {
                 onClick={() => void chay(true)}>
           Xem trước (không ghi)
         </Button>
-        {/* Chỉ mở nút ghi khi ĐÃ xem trước và CÓ hóa đơn: bấm ghi khi chưa biết sẽ
-            đụng vào đâu là đúng thứ bước xem trước sinh ra để tránh. */}
-        <Tooltip title={!kq ? "Bấm Xem trước đã"
+        <Tooltip title={!kq ? "Bấm Xem trước"
                       : kq.soHoaDon === 0 ? "Kỳ này không có hóa đơn nào"
                       : "Ghi [TK-LQ] vào cột Ghi chú của các hóa đơn dưới đây"}>
           <Button icon={<SaveOutlined />}
@@ -208,8 +207,6 @@ export default function HdLienQuanKhacKy({ mo, onDong, nam, thang }: Props) {
                 <div style={{ marginTop: 6, fontSize: 12 }}>
                   File tổng hợp: <code>{kq.duongDanFile}</code>
                 </div>)}
-              {/* Lỗi hiện GỌN: đơn vị chưa mở sổ năm đó là chuyện thường, liệt kê hết
-                  ra thì lấn mất phần kết quả thật. */}
               {kq.loi.length > 0 && (
                 <details style={{ marginTop: 6 }}>
                   <summary style={{ cursor: "pointer", color: "#d46b08" }}>
@@ -234,16 +231,16 @@ export default function HdLienQuanKhacKy({ mo, onDong, nam, thang }: Props) {
         summary={(ds) => ds.length === 0 ? null : (
           <Table.Summary fixed>
             <Table.Summary.Row>
-              <Table.Summary.Cell index={0} colSpan={9}>
+              <Table.Summary.Cell index={0} colSpan={10}>
                 <b>Cộng {ds.length} hóa đơn</b>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={9} align="right">
+              <Table.Summary.Cell index={10} align="right">
                 <b>{tien(ds.reduce((s, x) => s + x.tienHang, 0))}</b>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={10} align="right">
+              <Table.Summary.Cell index={11} align="right">
                 <b>{tien(ds.reduce((s, x) => s + x.tienVat, 0))}</b>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={11} />
+              <Table.Summary.Cell index={12} />
             </Table.Summary.Row>
           </Table.Summary>
         )}

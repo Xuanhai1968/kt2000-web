@@ -940,6 +940,24 @@ export default function ToKhaiXml(
       a.download = toKhai?.tenFileXml ?? `to-khai-${thang}.xml`;
       a.click();
       URL.revokeObjectURL(url);
+
+      // Server vừa lưu bản XML này vào kho ScanDoc và ghi số vào bảng TOKHAI —
+      // báo lại để kế toán biết đã chốt, không phải bấm thêm nút "Lưu" nào nữa.
+      // Lưu hỏng KHÔNG chặn tải (file vẫn về máy), nên phải nói rõ để còn xử lý.
+      if (r.headers["x-da-luu"] === "1") {
+        const duong = decodeURIComponent(r.headers["x-duong-dan"] ?? "");
+        message.success({
+          content: `Đã tải XML, lưu vào kho và ghi vào sổ${duong ? ` — ${duong}` : ""}`,
+          duration: 6,
+        });
+      } else {
+        const loi = decodeURIComponent(r.headers["x-loi-luu"] ?? "");
+        message.warning({
+          content: "Đã tải XML nhưng CHƯA lưu được vào kho/sổ"
+                   + (loi ? ` — ${loi}` : ""),
+          duration: 10,
+        });
+      }
     } catch (e) {
       message.error(loiApi(e, "Không tải được XML tờ khai"));
     }
@@ -1029,22 +1047,26 @@ export default function ToKhaiXml(
   };
 
 
-  // Tổng chênh sổ ↔ bảng kê của MỘT hướng, cộng từ chính danh sách hóa đơn lệch đã
-  // tìm được. null = chưa bấm "Tìm HĐ lệch" (khác hẳn 0 = đã soát và khớp).
-  //
-  // Công thức từng dòng: bảng kê − sổ. Hóa đơn "Sổ chưa có" thì vế sổ là 0, nên cả
-  // giá trị bảng kê là phần thiếu — đúng thứ cần thấy ở ô tổng.
   const tongLech = (huong: "VAO" | "RA") => {
     const kq = huong === "VAO" ? lechVao : lechRa;
     if (!kq) return null;
-    let hang = 0, vat = 0;
+    const g = { hangRong: 0, hangDuong: 0, hangAm: 0,
+                vatRong: 0, vatDuong: 0, vatAm: 0, soDong: 0 };
     for (const d of kq.dong) {
-      if (d.tienHangFile != null)
-        hang += d.tienHangFile - (d.coTrongSo ? d.doanhThuChuaVat : 0);
-      if (d.tienVatFile != null)
-        vat += d.tienVatFile - (d.coTrongSo ? d.thueGtgt : 0);
+      let coLech = false;
+      if (d.tienHangFile != null) {
+        const l = d.tienHangFile - (d.coTrongSo ? d.doanhThuChuaVat : 0);
+        if (l !== 0) { coLech = true; g.hangRong += Math.abs(l); }
+        if (l > 0) g.hangDuong += l; else g.hangAm += l;
+      }
+      if (d.tienVatFile != null) {
+        const l = d.tienVatFile - (d.coTrongSo ? d.thueGtgt : 0);
+        if (l !== 0) { coLech = true; g.vatRong += Math.abs(l); }
+        if (l > 0) g.vatDuong += l; else g.vatAm += l;
+      }
+      if (coLech) g.soDong++;
     }
-    return { hang, vat };
+    return g;
   };
 
   const luoi = (
@@ -1065,27 +1087,37 @@ export default function ToKhaiXml(
           <span className="ct-nhan">VAT {viTat} Tờ khai</span>
           <span className="ct-gia gia-xanh">{tien(vat)}</span>
         </div>
-        {/* Chênh giữa SỔ và bảng kê cổng TCT, cộng từ chính danh sách hóa đơn lệch của
-            hướng này — bấm "Tìm HĐ lệch" xong mới có số, chưa bấm thì hiện "—" chứ
-            KHÔNG hiện 0: số 0 nghĩa là "đã soát, khớp", còn đây là "chưa soát". */}
-        <div className="ct-o"
-             title={tongLech(huong)
-               ? "Chênh tiền hàng giữa sổ và bảng kê cổng TCT (bảng kê − sổ)"
-               : "Bấm 'Tìm HĐ lệch' để soát với bảng kê cổng TCT"}>
-          <span className="ct-nhan">Lệch GT{viTat}</span>
-          <span className={`ct-gia ${tongLech(huong)?.hang ? "gia-lech" : ""}`}>
-            {tongLech(huong) ? tien(tongLech(huong)!.hang) : "—"}
-          </span>
-        </div>
-        <div className="ct-o"
-             title={tongLech(huong)
-               ? "Chênh tiền VAT giữa sổ và bảng kê cổng TCT (bảng kê − sổ)"
-               : "Bấm 'Tìm HĐ lệch' để soát với bảng kê cổng TCT"}>
-          <span className="ct-nhan">Lệch VAT{viTat}</span>
-          <span className={`ct-gia ${tongLech(huong)?.vat ? "gia-lech" : ""}`}>
-            {tongLech(huong) ? tien(tongLech(huong)!.vat) : "—"}
-          </span>
-        </div>
+        {(() => {
+          const t = tongLech(huong);
+          const moTa = (rong: number, duong: number, am: number, ten: string) =>
+            t == null ? "Bấm 'Tìm HĐ lệch' để soát với bảng kê cổng TCT"
+            : rong === 0 ? `${ten}: sổ khớp bảng kê cổng TCT`
+            : `${ten} — độ lệch ${tien(rong)}đ trên ${t.soDong} hóa đơn.
+`
+              + `Sổ thiếu ${tien(duong)}đ, sổ thừa ${tien(Math.abs(am))}đ.
+`
+              + `(Cộng bù trừ chỉ còn ${tien(duong + am)}đ — không dùng số này để đánh giá.)`;
+          return (
+            <>
+              <div className="ct-o"
+                   title={moTa(t?.hangRong ?? 0, t?.hangDuong ?? 0, t?.hangAm ?? 0,
+                               "Tiền hàng")}>
+                <span className="ct-nhan">Lệch GT{viTat}</span>
+                <span className={`ct-gia ${t?.hangRong ? "gia-lech" : ""}`}>
+                  {t ? tien(t.hangRong) : "—"}
+                </span>
+              </div>
+              <div className="ct-o"
+                   title={moTa(t?.vatRong ?? 0, t?.vatDuong ?? 0, t?.vatAm ?? 0,
+                               "Tiền VAT")}>
+                <span className="ct-nhan">Lệch VAT{viTat}</span>
+                <span className={`ct-gia ${t?.vatRong ? "gia-lech" : ""}`}>
+                  {t ? tien(t.vatRong) : "—"}
+                </span>
+              </div>
+            </>
+          );
+        })()}
         {phuThem}
 
         <span className="ct-o ct-nut-soat">
@@ -1150,6 +1182,15 @@ export default function ToKhaiXml(
               <span className="loc-dem">
                 {kq.soLech} lệch · sổ {kq.soHdSo} HĐ · bảng kê {kq.soHdFile} HĐ
               </span>
+              {(() => {
+                const t = tongLech(huong);
+                if (!t || (t.hangRong === 0 && t.vatRong === 0)) return null;
+                return (
+                  <span className="loc-dem" style={{ color: "#cf1322" }}>
+                    độ lệch: hàng {tien(t.hangRong)} · VAT {tien(t.vatRong)}
+                  </span>
+                );
+              })()}
               <span className="day" />
               <Button size="small"
                       onClick={() => (huong === "VAO" ? setLechVao : setLechRa)(null)}>
@@ -1260,6 +1301,7 @@ export default function ToKhaiXml(
         className="luoi-tk"
         size="small"
         rowKey="maHd"
+        virtual
         dataSource={dsHien}
         columns={cot}
         loading={tai}
@@ -1346,16 +1388,14 @@ export default function ToKhaiXml(
                       onClick={taiPdf} title={`Tải ${tenFilePdf()}`}>
                 Lưu PDF
               </Button>
-              <Button icon={<DownloadOutlined />} disabled={!toKhai.choXuat}
-                      onClick={taiXml}
-                      title={toKhai.choXuat ? `Tải ${toKhai.tenFileXml}`
-                                            : "Còn lỗi chặn — xử lý hết mới xuất được XML"}>
-                Tải XML
-              </Button>
             </>
           )}
 
-          <Button type="primary" size="large"
+          {/* Đã có tờ khai thì "Tạo lại" lùi về nút phụ — việc chính lúc này là TẢI XML
+              (bấm là chốt: lưu file vào kho + ghi số vào sổ). Chưa có tờ khai thì "Tạo"
+              vẫn là nút chính vì chưa có gì để tải. */}
+          <Button size={toKhai ? "middle" : "large"}
+                  type={toKhai ? "default" : "primary"}
                   icon={toKhai ? <ReloadOutlined /> : <FileDoneOutlined />}
                   loading={dangLapTk} onClick={lapToKhai}
                   title={hdDaChon.size > 0
@@ -1364,9 +1404,19 @@ export default function ToKhaiXml(
                              : `Lập tờ khai tháng ${thang} từ toàn bộ hóa đơn của kỳ`}>
             {hdDaChon.size > 0
               ? `${toKhai ? "Tạo lại" : "Tạo"} tờ khai T${thang} từ ${hdDaChon.size} HĐ chọn`
-              : toKhai ? `Tạo lại tờ khai tháng ${thang}`
+              : toKhai ? `Tạo lại tháng ${thang}`
                        : `Tạo tờ khai tháng ${thang}`}
           </Button>
+
+          {toKhai && (
+            <Button type="primary" size="large" icon={<DownloadOutlined />}
+                    disabled={!toKhai.choXuat} onClick={taiXml}
+                    title={toKhai.choXuat
+                      ? `Tải ${toKhai.tenFileXml} — đồng thời lưu vào kho và ghi vào sổ`
+                      : "Còn lỗi chặn — xử lý hết mới xuất được XML"}>
+              Tải XML
+            </Button>
+          )}
         </div>
       }
       width="100vw"

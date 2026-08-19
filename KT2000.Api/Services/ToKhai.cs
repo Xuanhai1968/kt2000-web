@@ -126,28 +126,6 @@ namespace KT2000.Api.Services
             return k;
         }
 
-        /// <summary>
-        /// Danh tính một hóa đơn để ghép SỔ với BẢNG KÊ của cổng.
-        /// </summary>
-        /// <remarks>
-        /// KHÔNG có MST trong khóa, và KÝ HIỆU phải bỏ chữ số đầu — hai điểm này đều
-        /// đo được trên dữ liệu thật 18/08, thiếu cái nào là KHÔNG cặp nào ghép nổi:
-        ///
-        ///   • KÝ HIỆU ghi khác nhau: sổ để dạng GHÉP mẫu số + ký hiệu ('1C26TNT', xem
-        ///     ImportService: khhd = MauSo + KhHd), còn cổng chỉ ghi ký hiệu ('C26TNT').
-        ///     Bỏ CHỮ SỐ ĐẦU chứ không Replace: '1C26T1NT' mà replace là hỏng.
-        ///
-        ///   • MST đổi được giữa hai bên: hóa đơn thay thế thường sửa luôn MST người
-        ///     mua (ghi sai MST là lý do phổ biến nhất phải thay thế — đo thật
-        ///     THAI_TUAN 0000471→0000527 đổi hẳn khách hàng). Để MST vào khóa thì
-        ///     những cặp đó thành "thiếu cả hai bên".
-        ///
-        /// Hậu quả của bản cũ (đo 18/08 trên NHAT_TUAN/HUY_THANH/DAT_VIET_THANH kỳ 7):
-        /// thieuTrongSo = 100% bảng kê VÀ thieuTrongFile = 100% sổ — đối chiếu vô dụng
-        /// mà nhìn như sổ hỏng nặng.
-        ///
-        /// Hướng VẪN nằm trong khóa: cùng một số hóa đơn có thể tồn tại ở cả hai chiều.
-        /// </remarks>
         private static string Khoa(string huong, string mst, string khhd, string soHd)
             => $"{huong}|{ChuanKhhd(khhd)}|{ImportService.ChuanSoHd(soHd ?? "")}";
 
@@ -181,12 +159,7 @@ namespace KT2000.Api.Services
         /// <param name="chiHuong">
         /// Chỉ soát MỘT chiều ("VAO" | "RA"); null = cả hai.
         ///
-        /// Bắt buộc khi nguồn file chỉ có một chiều: bảng kê cổng tách riêng mua vào và
-        /// bán ra, mà sổ thì có cả hai. Không lọc thì TOÀN BỘ hóa đơn chiều kia rơi vào
-        /// "có trong sổ, không thấy trong bảng kê" — đo thật 18/08 NHAT_TUAN kỳ 7: soát
-        /// bảng kê VÀO (79 HĐ) mà báo thiếu 443 hóa đơn, trong đó 350 cái là hóa đơn RA
-        /// hoàn toàn không liên quan.
-        /// </param>
+
         public async Task<KetQuaRaSoatDto> Soat(
             string code, int year, int? thang, IReadOnlyList<HoaDonFileDto> tuFile,
             CancellationToken huy = default, string? chiHuong = null)
@@ -209,8 +182,6 @@ namespace KT2000.Api.Services
                               FROM HOA_DON_LINE x WHERE x.ma_hd = h.ma_hd
                       ) l"
                     + (thang is > 0 ? " WHERE h.thang = @thang" : " WHERE 1 = 1")
-                    // Lọc hướng NGAY Ở SQL chứ không lọc sau khi đọc về: sổ một kỳ có
-                    // vài trăm hóa đơn, kéo cả chiều không dùng tới rồi bỏ là phí.
                     + (chiHuong == null ? "" : " AND h.huong = @huong");
 
                 using var cmd = new SqlCommand(sql, conn);
@@ -373,39 +344,16 @@ namespace KT2000.Api.Services
             ("tienhang", new[] { "tổng tiền chưa thuế", "tong tien chua thue" }),
             ("tienvat",  new[] { "tổng tiền thuế", "tong tien thue" }),
             ("tienck",   new[] { "tổng tiền chiết khấu", "tong tien chiet khau" }),
-            // Cột dự phòng, chỉ dùng khi cột tiền hàng bị bỏ trống — xem TienHangDong.
             ("tientt",   new[] { "tổng tiền thanh toán", "tong tien thanh toan" }),
         };
 
-        /// <summary>
-        /// Tiền chưa thuế của MỘT dòng bảng kê, có vá trường hợp cổng bỏ trống cột đó.
-        /// </summary>
-        /// <remarks>
-        /// Ca thật DAT_VIET_THANH T7/2026, file HD_VAO_..._MTT.xlsx dòng 7 — hóa đơn
-        /// C26MYY/0002158 của HỘ KINH DOANH NAM HƯƠNG:
-        ///     Tổng tiền chưa thuế = (TRỐNG)
-        ///     Tổng tiền thuế      = (TRỐNG)
-        ///     Tổng tiền thanh toán = 512.000
-        /// Sổ ghi đúng 512.000 (2 dòng chi tiết, VAT 0), nên màn rà soát báo lệch
-        /// -512.000 — lệch GIẢ, do bảng kê thiếu cột chứ sổ không sai.
-        ///
-        /// Vá HẸP có chủ ý: chỉ suy khi CẢ HAI cột tiền hàng và tiền thuế đều trống.
-        /// Lúc đó tổng thanh toán chính là tiền chưa thuế (không có thuế để trừ ra).
-        /// Nếu chỉ tiền hàng trống mà vẫn có tiền thuế thì KHÔNG suy — trừ ngược ra
-        /// tiền hàng dễ sai, và đó mới là lệch thật cần cho kế toán thấy.
-        /// </remarks>
         private static decimal TienHangDong(decimal tienHang, decimal tienVat,
                                             decimal tienTt, bool coCotTt)
             => tienHang == 0 && tienVat == 0 && coCotTt && tienTt != 0
              ? tienTt : tienHang;
 
-        /// <summary>
-        /// Đọc bảng kê Excel của cổng TCT thành danh sách hóa đơn để đối chiếu.
-        /// </summary>
         /// <param name="mstDonVi">
-        /// MST đơn vị đang đăng nhập — để suy hướng từng dòng (trùng MST người bán thì
-        /// là hóa đơn RA). Bỏ trống thì mọi dòng để hướng rỗng, tầng gọi tự quyết.
-        /// </param>
+
         public static List<HoaDonFileDto> DocBangKeExcel(
             Stream noiDung, string tenFile, string? mstDonVi)
         {
@@ -414,7 +362,6 @@ namespace KT2000.Api.Services
             var ws = wb.Worksheets.FirstOrDefault();
             if (ws == null) return ds;
 
-            // --- Tìm dòng header: dòng đầu tiên có ô "STT" ---
             int dongHeader = 0;
             var cuoi = Math.Min(ws.LastRowUsed()?.RowNumber() ?? 0, 30);
             for (int r = 1; r <= cuoi && dongHeader == 0; r++)
@@ -425,7 +372,6 @@ namespace KT2000.Api.Services
 
             if (dongHeader == 0) return ds;     // không phải bảng kê của cổng
 
-            // --- Ánh xạ tên cột → chỉ số cột ---
             var viTri = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var soCot = ws.LastColumnUsed()?.ColumnNumber() ?? 0;
             for (int c = 1; c <= soCot; c++)
@@ -701,6 +647,7 @@ namespace KT2000.Api.Services
         {
             public string MaHd = "";
             public decimal PtVat;
+            public decimal TienVatL;   // tổng tien_vat_l của nhóm; 0 = XML không ghi
             public string? LoaiThue;
             public int SoDong;
             public decimal TienHang;
@@ -719,34 +666,6 @@ namespace KT2000.Api.Services
             + LocHdDaBiThayThe
             + LocHdLienQuanKhacKy;
 
-        // BR-TK-06c — HÓA ĐƠN TỰ KHAI 'đã bị thay thế' mà bản thay thế CHƯA PHÁT HÀNH
-        // thì VẪN KÊ.
-        //
-        // Bản cũ loại thẳng mọi hóa đơn có tthai_hd chứa 'bị thay thế'. ĐO LẠI 18/08
-        // trên chính XML tờ khai cổng trả về (kỳ 07/2026) cho thấy làm vậy là KHAI
-        // THIẾU — cổng vẫn kê những hóa đơn đó:
-        //
-        //   HUY_THANH      ct35 lệch -20.618.313 = đúng VAT của HĐ 1297
-        //                  (bản thay thế của nó nằm ở T8, chưa phát hành lúc khai T7)
-        //   NHAT_TUAN      ct35 lệch    -677.793 = đúng tổng VAT HĐ 1291 + 1448
-        //   DAT_VIET_THANH ct35 lệch    -510.582 (phần lớn do HĐ 0000801)
-        //
-        // Cùng con số đó lặp lại y hệt ở ct34 theo tiền hàng — NHAT_TUAN 3.356.674 +
-        // 5.115.740 = 8.472.414, khớp tuyệt đối.
-        //
-        // LUẬT ĐÚNG: hóa đơn gốc chỉ ra khỏi kỳ khi số liệu của nó ĐÃ ĐƯỢC BẾ ĐI, tức
-        // đã có bản thay thế phát hành ở kỳ này hoặc kỳ TRƯỚC. Bản thay thế phát hành
-        // ở kỳ SAU thì tại kỳ này nó vẫn còn nguyên hiệu lực kê khai — đúng tinh thần
-        // NĐ 70/2025: hóa đơn bị thay thế không bị hủy, chỉ vô hiệu KỂ TỪ khi có bản
-        // thay thế.
-        //
-        // Nhánh 'cùng kỳ' ở LocHdBiThayThe lo phần bản thay thế nằm CÙNG kỳ. Nhánh này
-        // chỉ còn lo phần bản thay thế nằm ở kỳ TRƯỚC — lúc đó gốc đã kê ở kỳ trước rồi,
-        // kê lại là tính hai lần.
-        //
-        // Vì sao vẫn phải dò theo tthai_hd chứ không chỉ theo liên kết: bản thay thế có
-        // thể CHƯA NẠP về sổ. Nhưng nay chỉ loại khi tìm THẤY bản thay thế thật, nên
-        // không còn cảnh loại nhầm một hóa đơn mà cổng vẫn tính.
         private const string LocHdDaBiThayThe = @"
                AND NOT (
                      ISNULL(h.tthai_hd, '') LIKE N'%bị thay thế%'
@@ -790,7 +709,8 @@ namespace KT2000.Api.Services
                    {(coLoaiThue ? "MAX(l.loai_thue)" : "CAST(NULL AS NVARCHAR(10))")},
                    COUNT(*),
                    CAST(SUM(ISNULL(l.so_luong, 0) * ISNULL(l.don_gia, 0))
-                        AS DECIMAL(18,4))
+                        AS DECIMAL(18,4)),
+                   CAST(SUM(ISNULL(l.tien_vat_l, 0)) AS DECIMAL(18,4))
               FROM HOA_DON h
               JOIN HOA_DON_LINE l ON l.ma_hd = h.ma_hd
              WHERE h.thang = @thang AND h.huong = @huong
@@ -878,10 +798,6 @@ namespace KT2000.Api.Services
             var hoaDon = await vHoaDon;
             var dongRa = await vDongRa;
             var dongVao = await vDongVao;
-
-            // BR-TK-20 — chỉ giữ hóa đơn người lập đã chọn. Lọc ở ĐÂY, ngay sau khi đọc
-            // và trước mọi phép cộng, nên toàn bộ engine phía dưới (PhanBo, TinhChiTieu,
-            // phụ lục, kiểm cân đối) không cần biết gì về chuyện chọn lọc.
             var soHdCaKy = hoaDon.Count;
             if (chonHd is { Count: > 0 })
             {
@@ -893,10 +809,6 @@ namespace KT2000.Api.Services
                 tk.LocTheoChon = true;
                 tk.SoHdDaChon = hoaDon.Count;
                 tk.SoHdCaKy = soHdCaKy;
-
-                // Hóa đơn được chọn mà kỳ này không có (bị lọc bởi BR-TK-06, hoặc client
-                // gửi mã cũ sau khi sổ đã đổi): phải nói ra, vì im lặng thì người lập
-                // tưởng đã kê đủ những gì mình tick.
                 var thieu = chon.Count - hoaDon.Count;
                 if (thieu > 0)
                     tk.CanhBao.Add(new CanhBaoToKhaiDto
@@ -928,6 +840,7 @@ namespace KT2000.Api.Services
                 });
 
             await CanhBaoTrangThaiLa(conn, thang, tk.CanhBao);
+            tk.LoaiKhacKy = await DocHdLoaiKhacKy(conn, thang, year);
 
             tk.NhomBanRa = PhanBo(hoaDon, dongRa, "RA", tk.CanhBao);
             tk.NhomMuaVao = PhanBo(hoaDon, dongVao, "VAO", tk.CanhBao);
@@ -940,31 +853,111 @@ namespace KT2000.Api.Services
             return tk;
         }
 
+        private static async Task<List<HoaDonLoaiKhacKyDto>> DocHdLoaiKhacKy(
+            SqlConnection conn, int thang, int nam)
+        {
+            const string sql = @"
+                SELECT h.ma_hd, h.huong, h.khhd, h.so_hd, h.ngay, h.ten_kh,
+                       ISNULL(l.tien_hang, 0), ISNULL(h.tien_vat, 0),
+                       ISNULL(h.tthai_hd, ''), ISNULL(h.sohd_lienquan, ''),
+                       h.ngay_lienquan
+                  FROM HOA_DON h
+                  OUTER APPLY (
+                        SELECT SUM(ISNULL(x.so_luong,0) * ISNULL(x.don_gia,0)) AS tien_hang
+                          FROM HOA_DON_LINE x
+                         WHERE x.ma_hd = h.ma_hd AND ISNULL(x.tinh_chat,'1') <> '3'
+                  ) l
+                 WHERE h.thang = @thang
+                   AND ISNULL(h.tich_chat_hd_lienquan, '') <> ''
+                   AND h.ngay_lienquan IS NOT NULL
+                   AND (MONTH(h.ngay_lienquan) <> h.thang
+                        OR YEAR(h.ngay_lienquan) <> @namKy)
+                 ORDER BY h.huong, h.so_hd";
+
+            var ds = new List<HoaDonLoaiKhacKyDto>();
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@thang", thang);
+            cmd.Parameters.AddWithValue("@namKy", nam);
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+            {
+                var ngayLq = r.IsDBNull(10) ? (DateTime?)null : r.GetDateTime(10);
+                ds.Add(new HoaDonLoaiKhacKyDto
+                {
+                    MaHd = r.GetString(0),
+                    Huong = r.IsDBNull(1) ? "" : r.GetString(1),
+                    KhHd = r.IsDBNull(2) ? null : r.GetString(2),
+                    SoHd = r.IsDBNull(3) ? null : r.GetString(3),
+                    Ngay = r.IsDBNull(4) ? null : r.GetDateTime(4),
+                    TenDoiTac = r.IsDBNull(5) ? null : r.GetString(5),
+                    TienHang = r.GetDecimal(6),
+                    TienVat = r.GetDecimal(7),
+                    TrangThai = r.GetString(8),
+                    SoHdLienQuan = r.GetString(9),
+                    NgayLienQuan = ngayLq,
+                    LyDo = ngayLq is { } d
+                         ? $"Thay thế/điều chỉnh cho HĐ {r.GetString(9)} ngày "
+                           + $"{d:dd/MM/yyyy} — gốc đã kê ở kỳ {d.Month:00}/{d.Year}"
+                         : "Liên quan tới hóa đơn của kỳ khác",
+                });
+            }
+            return ds;
+        }
+
         private static async Task CanhBaoTrangThaiLa(
             SqlConnection conn, int thang, List<CanhBaoToKhaiDto> canhBao)
         {
             const string sql = @"
-                SELECT tthai_hd, COUNT(*)
+                SELECT tthai_hd, huong, khhd, so_hd, tien_vat,
+                       ISNULL(sohd_lienquan, ''), ISNULL(tich_chat_hd_lienquan, '')
                   FROM HOA_DON
                  WHERE thang = @thang
                    AND ISNULL(tthai_hd, '') <> ''
                    AND (tthai_hd LIKE N'%thay thế%' OR tthai_hd LIKE N'%điều chỉnh%')
                    AND tthai_hd NOT IN (N'Hóa đơn mới', N'Hóa đơn thay thế',
                                         N'Hóa đơn đã bị thay thế', N'Hóa đơn điều chỉnh')
-                 GROUP BY tthai_hd";
+                 ORDER BY tthai_hd, huong, so_hd";
 
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@thang", thang);
-            using var r = await cmd.ExecuteReaderAsync();
-            while (await r.ReadAsync())
+            var theoTthai = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            using (var cmd = new SqlCommand(sql, conn))
+            {
+                cmd.Parameters.AddWithValue("@thang", thang);
+                using var r = await cmd.ExecuteReaderAsync();
+                while (await r.ReadAsync())
+                {
+                    var tthai = r.GetString(0);
+                    var huong = r.IsDBNull(1) ? "" : r.GetString(1);
+                    var khhd = r.IsDBNull(2) ? "" : r.GetString(2);
+                    var soHd = r.IsDBNull(3) ? "" : r.GetString(3);
+                    var vat = r.IsDBNull(4) ? 0m : r.GetDecimal(4);
+                    var lienQuan = r.GetString(5);
+
+                    var nhan = $"{(huong == "RA" ? "bán ra" : "mua vào")} {khhd}/{soHd}"
+                             + $" (VAT {vat:N0}đ"
+                             + (lienQuan.Length > 0 ? $", liên quan HĐ {lienQuan})" : ")");
+
+                    if (!theoTthai.TryGetValue(tthai, out var ds))
+                        theoTthai[tthai] = ds = new List<string>();
+                    ds.Add(nhan);
+                }
+            }
+
+            foreach (var (tthai, ds) in theoTthai)
+            {
+                var ke = string.Join("; ", ds.Take(5));
+                var them = ds.Count - Math.Min(5, ds.Count);
+
                 canhBao.Add(new CanhBaoToKhaiDto
                 {
                     Ma = "KT-09",
                     Muc = "CANH_BAO",
-                    MoTa = $"Sổ có {r.GetInt32(1)} hóa đơn mang trạng thái lạ "
-                         + $"'{r.GetString(0)}' — engine chưa biết xếp loại, "
-                         + "kiểm lại xem có phải hóa đơn thay thế/điều chỉnh không",
+                    MoTa = $"{ds.Count} hóa đơn ở trạng thái '{tthai}' vẫn được tính "
+                         + $"vào tờ khai: {ke}"
+                         + (them > 0 ? $" và {them} hóa đơn khác" : "")
+                         + $". Nếu bản thay thế/điều chỉnh đã nằm ở kỳ khác thì kỳ này "
+                         + "đang kê thừa — đối chiếu ở màn 'HĐ khác kỳ'.",
                 });
+            }
         }
 
         // nam: để BR-TK-06b so ngay_lienquan có thuộc kỳ này không (xem LocHdLienQuanKhacKy).
@@ -1006,8 +999,25 @@ namespace KT2000.Api.Services
                     LoaiThue = r.IsDBNull(2) ? null : r.GetString(2),
                     SoDong = r.GetInt32(3),
                     TienHang = r.GetDecimal(4),
+                    TienVatL = r.IsDBNull(5) ? 0m : r.GetDecimal(5),
                 });
             return ds;
+        }
+
+        private static decimal ThueCuaNhom(NhomThueSuatDto n, decimal thueNhan)
+        {
+            if (n.ThueTuFile <= 0) return thueNhan;
+
+            var lech = Math.Abs(n.ThueTuFile - thueNhan);
+            if (lech <= Math.Max(5m * n.SoDong, 5m)) return thueNhan;
+
+            var goc = n.DoanhThu + n.ThueTuFile;
+            if (goc <= 0) return thueNhan;
+
+            var tyLeNguoc = n.ThueTuFile * 100m / goc;
+            return Math.Abs(tyLeNguoc - n.ThueSuat) <= 0.05m
+                 ? Math.Round(n.ThueTuFile, 0, MidpointRounding.AwayFromZero)
+                 : thueNhan;
         }
 
         private static List<NhomThueSuatDto> PhanBo(
@@ -1030,6 +1040,7 @@ namespace KT2000.Api.Services
 
                 n.TienHangGop += d.TienHang;
                 n.SoDong += d.SoDong;
+                n.ThueTuFile += d.TienVatL;
                 n.LoaiThue ??= d.LoaiThue;
                 if (ckTheoHd.TryGetValue(d.MaHd, out var ck) && ck != 0
                     && gopTheoHd.TryGetValue(d.MaHd, out var gopHd) && gopHd != 0)
@@ -1040,16 +1051,11 @@ namespace KT2000.Api.Services
             {
                 n.DoanhThu = Math.Round(n.TienHangGop - n.ChietKhau, 0, MidpointRounding.AwayFromZero);
                 n.ChietKhau = Math.Round(n.ChietKhau, 0, MidpointRounding.AwayFromZero);
-                // Thuế suất ÂM là MÃ LOẠI HÀNG, không phải phần trăm:
-                //   -1 = KKKNT (không kê khai nộp thuế)   -2 = KCT (không chịu thuế)
-                // Nhân thẳng thì sinh ra thuế ÂM không có thật — đo 18/08 trên
-                // DAT_VIET_THANH T7: nhóm KCT bán ra ra -31.820.000 (đúng -2% của
-                // 1.591.000.000), mua vào KCT+KKKNT ra -49.483.345. Hai con số này
-                // chính là "chênh vượt ngưỡng làm tròn" của cảnh báo BR-TK-03, tức
-                // cảnh báo báo động vì lỗi của chính công thức này chứ sổ không sai.
-                n.Thue = n.ThueSuat <= 0 ? 0m
-                       : Math.Round(n.DoanhThu * n.ThueSuat / 100m, 0,
-                                    MidpointRounding.AwayFromZero);
+                if (n.ThueSuat <= 0) { n.Thue = 0m; continue; }
+
+                var thueNhan = Math.Round(n.DoanhThu * n.ThueSuat / 100m, 0,
+                                          MidpointRounding.AwayFromZero);
+                n.Thue = ThueCuaNhom(n, thueNhan);
             }
 
             var thueHeader = dsHd.Sum(h => h.TienVat);
@@ -1059,8 +1065,13 @@ namespace KT2000.Api.Services
             if (lech != 0 && gom.Count > 0)
             {
                 var soHd = dsHd.Count;
-                // Ngưỡng: mỗi hóa đơn lệch tối đa 5 đồng do làm tròn.
-                if (Math.Abs(lech) <= Math.Max(5m * soHd, 100m))
+                var thueTheoFile = gom.Values
+                    .Where(x => x.ThueTuFile > 0
+                             && x.Thue == Math.Round(x.ThueTuFile, 0,
+                                                     MidpointRounding.AwayFromZero))
+                    .Sum(x => x.Thue);
+                var nguong = Math.Max(5m * soHd, 100m) + thueTheoFile / 1000m;
+                if (Math.Abs(lech) <= nguong)
                 {
                     var lonNhat = gom.Values.OrderByDescending(n => n.DoanhThu).First();
                     lonNhat.Thue += lech;
@@ -1083,14 +1094,6 @@ namespace KT2000.Api.Services
             return gom.Values.OrderBy(n => n.ThueSuat).ToList();
         }
 
-        /// <summary>
-        /// Chỉ đích danh vài hóa đơn lệch nhiều nhất để kế toán mở ra soi, thay vì chỉ
-        /// đưa một con số tổng rồi phải tự dò trong vài trăm hóa đơn.
-        ///
-        /// So TỪNG hóa đơn: tien_vat ở header với thuế cộng lại từ các dòng của chính nó
-        /// (mỗi nhóm thuế suất tính riêng rồi cộng — giống cách PhanBo làm cho cả kỳ).
-        /// Bỏ qua chênh ≤ 5đ vì đó là làm tròn bình thường.
-        /// </summary>
         private static string ThuPhamLech(List<HoaDonKy> dsHd, List<DongTheoSuat> dong)
         {
             var theoHd = dong
@@ -1115,8 +1118,6 @@ namespace KT2000.Api.Services
 
             if (thuPham.Count == 0) return "";
 
-            // ma_hd dạng "VAO_0100107564_K26THT_2380537" — cắt lấy hai mảnh cuối
-            // (ký hiệu + số hóa đơn) cho kế toán tra, bỏ tiền tố hướng và MST.
             static string NhanHd(string maHd)
             {
                 var m = maHd.Split('_');
@@ -1398,8 +1399,6 @@ namespace KT2000.Api.Services
             try
             {
                 var doc = XDocument.Load(duongDanXml);
-                // Bỏ qua namespace: tờ khai HTKK khai xmlns mặc định, so LocalName thì
-                // không phải mang theo namespace suốt cả hàm.
                 var e = doc.Descendants()
                            .FirstOrDefault(x => x.Name.LocalName == "ct43");
                 if (e == null) return null;
@@ -2552,14 +2551,6 @@ namespace KT2000.Api.Services
 
         private const string DauHieu = "[TK-LQ]";
 
-        /// <summary>
-        /// Sức chứa thật của HOA_DON.ghi_chu — NVARCHAR(500), tức 500 KÝ TỰ.
-        /// </summary>
-        /// <remarks>
-        /// Đừng nhầm với con số 1000 mà sys.columns.max_length báo: đó là BYTE, mà
-        /// NVARCHAR dùng 2 byte cho mỗi ký tự. Bản cũ kiểm ngưỡng 1000 nên chuỗi dài
-        /// 501..1000 ký tự lọt qua rồi bị SQL cắt cụt âm thầm.
-        /// </remarks>
         private const int MaxGhiChu = 500;
 
         private static string MucLechKy(int thangGoc, int namGoc, int thangKy, int namKy)
@@ -2568,6 +2559,21 @@ namespace KT2000.Api.Services
             return (thangGoc + 2) / 3 != (thangKy + 2) / 3 ? "quý" : "tháng";
         }
 
+        /// <summary>
+        /// Tìm hóa đơn có quan hệ thay thế / điều chỉnh cần kế toán để mắt, gồm ba nhóm:
+        ///   1. Thay thế/điều chỉnh cho hóa đơn thuộc kỳ KHÁC — engine loại khỏi tờ khai
+        ///      vì gốc đã kê ở kỳ đó (BR-TK-06b). Bắt buộc phải có sohd_lienquan: cổng
+        ///      gán mã liên quan cho cả hóa đơn không trỏ tới đâu, thiếu điều kiện này
+        ///      là đánh dấu oan.
+        ///   2. Hóa đơn gốc MỒ CÔI — liên kết chỉ một chiều (bản thay thế trỏ về gốc,
+        ///      gốc không trỏ ngược lại), nên bản thay thế ở kỳ khác hoặc chưa nạp thì
+        ///      không dò ra được. Engine vẫn tính đúng nhờ BR-TK-06c nhưng sổ im lặng.
+        ///   3. Liên quan CÙNG KỲ — engine xử đúng số (BR-TK-06 loại gốc khi thay thế,
+        ///      BR-TK-19 giữ cả hai khi điều chỉnh) nhưng sổ không nói gì; spec §10.4
+        ///      hẹn bù bằng ghi chú. Lấy cả hai phía vì mỗi phía đọc lên một câu khác.
+        /// Thiếu ngay_lienquan thì không biết gốc ở kỳ nào — vẫn nêu ra cho kế toán tự
+        /// tra thay vì đoán bừa.
+        /// </summary>
         private const string SqlTim = @"
             SELECT h.ma_hd, h.huong, ISNULL(h.khhd,''), ISNULL(h.so_hd,''), h.ngay,
                    ISNULL(h.ten_kh,''), ISNULL(h.tich_chat_hd_lienquan,''),
@@ -2577,12 +2583,7 @@ namespace KT2000.Api.Services
                    CAST(ISNULL(h.tien_vat,0)  AS DECIMAL(18,2)),
                    ISNULL(h.ghi_chu,''),
                    ISNULL(h.tthai_hd,''),
-                   -- [14] Bản CÙNG KỲ trỏ tới hóa đơn này (nếu có) — để câu ghi chú của
-                   -- hóa đơn GỐC nói rõ nó bị ai thay thế/điều chỉnh, thay vì chỉ nói suông.
                    bt.so_hd, bt.tich_chat_hd_lienquan, bt.tien_vat,
-                   -- [17] Dòng của bản đó có phải chỉ ĐIỀU CHỈNH THÔNG TIN không
-                   -- (tinh_chat='4': đổi tên hàng, đổi đơn vị tính — tiền không đổi).
-                   -- Đo thật HUY_THANH T7 HĐ 1374 và T8 HĐ 1550.
                    bt.chi_sua_thong_tin
               FROM HOA_DON h
               OUTER APPLY (
@@ -2606,51 +2607,21 @@ namespace KT2000.Api.Services
               ) l
              WHERE h.thang = @thang
                AND (
-                 -- ---- NHÓM 1: hóa đơn THAY THẾ/ĐIỀU CHỈNH, gốc thuộc kỳ KHÁC ----
-                 -- Phải CÓ hóa đơn gốc thì mới có chuyện 'khác kỳ'. Cổng có mã liên
-                 -- quan KHÔNG trỏ tới hóa đơn nào (đo thật 15/08: 8 hóa đơn THAI_TUAN
-                 -- mã '5', tthai_hd = 'Hóa đơn mới', bán lẻ cho hộ kinh doanh/cá nhân,
-                 -- cả ba cột khhd/sohd/ngay_lienquan đều trống). Chúng KHÔNG phải thay
-                 -- thế/điều chỉnh, cổng vẫn kê đủ — không được đánh dấu oan.
                  (    ISNULL(h.tich_chat_hd_lienquan,'') <> ''
                   AND ISNULL(h.sohd_lienquan,'') <> ''
                   AND (
                         (h.ngay_lienquan IS NOT NULL
                          AND (MONTH(h.ngay_lienquan) <> @thang
                               OR YEAR(h.ngay_lienquan) <> @nam))
-                        -- Có gốc mà THIẾU ngày: không biết gốc thuộc kỳ nào nên không
-                        -- kết luận được. Vẫn NÊU RA để kế toán tự tra — im lặng bỏ qua
-                        -- mới là bỏ sót. Dòng loại này ghi 'chưa rõ kỳ gốc', không bịa.
                         OR h.ngay_lienquan IS NULL
                       ))
 
-                 -- ---- NHÓM 2: hóa đơn GỐC MỒ CÔI ----
-                 -- LIÊN KẾT CHỈ CÓ MỘT CHIỀU: hóa đơn thay thế trỏ về gốc, nhưng hóa
-                 -- đơn GỐC không có cột nào trỏ ngược lại — nó chỉ biết mình 'đã bị
-                 -- thay thế' qua tthai_hd. Bình thường dò ngược được bằng cách tìm ai
-                 -- trỏ tới nó, nhưng bản thay thế có thể nằm ở KỲ KHÁC hoặc CHƯA NẠP,
-                 -- lúc đó hóa đơn gốc thành MỒ CÔI.
-                 --
-                 -- Đo thật 15/08: 9 hóa đơn mồ côi trên 4 đơn vị, tổng VAT > 30 triệu
-                 -- (HUY_THANH HĐ 1297 riêng nó đã 20,6 triệu). Engine vẫn tính ĐÚNG số
-                 -- nhờ BR-TK-06c lọc theo tthai_hd, nhưng kế toán KHÔNG THẤY chúng —
-                 -- mà đây đúng là loại cần nhìn: bản thay thế nằm ở kỳ nào, đã kê chưa.
                  OR (    ISNULL(h.tthai_hd,'') LIKE N'%đã bị%'
                      AND NOT EXISTS (
                            SELECT 1 FROM HOA_DON tt
                             WHERE tt.thang = h.thang
                               AND ISNULL(tt.sohd_lienquan,'') = h.so_hd))
 
-                 -- ---- NHÓM 3: hóa đơn liên quan CÙNG KỲ ----
-                 -- Engine đã tự xử đúng số (thay thế thì loại gốc — BR-TK-06; điều
-                 -- chỉnh thì giữ cả hai — BR-TK-19), nhưng SỔ KHÔNG NÓI GÌ. Kế toán mở
-                 -- lưới ra vẫn thấy hóa đơn gốc nằm đó với VAT dương y như cũ, không
-                 -- biết nó đã bị loại khỏi tờ khai — đúng cái đánh đổi mà spec §10.4
-                 -- chấp nhận và hẹn bù lại bằng ghi chú.
-                 --
-                 -- Ghi cho CẢ HAI phía: bản thay thế / điều chỉnh(nó trỏ đi đâu) và hóa
-                 --đơn gốc(nó bị ai thay/điều chỉnh). Hai phía đọc lên hai câu khác
-                 -- nhau — xem CauCungKy.
                  OR(ISNULL(h.tich_chat_hd_lienquan,'') <> ''
                      AND ISNULL(h.sohd_lienquan,'') <> ''
                      AND h.ngay_lienquan IS NOT NULL
@@ -2665,9 +2636,6 @@ namespace KT2000.Api.Services
                )
              ORDER BY h.huong, h.so_hd";
 
-        /// <summary>
-        /// Quét MỘT đơn vị-kỳ, ghi chú vào HOA_DON.ghi_chu cho hóa đơn liên quan khác kỳ.
-        /// </summary>
         /// <param name="chiXem">true = chỉ liệt kê, KHÔNG ghi (xem trước).</param>
         public async Task<KetQua> QuetVaGhi(
             string maDonVi, int nam, int thang, string nguoiGhi,
@@ -2692,7 +2660,6 @@ namespace KT2000.Api.Services
                     var ghiChuCu = r.GetString(12);
                     var tthai = r.GetString(13);
 
-                    // Bản CÙNG KỲ trỏ tới hóa đơn này (nếu có) — dùng cho câu của phía GỐC.
                     var banSoHd = r.IsDBNull(14) ? "" : r.GetString(14);
                     var banLoai = r.IsDBNull(15) ? "" : r.GetString(15);
                     var banVat = r.IsDBNull(16) ? 0m : r.GetDecimal(16);
@@ -2792,8 +2759,6 @@ namespace KT2000.Api.Services
 
             if (chiXem || maHd.Count == 0) return kq;
 
-            // ---------- GHI: NỐI THÊM, không đè (luật 5 + spec §10.6) ----------
-            // Gói transaction: nửa chừng đứt thì không để lại một mớ ghi chú dở dang.
             using var tran = conn.BeginTransaction();
             try
             {

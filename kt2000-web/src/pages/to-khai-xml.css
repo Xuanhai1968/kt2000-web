@@ -355,15 +355,12 @@
   color: #8c8c8c;
 }
 
-/* ===== Bảng hóa đơn lệch — giữ đúng khuôn cột của lưới sổ để soi đối chiếu ===== */
 .khoi-hd-lech {
   margin: 6px 0 10px;
   border: 1px solid #ffd591;
   border-radius: 6px;
 }
 
-/* Bảng rộng hơn khung thì cuộn NGANG trong khối này, không đẩy cả trang.
-   overflow:hidden ở khối cha sẽ cắt mất cột cuối nên phải là auto. */
 .khoi-hd-lech .hd-lech-cuon {
   max-height: 420px;
   overflow: auto;
@@ -402,24 +399,18 @@
 .hd-lech-bang .phai { text-align: right; font-variant-numeric: tabular-nums; }
 .hd-lech-bang .giua { text-align: center; }
 
-/* Tên hàng có thể rất dài ("Khay thử xét nghiệm định tính 4 loại ma túy và chất
-   chuyển hóa ma túy trong nước tiểu của con người") — với white-space:nowrap ở trên
-   thì nó kéo bảng rộng ra, đẩy mấy cột tiền và nút xem ra ngoài khung nhìn.
-   Cắt bớt và để tooltip lo phần còn lại. */
 .hd-lech-bang td.ten-hang {
   max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* Tên đối tác cũng dài, nhưng cần đọc được nhiều hơn tên hàng. */
 .hd-lech-bang td.ten-doi-tac {
   max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* Cột nút xem ghim bên phải để luôn thấy dù bảng có cuộn ngang. */
 .hd-lech-bang th.o-xem,
 .hd-lech-bang td.o-xem {
   position: sticky;
@@ -432,21 +423,20 @@
 .hd-lech-bang th.o-xem { background: #fafafa; }
 .hd-lech-bang tr.hd-lech-thieu td.o-xem { background: #fff1f0; }
 
-/* Hóa đơn CHỈ có ở bảng kê, sổ chưa nạp — loại lệch nguy hiểm nhất vì tờ khai lập
-   từ sổ sẽ thiếu hẳn số này mà không có dấu hiệu gì. Tô nền để đập vào mắt. */
 .hd-lech-bang tr.hd-lech-thieu { background: #fff1f0; }
 .hd-lech-bang tr.hd-lech-thieu td { color: #a8071a; }
 
-/* Ô lệch khác 0 — tô đỏ để lướt mắt là thấy ngay hóa đơn nào lệch nhiều.
-   Lệch 0 vẫn hiện số nhưng để màu thường, không gây nhiễu. */
 .hd-lech-bang td.o-lech {
   color: #cf1322;
   font-weight: 600;
 }
 
-/* Ô lệch GT/VAT khác 0 — tô đỏ để thấy ngay hướng nào đang lệch, không phải dò từng
-   dòng trong bảng chi tiết. Lệch bằng 0 giữ màu thường: đã soát và khớp. */
 .dai-chi-tieu .ct-gia.gia-lech {
+  color: #cf1322;
+  font-weight: 700;
+}
+
+.to-khai-xml .o-gia.gia-lech {
   color: #cf1322;
   font-weight: 700;
 }

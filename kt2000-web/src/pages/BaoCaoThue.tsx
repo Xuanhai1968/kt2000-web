@@ -279,6 +279,7 @@ export default function BaoCaoThue() {
         className="bang-bc"
         size="small"
         rowKey="maHd"
+        virtual
         dataSource={ds ?? []}
         columns={cot}
         loading={tai}

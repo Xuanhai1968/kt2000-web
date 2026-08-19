@@ -152,6 +152,11 @@
         public int SoHdSo { get; set; }
         public int SoHdFile { get; set; }
         public int SoLech { get; set; }
+        public decimal TongHangSo { get; set; }
+        public decimal TongVatSo { get; set; }
+        public decimal TongHangFile { get; set; }
+        public decimal TongVatFile { get; set; }
+
         public List<HoaDonLechDto> Dong { get; set; } = new();
         public List<string> Loi { get; set; } = new();
     }
@@ -266,6 +271,7 @@
         public decimal ChietKhau { get; set; }       // CK phân bổ về nhóm này
         public decimal DoanhThu { get; set; }        // TienHangGop − ChietKhau
         public decimal Thue { get; set; }            // DoanhThu × ThueSuat
+        public decimal ThueTuFile { get; set; }
     }
 
     public class CanhBaoToKhaiDto
@@ -340,9 +346,36 @@
         public List<NhomThueSuatDto> NhomMuaVao { get; set; } = new();
         public List<CanhBaoToKhaiDto> CanhBao { get; set; } = new();
 
+        /// <summary>
+        /// Hóa đơn thay thế/điều chỉnh cho hóa đơn của KỲ KHÁC — engine LOẠI khỏi
+        /// [23]/[24] theo BR-TK-06b (gốc đã kê ở kỳ đó rồi, kê lại là tính hai lần).
+        ///
+        /// Trả về để kế toán NHÌN THẤY phần bị loại: đo 19/08 USA_MEVA T7 loại 3 hóa
+        /// đơn trị giá 381.333.333đ VAT — số lớn như vậy mà im lặng bỏ đi thì không ai
+        /// đối chiếu nổi khi tờ khai lệch.
+        /// </summary>
+        public List<HoaDonLoaiKhacKyDto> LoaiKhacKy { get; set; } = new();
+
         public string? NguonCt22 { get; set; }
         public bool ChoXuat => !CanhBao.Any(x => x.Muc == "CHAN");
         public string TenFileXml { get; set; } = "";
+    }
+
+    /// <summary>Một hóa đơn bị loại vì liên quan tới kỳ khác.</summary>
+    public class HoaDonLoaiKhacKyDto
+    {
+        public string MaHd { get; set; } = "";
+        public string Huong { get; set; } = "";        // VAO | RA
+        public string? KhHd { get; set; }
+        public string? SoHd { get; set; }
+        public DateTime? Ngay { get; set; }
+        public string? TenDoiTac { get; set; }
+        public decimal TienHang { get; set; }
+        public decimal TienVat { get; set; }
+        public string? TrangThai { get; set; }         // tthai_hd
+        public string? SoHdLienQuan { get; set; }      // hóa đơn gốc bị thay thế
+        public DateTime? NgayLienQuan { get; set; }    // ngày của hóa đơn gốc
+        public string LyDo { get; set; } = "";
     }
 
     public class ToKhaiTayDto

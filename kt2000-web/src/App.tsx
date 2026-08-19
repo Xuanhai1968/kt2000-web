@@ -1,33 +1,44 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./AuthContext";
 import LoginPage from "./LoginPage";
 import DashboardPage from "./DashboardPage";
 import AppShell from "./AppShell";
-import HoaDonDauVao from "./pages/HoaDonDauVao";
-import BaoCaoThue from "./pages/BaoCaoThue";
-import BaoCaoTonKho from "./pages/BaoCaoTonKho";
+import DangTai from "./components/DangTai";
 import ChoPhatTrien from "./pages/ChoPhatTrien";
-import DonViKhachHang from "./pages/DonViKhachHang";
-import MoNamLamViec from "./pages/MoNamLamViec";
+
+const HoaDonDauVao = lazy(() => import("./pages/HoaDonDauVao"));
+const BaoCaoThue = lazy(() => import("./pages/BaoCaoThue"));
+const BaoCaoTonKho = lazy(() => import("./pages/BaoCaoTonKho"));
+const DonViKhachHang = lazy(() => import("./pages/DonViKhachHang"));
+const MoNamLamViec = lazy(() => import("./pages/MoNamLamViec"));
+
 // Phần nội bộ (NB) — giao diện bê từ USA_Meva, xem pages/usa_meva/.
 //
 // Hai file cũ KHÔNG còn route nào trỏ tới: pages/PhieuXuatNhap.tsx và
 // pages/DanhSachPhieu.tsx — đã thay bằng bản usa_meva/. Chưa xóa để còn đối chiếu
 // lúc nghiệm thu; xóa hẳn sau khi Leader duyệt.
-import { PhieuXuatHangUsa, PhieuNhapHangUsa } from "./pages/usa_meva/PhieuDanhDonUsa";
-import DanhSachPhieuUsa from "./pages/usa_meva/DanhSachPhieuUsa";
-import KhuyenMaiUsa from "./pages/usa_meva/KhuyenMaiUsa";
-import GoiHang from "./pages/GoiHang";
+//
+const PhieuXuatHangUsa = lazy(() => import("./pages/usa_meva/PhieuDanhDonUsa")
+  .then((m) => ({ default: m.PhieuXuatHangUsa })));
+const PhieuNhapHangUsa = lazy(() => import("./pages/usa_meva/PhieuDanhDonUsa")
+  .then((m) => ({ default: m.PhieuNhapHangUsa })));
+const DanhSachPhieuUsa = lazy(() => import("./pages/usa_meva/DanhSachPhieuUsa"));
+const KhuyenMaiUsa = lazy(() => import("./pages/usa_meva/KhuyenMaiUsa"));
+const GoiHang = lazy(() => import("./pages/GoiHang"));
+
 // Phần quản trị
-import QuanLyUser from "./pages/QuanLyUser";
-import NhatKyHeThong from "./pages/NhatKyHeThong";
+const QuanLyUser = lazy(() => import("./pages/QuanLyUser"));
+const NhatKyHeThong = lazy(() => import("./pages/NhatKyHeThong"));
+
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<LoginPage />} />
-          <Route path="/app" element={<AppShell />}>
+          <Route path="/app" element={
+            <Suspense fallback={<DangTai />}><AppShell /></Suspense>}>
             <Route index element={<DashboardPage />} />
             {/* Cùng MỘT màn hình, chỉ khác hướng — sửa nghiệp vụ một chỗ là xong,
                 không có chuyện vá bên vào mà quên bên ra */}

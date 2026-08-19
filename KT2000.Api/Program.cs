@@ -16,6 +16,17 @@ builder.Services.AddDbContext<AppDbContext>(o =>
 builder.Services.AddScoped<AuthService>();
 // SoChuaMoFilter: đơn vị chưa mở sổ của năm đang chọn thì trả 409 kèm lời nhắn, thay
 // vì để SqlException 4060 lộ nguyên stack trace 500 ra trình duyệt.
+builder.Services.AddResponseCompression(o =>
+{
+    o.EnableForHttps = true;
+    o.Providers.Add<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProvider>();
+    o.Providers.Add<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProvider>();
+});
+builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProviderOptions>(
+    o => o.Level = System.IO.Compression.CompressionLevel.Fastest);
+builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProviderOptions>(
+    o => o.Level = System.IO.Compression.CompressionLevel.Fastest);
+
 builder.Services.AddControllers(o => o.Filters.Add<SoChuaMoFilter>());
 builder.Services.AddSingleton<TenantDbResolver>();
 // Singleton vì nó NHỚ database nào đã đủ phiên bản — để scoped thì mỗi request quên
@@ -72,7 +83,8 @@ builder.Services.AddAuthorization();
 // publish để frontend tĩnh trong wwwroot nên cùng gốc, không đi qua CORS.
 // Đổi cổng dev thì phải đổi cả ba chỗ: đây, vite.config.ts, và "Urls" trong appsettings.
 builder.Services.AddCors(o => o.AddPolicy("AllowReact", p =>
-    p.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
+    p.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()
+     .WithExposedHeaders("X-Da-Luu", "X-Duong-Dan", "X-Loi-Luu")));
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -81,6 +93,8 @@ var app = builder.Build();
 
 app.UseSwagger();
 app.UseSwaggerUI();
+app.UseResponseCompression();
+
 app.UseCors("AllowReact");
 
 app.UseAuthentication();   // MỚI: soát "con dấu" trên JWT của mỗi request
