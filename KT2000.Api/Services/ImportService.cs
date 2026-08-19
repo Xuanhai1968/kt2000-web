@@ -298,9 +298,13 @@ namespace KT2000.Api.Services
                         }
                         bool existed = UpsertMaster(conn, tx, r, M, huong, maHd, userName,
                                                     tenant.KhaiQuy, tienHangChuaThue, connBase);
+                        // Tới đây là hóa đơn ĐÃ QUA phép kiểm Σ (lệch dưới ngưỡng), nên
+                        // lệch còn lại chỉ là sai số làm tròn của người bán. Lệch đúng 0
+                        // thì không có gì để mài; lệch từ 10đ trở lên đã bị chặn bên trên
+                        // và không bao giờ tới được dòng này.
                         ReplaceLines(conn, tx, maHd, lines, L, userName,
                                      N2(r, M, "TIEN_VAT", "TVAT_HD_G"), tienHangChuaThue,
-                                     coLoaiThue);
+                                     coLoaiThue, maiChoKhop: chenh != 0);
                         tx.Commit();
                         if (existed) updated++; else inserted++;
                         // Đếm song song theo hướng: chạy "cả vào cả ra" thì số tổng không
@@ -796,6 +800,51 @@ namespace KT2000.Api.Services
             if (sl == 0 && dg == 0) return (1m, thanhTien);
             if (dg == 0 && sl != 0) return (sl, thanhTien / sl);
             return (sl, dg);
+        }
+
+        // Số chữ số thập phân cột giữ được sau bản vá 024 — cả so_luong lẫn don_gia đều
+        // DECIMAL(18,4). Làm tròn đúng bằng con số này chứ không hơn: tính ra 4 số lẻ mà
+        // cột chỉ giữ 3 thì SQL cắt bớt, và cái vừa mài cho khớp lại lệch trở lại.
+        private const int SO_LE_COT = 4;
+
+        /// <summary>
+        /// Mài SL / ĐG để <c>SL × ĐG</c> đúng bằng Thành tiền của dòng. Trả về cặp đã chỉnh;
+        /// dòng nào vốn đã khớp thì trả nguyên si.
+        /// </summary>
+        /// <remarks>
+        /// Người bán làm tròn khi in hóa đơn nên SL × ĐG lệch Thành tiền vài đồng. CHỈ gọi
+        /// cho hóa đơn đã qua phép kiểm Σ — xem chỗ gọi trong ReplaceLines.
+        ///
+        /// Thử cả hai chiều rồi lấy chiều sai số nhỏ hơn, vì không chiều nào luôn thắng:
+        ///   giữ ĐG, tính lại SL = TT ÷ ĐG   |   giữ SL, tính lại ĐG = TT ÷ SL
+        /// Đo trên ba hóa đơn xăng dầu thật (18/08), chiều thứ hai mịn hơn hẳn — sai
+        /// 0,0002 / 0,0016 / 0,0003 so với 0,1250 / 0,7400 / 0,4960 của chiều thứ nhất.
+        /// Hòa thì giữ đơn giá và sửa số lượng: đơn giá là giá niêm yết của người bán.
+        ///
+        /// KHÔNG mài nếu kết quả tệ hơn hiện tại — chia cho số rất nhỏ có thể đẩy sai số
+        /// lên thay vì xuống, và mài mà xấu đi thì thà đừng đụng.
+        /// </remarks>
+        internal static (decimal Sl, decimal Dg) MaiChoKhopThanhTien(
+            decimal sl, decimal dg, decimal thanhTien)
+        {
+            if (thanhTien == 0) return (sl, dg);
+            decimal saiHienTai = Math.Abs(decimal.Round(sl * dg, 0, MidpointRounding.AwayFromZero) - thanhTien);
+            if (saiHienTai == 0) return (sl, dg);
+
+            decimal? slMoi = dg != 0 ? decimal.Round(thanhTien / dg, SO_LE_COT, MidpointRounding.AwayFromZero) : null;
+            decimal? dgMoi = sl != 0 ? decimal.Round(thanhTien / sl, SO_LE_COT, MidpointRounding.AwayFromZero) : null;
+
+            // Đo sai số bằng ĐÚNG thước mà phép kiểm Σ dùng: làm tròn về đồng rồi mới trừ.
+            // Đo bằng thước khác thì hàm tưởng mình vừa cải thiện, trong khi con số cuối
+            // cùng không đổi — và ta đổi số của người bán để lấy về đúng không gì cả.
+            decimal Sai(decimal tich)
+                => Math.Abs(decimal.Round(tich, 0, MidpointRounding.AwayFromZero) - thanhTien);
+
+            decimal saiSl = slMoi is null ? decimal.MaxValue : Sai(slMoi.Value * dg);
+            decimal saiDg = dgMoi is null ? decimal.MaxValue : Sai(sl * dgMoi.Value);
+
+            if (Math.Min(saiSl, saiDg) >= saiHienTai) return (sl, dg);
+            return saiSl <= saiDg ? (slMoi!.Value, dg) : (sl, dgMoi!.Value);
         }
 
         /// <summary>
@@ -1527,7 +1576,7 @@ namespace KT2000.Api.Services
         private void ReplaceLines(SqlConnection c, SqlTransaction tx, string maHd,
                                   List<IXLRow> lines, Dictionary<string,int> L, string user,
                                   decimal masterTienVat = 0m, decimal masterTienHang = 0m,
-                                  bool coLoaiThue = false)
+                                  bool coLoaiThue = false, bool maiChoKhop = false)
         {
             using (var del = new SqlCommand("DELETE FROM HOA_DON_LINE WHERE ma_hd=@id", c, tx))
             { del.Parameters.AddWithValue("@id", maHd); del.ExecuteNonQuery(); }
@@ -1668,6 +1717,21 @@ namespace KT2000.Api.Services
                     // kiểm, mất lúc ghi". thanhTien của dòng đọc từ XML là tiền CHƯA thuế
                     // nên dùng thẳng được.
                     (sl, dg) = SoLuongDonGia(sl, dg, thanhTien);
+
+                    // MÀI cho SL × ĐG đúng bằng Thành tiền của dòng.
+                    //
+                    // Chỉ chạy khi cả hóa đơn lệch DƯỚI ngưỡng — tức là nó đã được phép
+                    // vào sổ từ đầu, đây thuần túy làm cho số đẹp hơn (chốt Trường 19/08).
+                    // Hóa đơn lệch từ 10đ trở lên KHÔNG tới được đây: nó bị chặn ở phép
+                    // kiểm Σ bên ImportJob và nằm lại raw\ chờ người xem. Máy chỉ được
+                    // mài thứ vốn đã đúng, không được chữa thứ đang sai.
+                    //
+                    // Cùng thuật toán với nút "Tính lại tiền hàng" ở modal: thử cả hai
+                    // chiều rồi lấy chiều sai số nhỏ hơn. Không chiều nào luôn thắng —
+                    // nó phụ thuộc số nào tròn hơn. Đo trên hóa đơn xăng dầu thật, giữ
+                    // số lượng & tính lại đơn giá thường mịn hơn hẳn (0,0002 so với
+                    // 0,1250), nhưng gặp hóa đơn số lượng tròn thì ngược lại.
+                    if (maiChoKhop) (sl, dg) = MaiChoKhopThanhTien(sl, dg, thanhTien);
                 }
                 p.AddWithValue("@sl", sl);
                 p.AddWithValue("@dg", dg);
