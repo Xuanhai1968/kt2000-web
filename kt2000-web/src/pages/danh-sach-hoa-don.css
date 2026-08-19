@@ -346,3 +346,65 @@
 .nut-tt.nut-xoa { color: #8c8c8c; }
 
 .nut-tt.nut-xoa:hover { background: #fff1f0; color: #cf1322; }
+
+/* ----- Modal nhỏ đổi định khoản dòng hàng -----
+   Nợ và Có nằm CẠNH nhau chứ không xếp chồng: kế toán đọc định khoản theo cặp
+   "Nợ / Có", tách hai hàng làm modal cao gấp đôi mà chẳng rõ hơn. */
+.sua-dinh-khoan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Grid 2 cột BẰNG NHAU thay vì flex: nhãn "Nợ"/"Có" cùng bề rộng cố định nên hai ô
+   Select bắt đầu và kết thúc đúng một vị trí — flex:1 trước đây cho hai cột lệch
+   nhau vài pixel, nhìn ra ngay là so le. */
+.sua-dinh-khoan .hang-dk {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sua-dinh-khoan .dong-dk {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sua-dinh-khoan .dong-dk > label {
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.sua-dinh-khoan .dong-dk .ant-select {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.sua-dinh-khoan .dong-dk .ant-select .ant-select-selector {
+  height: 26px;
+  font-size: 14px;
+}
+
+/* Thân modal nén lại: mặc định antd đệm 24px trên dưới, ở đây chỉ có 2 ô nên thừa */
+.sua-dinh-khoan { margin: 2px 0; }
+
+/* Panel danh mục TK: KHÔNG bó theo bề rộng ô field (popupMatchSelectWidth={false}).
+   Cho rộng tối thiểu 300px để tên dài hiện trọn, và cao 40vh để cuộn được 93 dòng
+   mà không nuốt hết màn hình. Panel render ở body nên KHÔNG bọc trong .ds-hoadon. */
+.popup-tk { min-width: 300px !important; max-width: 460px; }
+
+.popup-tk .ant-select-item-option-content {
+  font-size: 14px;
+  /* Hiện ĐỦ tên: mặc định antd cắt bằng ellipsis, mà "1122 — Tiền USD ngân h…" thì
+     không phân biệt được với "1123 — Tiền USD…". Cho xuống dòng thay vì cắt. */
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.35;
+}
+
+.popup-tk .rc-virtual-list-holder { max-height: 40vh !important; }

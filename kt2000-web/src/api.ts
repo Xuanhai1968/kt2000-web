@@ -879,6 +879,20 @@ export const thueLuuLinesHoaDon = (maHd: string, lines: HoaDonLine[]) =>
   api.put<{ message: string; soDong: number }>(
     `/thue/hoa-don/${encodeURIComponent(maHd)}/lines`, lines);
 
+// Một tài khoản trong danh mục dùng chung KT2000_Base.DM_TK
+export interface DmTk {
+  maTk: string;
+  tenTk: string | null;
+  chiPhi: boolean;
+  giaVon: boolean;
+  congNo: boolean;
+  tonKho: boolean;
+  dt: boolean;
+  thue: boolean;
+}
+
+export const thueDmTaiKhoan = () => api.get<DmTk[]>("/thue/tk-hd");
+
 // ===== BÁO CÁO THUẾ GTGT (FRM_BC_THUE) =====
 
 // Một dòng bảng kê hóa đơn mua vào / bán ra

@@ -1417,6 +1417,22 @@ namespace KT2000.Api.Controllers
                 : Ok(new { message = $"Đã lưu {soDong} dòng hàng", soDong });
         }
 
+        [HttpGet("tk-hd")]
+        public async Task<IActionResult> DanhMucTaiKhoan()
+        {
+            // MemoryCache của dự án khai SizeLimit (Program.cs) nên MỌI entry BẮT BUỘC
+            // phải gán Size — thiếu là ném InvalidOperationException ngay lúc ghi cache,
+            // không phải lúc khởi động. Danh mục này là MỘT mục dùng chung: tính 1 đơn vị,
+            // cùng cách entry "kho|…" ở trên, không tính theo số dòng.
+            var ds = await _cache.GetOrCreateAsync("dm_tk", async muc =>
+            {
+                muc.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10);
+                muc.Size = 1;
+                return await _thue.LayDanhMucTaiKhoan();
+            });
+            return Ok(ds ?? new List<Models.DmTkDto>());
+        }
+
         [HttpPost("xu-ly-tt-dc")]
         public async Task<IActionResult> XuLyThayTheDieuChinh(
             [FromQuery] int thang, [FromQuery] string? maDonVi)

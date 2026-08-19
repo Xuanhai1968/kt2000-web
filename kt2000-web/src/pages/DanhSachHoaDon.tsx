@@ -5,9 +5,9 @@ import {
 import { ExclamationCircleFilled } from "@ant-design/icons";
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef, ValueFormatterParams } from "ag-grid-community";
-import type { HoaDonThue, HoaDonLine, DoiChieuHd } from "../api";
+import type { HoaDonThue, HoaDonLine, DoiChieuHd, DmTk } from "../api";
 import { layDoiChieuHd, dungBanGocTct, loiApi } from "../api";
-import { thueXoaHoaDon, thueXuLyTtDc } from "../api";
+import { thueXoaHoaDon, thueXuLyTtDc, thueLuuLinesHoaDon, thueDmTaiKhoan } from "../api";
 import { MAU_HD_RA, MAU_HD_VAO } from "../AppShell";
 import {
   themeVfp, luoiVfpProps, colVfp, dinhDangPhanTramVat, nhanThueSuat,
@@ -228,9 +228,80 @@ export default function DanhSachHoaDon({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dsHd, dongChiCoOCong, thang, thangKT, tuKhoa, soSanhMo, goc]);
 
-  // Hóa đơn đang chọn ở bảng trên — nguồn của bảng dòng hàng bên dưới
-  const hdDangChon = useMemo(
-    () => dsHd.find((x) => x.maHd === fileChon) ?? null, [dsHd, fileChon]);
+  type DkDong = { ghiNo: string | null; ghiCo: string | null };
+  const [dkSua, setDkSua] = useState<Record<string, Record<number, DkDong>>>({});
+  const [dongTich, setDongTich] = useState<Record<string, Set<number>>>({});
+  const [moSuaDk, setMoSuaDk] = useState(false);
+  const [oDkMo, setODkMo] = useState<"ghiNo" | "ghiCo">("ghiNo");
+  const [sttDangSua, setSttDangSua] = useState<number | null>(null);
+  const [dkTam, setDkTam] = useState<DkDong>({ ghiNo: "", ghiCo: "" });
+  // Ô TÌM của hai Select. Điều khiển tay để lúc mở modal nó mang sẵn mã đang có —
+  // con trỏ nằm ngay cuối mã, gõ tiếp hoặc xóa lùi được luôn. Để antd tự quản thì ô
+  // tìm rỗng, muốn sửa "1121" thành "1122" phải gõ lại cả bốn ký tự.
+  const [oTim, setOTim] = useState<DkDong>({ ghiNo: "", ghiCo: "" });
+  // Ô tìm nạp sẵn mã cũ sẽ LỌC danh sách còn đúng một dòng, kế toán mất luôn khả năng
+  // duyệt cả danh mục. Cờ này phân biệt "chuỗi có sẵn lúc mở" với "người dùng vừa gõ":
+  // chỉ khi đã gõ thật mới lọc.
+  const [daGo, setDaGo] = useState<Record<string, boolean>>({});
+  const [dangLuuDk, setDangLuuDk] = useState(false);
+
+  // Danh mục tài khoản (KT2000_Base.DM_TK) đổ vào hai ô Nợ/Có. Tải một lần khi mở màn:
+  // backend đã cache 10 phút, nhưng vẫn không nên gọi lại mỗi lần bật modal.
+  const [dsTk, setDsTk] = useState<DmTk[]>([]);
+  useEffect(() => {
+    if (!mo || dsTk.length > 0) return;
+    void thueDmTaiKhoan()
+      // Hỏng thì để danh sách rỗng — ô vẫn gõ tay được, không chặn việc định khoản.
+      .then((r) => setDsTk(r.data))
+      .catch(() => undefined);
+  }, [mo, dsTk.length]);
+
+  // Nhãn "156 — Hàng hoá" để chọn bằng mắt; giá trị lưu vẫn chỉ là mã tài khoản.
+  const optTk = useMemo(
+    () => dsTk.map((t) => ({
+      value: t.maTk,
+      label: t.tenTk ? `${t.maTk} — ${t.tenTk}` : t.maTk,
+    })),
+    [dsTk]);
+
+  const hdDangChon = useMemo(() => {
+    const hd = dsHd.find((x) => x.maHd === fileChon) ?? null;
+    if (!hd) return null;
+    const sua = dkSua[hd.maHd];
+    if (!sua) return hd;
+    return {
+      ...hd,
+      lines: hd.lines.map((d) => {
+        const v = sua[d.sttLine];
+        if (!v) return d;
+        const daKhop = (d.ghiNo ?? "") === (v.ghiNo ?? "")
+                    && (d.ghiCo ?? "") === (v.ghiCo ?? "");
+        return daKhop ? d : { ...d, ...v };
+      }),
+    };
+  }, [dsHd, fileChon, dkSua]);
+
+  const tichHienTai = fileChon ? dongTich[fileChon] : undefined;
+  const soDongTich = tichHienTai?.size ?? 0;
+
+  const datTich = (sttLine: number, tich: boolean) => {
+    if (!fileChon) return;
+    setDongTich((m) => {
+      const cu = new Set(m[fileChon] ?? []);
+      if (tich) cu.add(sttLine); else cu.delete(sttLine);
+      return { ...m, [fileChon]: cu };
+    });
+  };
+
+  const datTichTatCa = (tich: boolean) => {
+    if (!fileChon) return;
+    setDongTich((m) => ({
+      ...m,
+      [fileChon]: tich
+        ? new Set((hdDangChon?.lines ?? []).map((d) => d.sttLine))
+        : new Set<number>(),
+    }));
+  };
 
 
   // Ngày dd/MM/yy như lưới gốc. Backend trả ISO datetime nên cắt phần ngày trước.
@@ -245,15 +316,20 @@ export default function DanhSachHoaDon({
   };
   useEffect(() => huyHoan, []);
 
+  const doiHoaDon = (maHd: string) => {
+    if (maHd !== fileChon) setDongTich({});
+    setFileChon(maHd);
+  };
+
   const chonDong = (maHd: string) => {
     huyHoan();
-    setFileChon(maHd);
+    doiHoaDon(maHd);
     if (!chuaLenSo(maHd)) onChon(maHd);
   };
 
   const chonDongHoan = (maHd: string) => {
     huyHoan();
-    setFileChon(maHd);
+    doiHoaDon(maHd);
     if (chuaLenSo(maHd)) return;
     hoanRef.current = setTimeout(() => {
       hoanRef.current = null;
@@ -420,7 +496,124 @@ export default function DanhSachHoaDon({
     });
   };
 
+  const moSuaDinhKhoan = (d: HoaDonLine, o: "ghiNo" | "ghiCo") => {
+    const theoLo = !!tichHienTai?.size && tichHienTai.has(d.sttLine);
+    setSttDangSua(theoLo ? null : d.sttLine);
+    setODkMo(o);
+    setDkTam({ ghiNo: d.ghiNo ?? "", ghiCo: d.ghiCo ?? "" });
+    // Chỉ nạp ô tìm của ô ĐƯỢC BẤM: ô kia vẫn hiện nhãn đầy đủ "156 — Hàng hoá",
+    // nạp cả hai thì ô không có con trỏ lại trơ ra mỗi con số cụt.
+    setOTim({ ghiNo: o === "ghiNo" ? (d.ghiNo ?? "") : "",
+              ghiCo: o === "ghiCo" ? (d.ghiCo ?? "") : "" });
+    setDaGo({});
+    setMoSuaDk(true);
+  };
+
+  const moSuaDinhKhoanLo = () => {
+    if (!fileChon || soDongTich === 0) {
+      message.info("Tích ít nhất một dòng hàng ở bảng dưới trước");
+      return;
+    }
+    const dau = (hdDangChon?.lines ?? [])
+      .find((d) => tichHienTai?.has(d.sttLine));
+    setSttDangSua(null);
+    setODkMo("ghiNo");
+    setDkTam({ ghiNo: dau?.ghiNo ?? "", ghiCo: dau?.ghiCo ?? "" });
+    // Áp cả lô thì để ô tìm trống: lô có thể đang nhiều TK khác nhau, đổ sẵn mã của
+    // dòng đầu vào ô tìm dễ khiến người dùng tưởng cả lô đang là mã đó.
+    setOTim({ ghiNo: "", ghiCo: "" });
+    setDaGo({});
+    setMoSuaDk(true);
+  };
+
+  const sttSeApDung = useMemo(() => {
+    if (sttDangSua != null) return [sttDangSua];
+    return (hdDangChon?.lines ?? [])
+      .map((d) => d.sttLine)
+      .filter((stt) => tichHienTai?.has(stt));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sttDangSua, hdDangChon, tichHienTai, dongTich]);
+
+  const luuDinhKhoan = async () => {
+    if (!fileChon || !hdDangChon) return;
+    if (sttSeApDung.length === 0) {
+      message.warning("Không có dòng nào để áp");
+      return;
+    }
+    const no = (dkTam.ghiNo ?? "").trim();
+    const co = (dkTam.ghiCo ?? "").trim();
+    if (!no && !co) {
+      message.warning("Nhập tài khoản Nợ hoặc Có trước khi áp");
+      return;
+    }
+
+    const apDung = new Set(sttSeApDung);
+    const linesMoi = hdDangChon.lines.map((d) => apDung.has(d.sttLine)
+      ? { ...d, ghiNo: no || d.ghiNo, ghiCo: co || d.ghiCo }
+      : d);
+
+    setDangLuuDk(true);
+    try {
+      await thueLuuLinesHoaDon(fileChon, linesMoi);
+      setDkSua((m) => {
+        const cua = { ...(m[fileChon] ?? {}) };
+        for (const stt of apDung) {
+          const d = linesMoi.find((x) => x.sttLine === stt);
+          if (d) cua[stt] = { ghiNo: d.ghiNo, ghiCo: d.ghiCo };
+        }
+        return { ...m, [fileChon]: cua };
+      });
+      message.success(`Đã cập nhật định khoản ${apDung.size} dòng hàng`);
+      setMoSuaDk(false);
+      onChon(fileChon, true);          // buộc màn cha đọc lại chi tiết hóa đơn
+    } catch (e) {
+      message.error(loiApi(e, "Không lưu được định khoản"));
+    } finally {
+      setDangLuuDk(false);
+    }
+  };
+
+  const kiemTraDinhKhoan = () => {
+    const lines = hdDangChon?.lines ?? [];
+    if (lines.length === 0) {
+      message.info("Chưa chọn hóa đơn nào có dòng hàng");
+      return;
+    }
+    const thieu = lines.filter(
+      (d) => !(d.ghiNo ?? "").trim() || !(d.ghiCo ?? "").trim());
+    if (thieu.length === 0) {
+      message.success(`${lines.length} dòng hàng đều đã có đủ Nợ và Có`);
+      return;
+    }
+    if (fileChon) {
+      setDongTich((m) => ({
+        ...m, [fileChon]: new Set(thieu.map((d) => d.sttLine)),
+      }));
+    }
+    message.warning(
+      `${thieu.length}/${lines.length} dòng thiếu định khoản (STT `
+      + `${thieu.map((d) => d.sttLine).join(", ")}) — đã tích sẵn`, 6);
+  };
+
   const hamRef = useRef({ laDanhDauIn, datIn });
+
+  const hamDuoiRef = useRef({ datTich, moSuaDinhKhoan, tichHienTai });
+  const soDongTichRef = useRef({ tatCa: false, mot: false });
+  const datTichTatCaRef = useRef(datTichTatCa);
+
+  const luoiDuoiRef = useRef<AgGridReact<HoaDonLine> | null>(null);
+  useEffect(() => {
+    hamDuoiRef.current = { datTich, moSuaDinhKhoan, tichHienTai };
+    datTichTatCaRef.current = datTichTatCa;
+    const tong = hdDangChon?.lines.length ?? 0;
+    soDongTichRef.current = {
+      tatCa: tong > 0 && soDongTich === tong,
+      mot: soDongTich > 0 && soDongTich < tong,
+    };
+    luoiDuoiRef.current?.api?.refreshCells({ columns: ["tich"], force: true });
+    luoiDuoiRef.current?.api?.refreshHeader();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dongTich, fileChon, hdDangChon, soDongTich]);
 
   useEffect(() => {
     hamRef.current = { laDanhDauIn, datIn };
@@ -520,7 +713,31 @@ export default function DanhSachHoaDon({
       tooltipField: "ghiChu" },
   ], [soSanh, lechCuaHdCot]);
 
-  const cotDuoi = useMemo<ColDef<HoaDonLine>[]>(() => [
+  const cotDuoi = useMemo<ColDef<HoaDonLine>[]>(() => {
+   const nenDk: ColDef<HoaDonLine>["cellStyle"] = {
+     backgroundColor: "#fffbe6", cursor: "pointer",
+     color: "#0958d9", fontWeight: 600,
+   };
+   const nenTich: ColDef<HoaDonLine>["cellStyle"] = {
+     backgroundColor: "#f5f5f5", textAlign: "center",
+   };
+   return [
+    { colId: "tich", headerName: "", width: 34, pinned: "left",
+      headerTooltip: "Tích các dòng cần đổi định khoản hàng loạt",
+      cellStyle: nenTich,
+      headerComponent: () => (
+        <input type="checkbox" title="Tích / bỏ tích tất cả dòng"
+               checked={soDongTichRef.current.tatCa}
+               ref={(el) => { if (el) el.indeterminate = soDongTichRef.current.mot; }}
+               onChange={(e) => datTichTatCaRef.current(e.target.checked)} />
+      ),
+      cellRenderer: (p: { data?: HoaDonLine }) => p.data ? (
+        <input type="checkbox"
+               checked={!!hamDuoiRef.current.tichHienTai?.has(p.data.sttLine)}
+               onClick={(e) => e.stopPropagation()}
+               onChange={(e) => p.data
+                 && hamDuoiRef.current.datTich(p.data.sttLine, e.target.checked)} />
+      ) : null },
     { colId: "sttLine", headerName: "STT", field: "sttLine", width: 48, pinned: "left" },
     { colId: "tenHang", headerName: "Tên hàng hoá dịch vụ", field: "tenHang",
       width: 300, tooltipField: "tenHang" },
@@ -534,16 +751,41 @@ export default function DanhSachHoaDon({
       cellStyle: { backgroundColor: "#f5f5f5", fontWeight: 600 } },
     { colId: "ptVat", headerName: "% VAT", width: 66, type: "numericColumn",
       valueGetter: (p) => dinhDangPhanTramVat(p.data?.ptVat) },
-    { colId: "ghiNo", headerName: "Nợ", width: 50,
-      valueGetter: (p) => p.data?.ghiNo || "" },
-    { colId: "ghiCo", headerName: "Có", width: 50,
-      valueGetter: (p) => p.data?.ghiCo || "" },
+    { colId: "ghiNo", headerName: "Nợ", width: 54,
+      headerTooltip: "Bấm vào ô để đổi định khoản. Có dòng đang tích thì áp cả lô.",
+      cellStyle: nenDk,
+      valueGetter: (p) => p.data?.ghiNo || "",
+      cellRenderer: (p: { data?: HoaDonLine; value?: string }) => p.data ? (
+        <span onClick={(e) => {
+                e.stopPropagation();
+                if (p.data) hamDuoiRef.current.moSuaDinhKhoan(p.data, "ghiNo");
+              }}
+              style={{ display: "block", width: "100%" }}
+              title="Bấm để đổi định khoản">
+          {p.value || "…"}
+        </span>
+      ) : null },
+    { colId: "ghiCo", headerName: "Có", width: 54,
+      headerTooltip: "Bấm vào ô để đổi định khoản. Có dòng đang tích thì áp cả lô.",
+      cellStyle: nenDk,
+      valueGetter: (p) => p.data?.ghiCo || "",
+      cellRenderer: (p: { data?: HoaDonLine; value?: string }) => p.data ? (
+        <span onClick={(e) => {
+                e.stopPropagation();
+                if (p.data) hamDuoiRef.current.moSuaDinhKhoan(p.data, "ghiCo");
+              }}
+              style={{ display: "block", width: "100%" }}
+              title="Bấm để đổi định khoản">
+          {p.value || "…"}
+        </span>
+      ) : null },
     { colId: "tienCk", headerName: "C.Khấu", field: "tienCk", width: 80,
       type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
     { colId: "ghiChu", headerName: "Ghi chú", width: 200,
       valueGetter: (p) => p.data?.ghiChu || p.data?.tenHang || "",
       tooltipValueGetter: (p) => String(p.value ?? "") },
-  ], []);
+   ];
+  }, []);
 
   const sumDuoi = useMemo(
     () => (hdDangChon?.lines ?? []).reduce((s, x) => s + x.thanhTien, 0),
@@ -727,7 +969,7 @@ export default function DanhSachHoaDon({
             const maHd = e.data?.maHd;
             if (!maHd) return;
             huyHoan();               // bỏ lượt hoãn đang chờ, gọi thẳng
-            setFileChon(maHd);
+            doiHoaDon(maHd);
             onChon(maHd, true);      // buộc hỏi lại server
           }}
         />
@@ -749,6 +991,22 @@ export default function DanhSachHoaDon({
                 Bấm một hóa đơn ở bảng trên để xem dòng hàng
               </Typography.Text>
             )}
+            {soDongTich > 0 && (
+              <>
+                <Typography.Text style={{ fontSize: 14, color: "#0958d9" }}>
+                  · <b>{soDongTich}</b> dòng đang tích
+                </Typography.Text>
+                <Button size="small" className="nut-xanhdg"
+                        onClick={moSuaDinhKhoanLo}
+                        title="Đổi định khoản cho tất cả dòng đang tích">
+                  Đổi định khoản ({soDongTich})
+                </Button>
+                <Button size="small" onClick={() => datTichTatCa(false)}
+                        title="Bỏ hết dấu tích">
+                  Bỏ tích
+                </Button>
+              </>
+            )}
             <span style={{ flex: 1 }} />
             <Typography.Text style={{ fontSize: 14 }}>
               Tổng thành tiền{" "}
@@ -761,6 +1019,7 @@ export default function DanhSachHoaDon({
           </div>
           <div className="khung-phu">
             <AgGridReact<HoaDonLine>
+              ref={luoiDuoiRef}
               theme={themeVfp}
               {...luoiVfpProps}
               {...nhoDoRongCot("ds_hoadon_duoi")}
@@ -853,8 +1112,22 @@ export default function DanhSachHoaDon({
           <section className="nhom-cc">
             <h4>Định khoản &amp; Kiểm tra</h4>
             <div className="hang-cong-cu">
-              <NutCho nhan="Định khoản lại" lop="nut-xanhdg" />
-              <NutCho nhan="Kiểm tra định khoản" lop="nut-xanhdg" />
+              {/* Ăn theo cột checkbox của lưới dòng hàng: không tích dòng nào thì
+                  chưa biết áp cho cái gì, để mờ cho khỏi bấm nhầm cả hóa đơn. */}
+              <Button size="small" className="nut-xanhdg"
+                      disabled={soDongTich === 0}
+                      onClick={moSuaDinhKhoanLo}
+                      title={soDongTich === 0
+                        ? "Tích dòng hàng ở bảng Chi tiết hàng hoá dịch vụ trước"
+                        : `Đổi định khoản ${soDongTich} dòng đang tích`}>
+                Định khoản lại{soDongTich > 0 && ` (${soDongTich})`}
+              </Button>
+              <Button size="small" className="nut-xanhdg"
+                      disabled={!hdDangChon}
+                      onClick={kiemTraDinhKhoan}
+                      title="Dò dòng hàng thiếu tài khoản Nợ hoặc Có">
+                Kiểm tra định khoản
+              </Button>
             </div>
             <div className="hang-cong-cu">
               <NutCho nhan="Đổi ĐK theo TK kho" lop="nut-xanhdg" />
@@ -1051,6 +1324,78 @@ export default function DanhSachHoaDon({
         </div>
         )}
       </div>
+
+      {/* ===== MODAL NHỎ: ĐỔI ĐỊNH KHOẢN DÒNG HÀNG ===== */}
+      <Modal
+        title={sttDangSua != null
+          ? `Đổi định khoản — dòng ${sttDangSua}`
+          : `Đổi định khoản — ${sttSeApDung.length} dòng đang tích`}
+        open={moSuaDk}
+        onCancel={() => setMoSuaDk(false)}
+        onOk={() => void luuDinhKhoan()}
+        okText="Áp dụng"
+        cancelText="Hủy"
+        confirmLoading={dangLuuDk}
+        width={520}
+        // Vẫn CĂN GIỮA ngang (để nguyên margin auto của antd), chỉ hạ thấp xuống: mặc
+        // định modal nằm cao quá, che đúng vùng lưới dòng hàng mà kế toán đang soi.
+        // 44vh là vừa qua khỏi lưới hóa đơn ở trên, chưa tụt xuống sát đáy màn hình.
+        style={{ top: "44vh" }}
+        maskClosable
+        destroyOnClose
+      >
+        <div className="sua-dinh-khoan">
+          <div className="hang-dk">
+            {([
+              ["Nợ", "ghiNo"],
+              ["Có", "ghiCo"],
+            ] as [string, "ghiNo" | "ghiCo"][]).map(([nhan, khoa]) => (
+              <div className="dong-dk" key={khoa}>
+                <label id={`nhan-dk-${khoa}`}>{nhan}</label>
+                <Select id={`dk-${khoa}`} size="small" showSearch allowClear
+                        autoFocus={oDkMo === khoa}
+                        aria-labelledby={`nhan-dk-${khoa}`}
+                        placeholder="Chọn hoặc gõ mã TK"
+                        value={dkTam[khoa] || undefined}
+                        options={optTk}
+                        // Panel RỘNG HƠN ô field và bám mép trái: tên tài khoản dài
+                        // ("Thuế GTGT được khấu trừ") bị cắt thì kế toán phải đoán,
+                        // mà chọn nhầm tài khoản là sai định khoản cả dòng.
+                        popupMatchSelectWidth={false}
+                        classNames={{ popup: { root: "popup-tk" } }}
+                        placement="bottomLeft"
+                        // Gõ mã lạ vẫn dùng được: DM_TK có thể chưa kịp thêm tài khoản
+                        // chi tiết mà kế toán đã cần định khoản.
+                        filterOption={(nhap, opt) =>
+                          !daGo[khoa]
+                          || (opt?.label ?? "").toLowerCase().includes(nhap.toLowerCase())}
+                        searchValue={oTim[khoa] ?? ""}
+                        onChange={(v) => {
+                          setDkTam((x) => ({ ...x, [khoa]: v ?? "" }));
+                          // Chọn xong thì trả ô tìm về rỗng để Select hiện NHÃN đầy đủ
+                          // "632 — Giá vốn hàng bán" thay vì đứng lại ở chuỗi vừa gõ.
+                          setOTim((x) => ({ ...x, [khoa]: "" }));
+                          setDaGo((x) => ({ ...x, [khoa]: false }));
+                        }}
+                        onSearch={(v) => {
+                          setOTim((x) => ({ ...x, [khoa]: v }));
+                          setDkTam((x) => ({ ...x, [khoa]: v }));
+                          setDaGo((x) => ({ ...x, [khoa]: true }));
+                        }} />
+              </div>
+            ))}
+          </div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Để trống một ô = <b>giữ nguyên</b> TK cũ của ô đó, không phải xóa trắng.
+            {dsTk.length === 0 && (
+              <span style={{ color: "#d46b08" }}> Chưa lấy được DM_TK — gõ tay mã TK.</span>
+            )}
+            {sttDangSua == null && sttSeApDung.length > 1 && (
+              <> Áp cho STT <b>{sttSeApDung.join(", ")}</b>.</>
+            )}
+          </Typography.Text>
+        </div>
+      </Modal>
     </Modal>
   );
 }
