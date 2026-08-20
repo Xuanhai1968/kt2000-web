@@ -29,7 +29,7 @@ const CO_DINH_KHOAN = ["MDN_NB"];
 //   4. Đánh dấu lần lượt — mỗi lần bấm quét tiếp một cụm tên hàng gốc
 //   5. Xác nhận đúng → good_pred = 1 cho những cái đang đánh dấu
 //   6. Cái nào sai thì gõ tài khoản đúng vào ô "Định khoản đúng" rồi Update về Data
-//      Training (nó sửa sổ TRƯỚC, đẩy kho học SAU)
+//      Training (nó sửa sổ TRƯỚC, đẩy Data Training SAU)
 //   6.1 Mặt hàng từng xác nhận đúng mà lần này sửa khác → giữ lại bắt giải thích
 //   7. Chọn cặp ĐK gốc / Máy đoán rồi bấm Lọc dữ liệu cho nhẹ máy và dễ nhìn
 //
@@ -56,7 +56,7 @@ const CO_DINH_KHOAN = ["MDN_NB"];
 // người sửa đều chụp trước khi ghi đè.
 //
 // Nguồn dữ liệu:
-//   • KT2000_PUB.DK_DATA_TRAIN / DK_BLACKLIST / DK_AUDIT_LOG (kho học chung)
+//   • KT2000_PUB.DK_DATA_TRAIN / DK_BLACKLIST / DK_AUDIT_LOG (Data Training chung)
 //   • HOA_DON_LINE.is_predict / good_pred / proba / dk_goc / ghi_no / ghi_co
 //   • Model: MODELS_DIR\model_v3.joblib, gọi qua tools\dinh_khoan\predict.py
 
@@ -91,14 +91,14 @@ const GIAI_THICH = (
       <code>dk_goc</code> trước khi đè. Mặt hàng đã xác nhận đúng thì không đụng tới.
     </div>
     <div style={{ marginTop: 6 }}>
-      <b>Xác nhận đúng</b> đặt <code>good_pred = 1</code>, không đẩy về kho học.
+      <b>Mark Is Predict OK</b> đặt <code>good_pred = 1</code>, không đẩy về Data Training.
     </div>
     <div style={{ marginTop: 6 }}>
       <b>Update về Data Training</b> sửa sổ trước rồi đẩy vào{" "}
       <code>KT2000_PUB.DK_DATA_TRAIN</code>, lọc qua <code>DK_BLACKLIST</code>, để vết ở{" "}
       <code>DK_AUDIT_LOG</code>. Mặt hàng đổi định khoản so với lần trước bị giữ lại ở{" "}
       <code>CHO_GIAI_THICH</code> cho tới khi có lý do. Dòng ghi chú dính danh sách đen
-      được đóng vào <code>154</code> và đánh dấu xong luôn, không vào kho học.
+      được đóng vào <code>154</code> và đánh dấu xong luôn, không vào Data Training.
     </div>
     <div style={{ marginTop: 6 }}>
       <b>Auto Accounting New KHÔNG huấn luyện lại</b> — nó chỉ đọc model có sẵn. Muốn
@@ -129,7 +129,7 @@ export default function DinhKhoan() {
   const [dsTaiKhoan, setDsTaiKhoan] = useState<DkTaiKhoan[]>([]);
   const [dkGocLoc, setDkGocLoc] = useState<string | undefined>();
   const [dkPredictLoc, setDkPredictLoc] = useState<string | undefined>();
-  // Nhóm C — máy đoán + kho học chung
+  // Nhóm C — máy đoán + Data Training chung
   const [dangAuto, setDangAuto] = useState(false);
   const [dangDayTrain, setDangDayTrain] = useState(false);
   const [dangXacNhan, setDangXacNhan] = useState(false);
@@ -235,7 +235,7 @@ export default function DinhKhoan() {
     message.success(`Đã đánh dấu ${dsHienThi.length} mặt hàng`);
   };
 
-  // ===================== NHÓM C — KHO HỌC CHUNG =====================
+  // ===================== NHÓM C — Data Training CHUNG =====================
 
   // Nạp lại lưới trên từ sổ. Gọi sau MỌI lần ghi: số trên màn hình phải là số vừa ghi
   // xuống, không phải số người dùng vừa gõ.
@@ -299,7 +299,7 @@ export default function DinhKhoan() {
 
   // (6) Update về Data Training. Hai việc trong một lần bấm, và phải theo ĐÚNG thứ tự:
   //   1. Nhãn nào khác cái đang nằm trong sổ thì SỬA SỔ trước
-  //   2. Rồi mới đẩy vào kho học
+  //   2. Rồi mới đẩy vào Data Training
   // Ngược thứ tự là model học một đằng còn sổ ghi một nẻo.
   const dayVeTrain = async () => {
     const ds = dsDangDanhDau()
@@ -338,7 +338,7 @@ export default function DinhKhoan() {
     }
   };
 
-  // Huấn luyện lại model từ kho học. Đây là việc DUY NHẤT khiến những gì bạn dạy hôm
+  // Huấn luyện lại model từ Data Training. Đây là việc DUY NHẤT khiến những gì bạn dạy hôm
   // nay đi vào model — Auto Accounting New chỉ ĐỌC model có sẵn, không học gì cả.
   //
   // Hỏi xác nhận trước vì hai lẽ: nó mất khoảng một phút, và nó ghi đè model dùng chung
@@ -464,9 +464,9 @@ export default function DinhKhoan() {
 
   const nhanTk = (ma: string) => ghepNhan(ma, tenTk.get(ma));
 
-  // HAI Ô LỌC — CHỈ lấy từ DỮ LIỆU THẬT, không dính dáng gì tới kho học (chốt Trường
+  // HAI Ô LỌC — CHỈ lấy từ DỮ LIỆU THẬT, không dính dáng gì tới Data Training (chốt Trường
   // 20/08). Trước đây tôi trộn thêm bảy nhãn gán cứng lấy từ dk_core.VALID_LABELS; đó
-  // chính là chỗ kho học lẫn vào, và nó đẻ ra những lựa chọn lọc xong ra 0 dòng.
+  // chính là chỗ Data Training lẫn vào, và nó đẻ ra những lựa chọn lọc xong ra 0 dòng.
   //   ĐK gốc   → cột dk_goc của HOA_DON_LINE
   //   Máy đoán → cột ghi_no (hàng vào) / ghi_co (hàng ra)
   // Tên tài khoản vẫn tra từ DM_TK cho dễ đọc — DM_TK là danh mục thật của hệ thống,
@@ -699,7 +699,7 @@ export default function DinhKhoan() {
               </Button>
               <Button size="small" className="dk-cam" loading={dangDayTrain}
                       onClick={dayVeTrain}
-                      title="Đẩy mặt hàng ĐANG ĐÁNH DẤU vào kho học chung, để lần sau máy đoán đúng">
+                      title="Đẩy mặt hàng ĐANG ĐÁNH DẤU vào Data Training chung, để lần sau máy đoán đúng">
                 Update về Data Training
               </Button>
               <Button size="small" onClick={moManGiaiThich}
@@ -828,7 +828,7 @@ export default function DinhKhoan() {
 
       {/* (b) XUNG ĐỘT — cùng tên hàng mà lần này định khoản khác lần trước.
           Dòng đó VẪN được lưu, nhưng nằm ngoài model cho tới khi có lý do. Đây là luật
-          chống tự đầu độc: một lần gõ nhầm lọt vào kho học thì máy học luôn cái nhầm
+          chống tự đầu độc: một lần gõ nhầm lọt vào Data Training thì máy học luôn cái nhầm
           và nhắc lại mãi mãi. */}
       <Modal open={moGiaiThich} onCancel={() => setMoGiaiThich(false)} width={880}
              title="Xung đột định khoản — cần lý do trước khi vào dữ liệu huấn luyện"

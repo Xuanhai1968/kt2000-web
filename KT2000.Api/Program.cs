@@ -45,8 +45,8 @@ builder.Services.AddScoped<ToKhaiHaiQuanService>();  // đọc thuế GTGT hàng
 // Mọi module cần số tồn kho gọi qua đây, không module nào tự viết lại công thức.
 builder.Services.AddScoped<TonKhoService>();
 builder.Services.AddScoped<DinhKhoanService>();
-// Kho học dùng chung của định khoản (KT2000_PUB) — TÁCH khỏi DinhKhoanService vì nó
-// nói chuyện với database khác hẳn: kho học chung toàn hệ thống, không phải sổ đơn vị.
+// Data Training dùng chung của định khoản (KT2000_PUB) — TÁCH khỏi DinhKhoanService vì nó
+// nói chuyện với database khác hẳn: Data Training chung toàn hệ thống, không phải sổ đơn vị.
 builder.Services.AddScoped<DkPubService>();
 // Máy đoán định khoản: gọi predict.py rồi ghi nhãn xuống sổ đơn vị.
 builder.Services.AddScoped<DkPredictService>();

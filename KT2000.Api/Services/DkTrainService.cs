@@ -6,14 +6,14 @@ namespace KT2000.Api.Services
 {
     // ============ ĐỊNH KHOẢN — HUẤN LUYỆN LẠI MODEL ============
     //
-    // Xuất kho học ra JSON rồi gọi train.py, sinh model_v3.joblib mới.
+    // Xuất Data Training ra JSON rồi gọi train.py, sinh model_v3.joblib mới.
     //
     // TÁCH HẲN khỏi DkPredictService, dù cả hai đều chạy Python: đoán là việc HẰNG NGÀY
     // (4 giây, đọc model có sẵn), huấn luyện là việc HẰNG TUẦN (một phút, ghi đè model
     // cho TOÀN hệ thống). Gộp một service thì sớm muộn cũng có người gọi nhầm cái nặng.
     //
     // Chỗ dễ hiểu lầm nhất của cả màn Định khoản: bấm Auto Accounting New KHÔNG huấn
-    // luyện lại. Nó chỉ mở model có sẵn ra hỏi. Những gì người dùng đẩy về kho học chỉ
+    // luyện lại. Nó chỉ mở model có sẵn ra hỏi. Những gì người dùng đẩy về Data Training chỉ
     // vào được model sau khi CHẠY CÁI NÀY.
     public class DkTrainService
     {
@@ -70,7 +70,7 @@ namespace KT2000.Api.Services
                 ?? throw new InvalidOperationException("Thiếu cấu hình Paths:DkModels");
             Directory.CreateDirectory(models);
 
-            // ---- 1. Xuất kho học ----
+            // ---- 1. Xuất Data Training ----
             //
             // CHỈ status = 'ACTIVE'. Dòng xung đột chưa giải thích phải nằm ngoài model —
             // đó là toàn bộ tác dụng của luật CHO_GIAI_THICH, bỏ điều kiện này là luật
@@ -103,7 +103,7 @@ namespace KT2000.Api.Services
 
             if (items.Count == 0)
                 throw new InvalidOperationException(
-                    "Kho học đang rỗng — chưa có gì để huấn luyện.");
+                    "Data Training đang rỗng — chưa có gì để huấn luyện.");
 
             string thuMuc = Path.Combine(
                 _config["Paths:JobsRoot"] ?? Path.GetTempPath(), "dk_train");

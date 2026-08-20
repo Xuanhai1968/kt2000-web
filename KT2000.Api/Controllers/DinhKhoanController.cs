@@ -130,7 +130,7 @@ namespace KT2000.Api.Controllers
             return Ok(new { message = $"Đã ghi {soDong} dòng hàng", soDong });
         }
 
-        // ===================== NHÓM C — KHO HỌC CHUNG (KT2000_PUB) =====================
+        // ===================== NHÓM C — Data Training CHUNG (KT2000_PUB) =====================
 
         public sealed class AutoNewReq
         {
@@ -223,7 +223,7 @@ namespace KT2000.Api.Controllers
         }
 
         /// <summary>
-        /// POST api/dinh-khoan/huan-luyen — huấn luyện lại model từ kho học.
+        /// POST api/dinh-khoan/huan-luyen — huấn luyện lại model từ Data Training.
         ///
         /// KHÁC HẲN auto-new: cái kia ĐỌC model, cái này GHI ĐÈ model. Và nó ảnh hưởng
         /// MỌI đơn vị chứ không riêng đơn vị đang chọn — model là model chung.
@@ -241,7 +241,7 @@ namespace KT2000.Api.Controllers
             }
             catch (InvalidOperationException ex)
             {
-                // 409 chứ không 500: người dùng bấm trùng lượt hoặc kho học rỗng là
+                // 409 chứ không 500: người dùng bấm trùng lượt hoặc Data Training rỗng là
                 // chuyện bình thường, không phải máy chủ hỏng.
                 return Conflict(new { message = ex.Message });
             }

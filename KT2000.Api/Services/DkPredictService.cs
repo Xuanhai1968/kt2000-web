@@ -95,7 +95,7 @@ namespace KT2000.Api.Services
 
             // ---- 2. Gạt dòng KHÔNG PHẢI mặt hàng ra ----
             //
-            // Danh sách đen phải áp Ở ĐÂY chứ không chỉ lúc đẩy về kho học. Bài học
+            // Danh sách đen phải áp Ở ĐÂY chứ không chỉ lúc đẩy về Data Training. Bài học
             // 20/08: dòng ghi chú "Hóa đơn thay thế cho hóa đơn điện tử mẫu 1 ký hiệu
             // C26TN…" nằm sẵn trong DK_BLACKLIST, vậy mà máy vẫn gán cho nó 632/154 —
             // vì lúc đoán không ai soi danh sách đen cả. Một dòng ghi chú thì KHÔNG có
@@ -135,7 +135,7 @@ namespace KT2000.Api.Services
                 // Chưa có lịch sử thì KHÔNG chặn — chặn bằng bộ rỗng là máy không đoán
                 // nổi gì. Nhưng phải nói ra, không thì người dùng tưởng đã có ràng buộc.
                 if (!coV && !coR)
-                    kq.CanhBao.Add($"{dv}: chưa có lịch sử định khoản trong kho học — "
+                    kq.CanhBao.Add($"{dv}: chưa có lịch sử định khoản trong Data Training — "
                                  + "máy đoán tự do trong cả 7 tài khoản, soi kỹ hơn bình thường");
             }
 

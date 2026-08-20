@@ -1563,7 +1563,7 @@ export interface DkThayDoi {
 export const dkCapNhat = (ds: DkThayDoi[]) =>
   api.put<{ message: string; soDong: number }>("/dinh-khoan/cap-nhat", ds);
 
-// ===== NHÓM C — KHO HỌC CHUNG (KT2000_PUB) =====
+// ===== NHÓM C — Data Training CHUNG (KT2000_PUB) =====
 
 /** Kết quả một lượt máy đoán. */
 export interface DkKetQuaDoan {
@@ -1583,7 +1583,7 @@ export interface DkKetQuaDoan {
 export const dkAutoNew = (maDonVi: string[], huong?: "V" | "R") =>
   api.post<DkKetQuaDoan>("/dinh-khoan/auto-new", { maDonVi, huong });
 
-/** Một mặt hàng đẩy về kho học. */
+/** Một mặt hàng đẩy về Data Training. */
 export interface DkChot {
   maDonVi: string;
   huong: "V" | "R";
@@ -1632,7 +1632,7 @@ export interface DkKetQuaTrain {
   lop: string[];
 }
 
-// Huấn luyện lại model từ kho học. KHÁC dkAutoNew: cái kia ĐỌC model, cái này GHI ĐÈ
+// Huấn luyện lại model từ Data Training. KHÁC dkAutoNew: cái kia ĐỌC model, cái này GHI ĐÈ
 // model — và nó ảnh hưởng MỌI đơn vị, không riêng đơn vị đang chọn. Mất khoảng một phút.
 export const dkHuanLuyen = () =>
   api.post<DkKetQuaTrain>("/dinh-khoan/huan-luyen", {}, { timeout: 300_000 });

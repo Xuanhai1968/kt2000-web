@@ -20,7 +20,7 @@ namespace KT2000.Api.Services
     //   Dòng nào cùng tên + cùng hướng + cùng đơn vị mà ĐỔI nhãn so với lần trước là
     //   XUNG ĐỘT. Nó vẫn được lưu, nhưng ở trạng thái CHO_GIAI_THICH và KHÔNG BAO GIỜ
     //   vào model cho tới khi người dùng viết rõ vì sao lần này khác.
-    //   Đây là luật chống tự đầu độc: một lần gõ nhầm mà lọt vào kho học thì model
+    //   Đây là luật chống tự đầu độc: một lần gõ nhầm mà lọt vào Data Training thì model
     //   học luôn cái nhầm đó và nhắc lại mãi mãi.
     public class DkPubService
     {
@@ -126,7 +126,7 @@ namespace KT2000.Api.Services
         // Model là model CHUNG, nhưng MỖI ĐƠN VỊ chỉ được đoán trong bộ tài khoản mà
         // CHÍNH ĐƠN VỊ ĐÓ đã từng dùng (chốt Trường 20/08).
         //
-        // Vì sao cần: kho học gộp 68 đơn vị đủ ngành nghề. Không chặn thì một đơn vị
+        // Vì sao cần: Data Training gộp 68 đơn vị đủ ngành nghề. Không chặn thì một đơn vị
         // thương mại thuần (chỉ 156/641) có ngày nhận về nhãn 155 "thành phẩm" học từ
         // một đơn vị sản xuất nào đó — sổ của họ không có khái niệm thành phẩm.
         //
@@ -170,12 +170,12 @@ namespace KT2000.Api.Services
         public static string KhoaBo(string maDonVi, string vr)
             => $"{maDonVi.Trim().ToUpperInvariant()}|{vr}";
 
-        // Kho học vừa đổi thì bộ tài khoản cho phép có thể rộng ra. Xoá thẳng, đừng đợi
+        // Data Training vừa đổi thì bộ tài khoản cho phép có thể rộng ra. Xoá thẳng, đừng đợi
         // hết 5 phút: người dùng vừa dạy máy một tài khoản mới rồi bấm Auto ngay là
         // chuyện thường.
         private void QuenBoNhan() => _cache.Remove("dk_pub_bonhan");
 
-        // ===================== CHỐT VÀO KHO HỌC =====================
+        // ===================== CHỐT VÀO Data Training =====================
 
         public sealed class ChotDto
         {
@@ -215,7 +215,7 @@ namespace KT2000.Api.Services
             VALUES (@action, @vr, @tenUni, @labelNew, @labelOld, @dv, @reason, @user)";
 
         /// <summary>
-        /// Đẩy các mặt hàng đã chốt vào kho học. Trả về kết quả TỪNG dòng — người dùng
+        /// Đẩy các mặt hàng đã chốt vào Data Training. Trả về kết quả TỪNG dòng — người dùng
         /// phải thấy cái nào vào được, cái nào bị chặn và vì sao.
         /// </summary>
         public async Task<List<KetQuaChot>> ChotAsync(
@@ -247,7 +247,7 @@ namespace KT2000.Api.Services
                 var loc = LocTen(d.TenHang ?? "", luat);
                 if (!loc.Nhan)
                 {
-                    // Tên rác thì CHỈ ghi nhật ký, không đụng vào kho học. Nhật ký vẫn
+                    // Tên rác thì CHỈ ghi nhật ký, không đụng vào Data Training. Nhật ký vẫn
                     // phải có: bị loại im lặng thì người dùng tưởng đã học xong.
                     kq.TrangThai = loc.LyDo.StartsWith("EXACT") || loc.LyDo.StartsWith("CONTAINS")
                                  ? "REJECT_BLACKLIST" : "REJECT_INVALID";
@@ -261,7 +261,7 @@ namespace KT2000.Api.Services
 
                 if (nhanCu == nhan)
                 {
-                    // Đã học đúng cái này rồi. Không chèn lại: kho học phình ra vì cùng
+                    // Đã học đúng cái này rồi. Không chèn lại: Data Training phình ra vì cùng
                     // một sự thật lặp vài chục lần thì huấn luyện chậm mà chẳng thêm gì.
                     kq.TrangThai = "DUPLICATE";
                     kq.LabelCu = nhanCu;
@@ -286,7 +286,7 @@ namespace KT2000.Api.Services
                 ra.Add(kq);
             }
 
-            // Kho học vừa rộng ra thì bộ tài khoản cho phép cũng vậy — quên bản nhớ đi.
+            // Data Training vừa rộng ra thì bộ tài khoản cho phép cũng vậy — quên bản nhớ đi.
             QuenBoNhan();
             return ra;
         }
@@ -401,7 +401,7 @@ namespace KT2000.Api.Services
         }
 
         /// <summary>
-        /// Người dùng viết xong lý do → dòng xung đột được thả vào kho học.
+        /// Người dùng viết xong lý do → dòng xung đột được thả vào Data Training.
         /// Điều kiện status = 'CHO_GIAI_THICH' trong WHERE là cố ý: bấm hai lần, hay
         /// hai người cùng mở một dòng, thì lần sau không đụng được vào dòng đã ACTIVE.
         /// </summary>
