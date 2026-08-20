@@ -921,5 +921,41 @@ namespace KT2000.Api.Services
                 throw;
             }
         }
+
+        // ---------------------------------------------------------------------------------
+        // DANH MỤC TÀI KHOẢN — KT2000_Base.DM_TK
+        //
+        // DM_TK nằm ở KT2000_Base (dùng chung mọi đơn vị), KHÔNG ở database đơn vị-năm, nên
+        // phải mở kết nối riêng — cùng cách TonKhoService.LayTapKAsync đang làm. Tên database
+        // chỉ lấy qua resolver (luật #1).
+        //
+        // Sắp theo ma_tk để danh sách đổ xuống ô định khoản luôn cùng một thứ tự: kế toán
+        // gõ quen vị trí, thứ tự nhảy lung tung là chọn nhầm tài khoản.
+        // ---------------------------------------------------------------------------------
+        public async Task<List<Models.DmTkDto>> LayDanhMucTaiKhoan()
+        {
+            var ds = new List<Models.DmTkDto>();
+            using var c = new SqlConnection(_resolver.GetBaseConnection());
+            await c.OpenAsync();
+            using var cmd = new SqlCommand(
+                "SELECT ma_tk, ten_tk, chi_phi, gia_von, cong_no, ton_kho, dt, thue "
+                + "FROM DM_TK ORDER BY ma_tk", c);
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+            {
+                ds.Add(new Models.DmTkDto
+                {
+                    MaTk = r.GetString(0),
+                    TenTk = r.IsDBNull(1) ? null : r.GetString(1),
+                    ChiPhi = !r.IsDBNull(2) && r.GetBoolean(2),
+                    GiaVon = !r.IsDBNull(3) && r.GetBoolean(3),
+                    CongNo = !r.IsDBNull(4) && r.GetBoolean(4),
+                    TonKho = !r.IsDBNull(5) && r.GetBoolean(5),
+                    Dt     = !r.IsDBNull(6) && r.GetBoolean(6),
+                    Thue   = !r.IsDBNull(7) && r.GetBoolean(7),
+                });
+            }
+            return ds;
+        }
     }
 }

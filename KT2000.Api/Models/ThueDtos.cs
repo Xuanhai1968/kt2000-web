@@ -19,13 +19,21 @@
     }
 
 
+    public class DmTkDto
+    {
+        public string MaTk { get; set; } = "";
+        public string? TenTk { get; set; }
+        public bool ChiPhi { get; set; }
+        public bool GiaVon { get; set; }
+        public bool CongNo { get; set; }
+        public bool TonKho { get; set; }
+        public bool Dt { get; set; }
+        public bool Thue { get; set; }
+    }
+
     public class DoiChieuHdDto
     {
-        /// <summary>
-        /// Khóa ghép của lưới. Hóa đơn đã lên sổ thì đây là ma_hd; hóa đơn CHỈ có ở cổng
-        /// thì không có ma_hd nào để lấy, nên dùng "khhd|so_hd" — vẫn duy nhất trong một
-        /// hướng, và màn hình chỉ cần một khóa ổn định để làm getRowId.
-        /// </summary>
+
         public string MaHd { get; set; } = "";
         public decimal TienHangSo { get; set; }   // Σ(SL×ĐG có dấu) − chiết khấu
         public decimal TienVatSo { get; set; }

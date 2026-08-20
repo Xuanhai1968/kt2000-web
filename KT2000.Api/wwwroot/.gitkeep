@@ -1,0 +1,9 @@
+Thư mục này CỐ Ý để trống trong repo.
+
+Bản PUBLISH đặt frontend React đã build vào đây (xem deploy_build.bat) để API và
+web cùng một gốc, không phải đi qua CORS. Lúc chạy DEV thì frontend nằm ở Vite
+:5173 nên thư mục trống là đúng.
+
+Giữ file này lại: git không theo dõi thư mục rỗng, xóa nó đi thì wwwroot biến mất
+khỏi repo và mỗi lần chạy dev ASP.NET lại cảnh báo
+"The WebRootPath was not found ... Static files may be unavailable."
