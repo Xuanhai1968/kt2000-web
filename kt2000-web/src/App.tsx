@@ -8,24 +8,24 @@ import DangTai from "./components/DangTai";
 import ChoPhatTrien from "./pages/ChoPhatTrien";
 
 const HoaDonDauVao = lazy(() => import("./pages/HoaDonDauVao"));
-const BaoCaoThue = lazy(() => import("./pages/BaoCaoThue"));
+const BaoCaoThue = lazy(() => import("./pages/bc_thue/BaoCaoThue"));
 const BaoCaoTonKho = lazy(() => import("./pages/BaoCaoTonKho"));
 const DonViKhachHang = lazy(() => import("./pages/DonViKhachHang"));
 const MoNamLamViec = lazy(() => import("./pages/MoNamLamViec"));
 
-// Phần nội bộ (NB) — giao diện bê từ USA_Meva, xem pages/usa_meva/.
+// Phần nội bộ (NB) — giao diện bê từ USA_Meva, xem pages/noibo/usa_meva/.
 //
-// Hai file cũ KHÔNG còn route nào trỏ tới: pages/PhieuXuatNhap.tsx và
-// pages/DanhSachPhieu.tsx — đã thay bằng bản usa_meva/. Chưa xóa để còn đối chiếu
+// Hai file cũ KHÔNG còn route nào trỏ tới: pages/noibo/PhieuXuatNhap.tsx và
+// pages/DanhSachPhieu.tsx — đã thay bằng bản noibo/usa_meva/. Chưa xóa để còn đối chiếu
 // lúc nghiệm thu; xóa hẳn sau khi Leader duyệt.
 //
-const PhieuXuatHangUsa = lazy(() => import("./pages/usa_meva/PhieuDanhDonUsa")
+const PhieuXuatHangUsa = lazy(() => import("./pages/noibo/usa_meva/PhieuDanhDonUsa")
   .then((m) => ({ default: m.PhieuXuatHangUsa })));
-const PhieuNhapHangUsa = lazy(() => import("./pages/usa_meva/PhieuDanhDonUsa")
+const PhieuNhapHangUsa = lazy(() => import("./pages/noibo/usa_meva/PhieuDanhDonUsa")
   .then((m) => ({ default: m.PhieuNhapHangUsa })));
-const DanhSachPhieuUsa = lazy(() => import("./pages/usa_meva/DanhSachPhieuUsa"));
-const KhuyenMaiUsa = lazy(() => import("./pages/usa_meva/KhuyenMaiUsa"));
-const GoiHang = lazy(() => import("./pages/GoiHang"));
+const DanhSachPhieuUsa = lazy(() => import("./pages/noibo/usa_meva/DanhSachPhieuUsa"));
+const KhuyenMaiUsa = lazy(() => import("./pages/noibo/usa_meva/KhuyenMaiUsa"));
+const GoiHang = lazy(() => import("./pages/noibo/GoiHang"));
 
 // Phần quản trị
 const QuanLyUser = lazy(() => import("./pages/QuanLyUser"));

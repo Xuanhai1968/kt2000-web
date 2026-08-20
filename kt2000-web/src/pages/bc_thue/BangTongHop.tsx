@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { Modal, Table, Empty, message } from "antd";
 import { TableOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import { thueBaoCao, thueBaoCaoDonVi, loiApi } from "../api";
-import type { ChiTieuTongHop } from "../api";
+import { thueBaoCao, thueBaoCaoDonVi, loiApi } from "../../api";
+import type { ChiTieuTongHop } from "../../api";
 import "./bang-tong-hop.css";
 
 // ============ BẢNG TỔNG HỢP CHỈ TIÊU KÊ KHAI — FRM_BC_THUE tab "Bảng tổng Hợp" ============

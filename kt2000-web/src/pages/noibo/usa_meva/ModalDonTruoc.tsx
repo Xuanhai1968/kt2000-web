@@ -14,7 +14,7 @@
 
 import { Modal, Button, Table, Typography, Tag } from "antd";
 import { CopyOutlined, EyeOutlined } from "@ant-design/icons";
-import type { DonNb, DonNbLine } from "../../api";
+import type { DonNb, DonNbLine } from "../../../api";
 
 const soTien = (n: number) => (Number(n) || 0).toLocaleString("vi-VN");
 

@@ -9,7 +9,7 @@
 import { useMemo, useState } from "react";
 import { Modal, List, Button, Checkbox, Empty, Popconfirm, Typography } from "antd";
 import { FolderOpenOutlined, DeleteOutlined } from "@ant-design/icons";
-import type { HuongDon } from "../../api";
+import type { HuongDon } from "../../../api";
 import { docDsNhap, xoaNhapTheoId, type NhapCoTen } from "./nhapCoTen";
 
 const gioPhut = (ms: number) => {

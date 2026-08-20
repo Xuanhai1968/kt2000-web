@@ -9,11 +9,11 @@ import { FileTextOutlined, InboxOutlined, FileExcelOutlined,
 import type { ColumnsType } from "antd/es/table";
 import { thueBaoCao, thueBaoCaoDonVi, thueDocBangKe, thueKhoBangKe, thueRaSoat,
          thueLapToKhai, thueToKhaiXml, thueHtmlHoaDon, thueXoaHoaDon,
-         thueTkHaiQuan, thueHdLechMuaVao, thueHdLechBanRa, loiApi } from "../api";
-import HtmlHoaDon from "./HtmlHoaDon";
+         thueTkHaiQuan, thueHdLechMuaVao, thueHdLechBanRa, loiApi } from "../../api";
+import HtmlHoaDon from "../HtmlHoaDon";
 import type { BaoCaoThue, BangKeHoaDon, DongBangKe, HoaDonFile, KetQuaRaSoat,
               NhomSuat, NhomSuatHd, ToKhaiGtgt, KetQuaHaiQuan,
-              KetQuaHdLech, HoaDonLech } from "../api";
+              KetQuaHdLech, HoaDonLech } from "../../api";
 import BangToKhai from "./BangToKhai";
 import "./bang-to-khai.css";
 import "./to-khai-xml.css";

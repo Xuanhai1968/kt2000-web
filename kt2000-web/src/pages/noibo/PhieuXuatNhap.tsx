@@ -31,11 +31,11 @@ import {
 import {
   nbTimHang, nbLuuHang, nbTimKh, nbLuuKh, nbSoTiep, nbDanhSachDon, nbLayDon,
   nbLuuDon, nbXoaDon, nbTraHangThue, loiApi,
-} from "../api";
+} from "../../api";
 import { EditOutlined, DeleteOutlined } from "@ant-design/icons";
 import { useSearchParams } from "react-router-dom";
-import type { DmHangNb, DmKhNb, DonNb, HuongDon, LoaiDoiTuong } from "../api";
-import { useAuth } from "../AuthContext";
+import type { DmHangNb, DmKhNb, DonNb, HuongDon, LoaiDoiTuong } from "../../api";
+import { useAuth } from "../../AuthContext";
 import { inPhieuDon } from "./mauInPhieu";
 import "./phieu-xuat-nhap.css";
 
@@ -741,14 +741,14 @@ function Phieu({ ch }: { ch: CauHinh }) {
       ngay: ngayRaIso(docNgay(ngay)),
       ngayNh: ngayRaIso(docNgay(ngayNh)),
       maKh, tenKh, mst, diaChi,
-      // Form cũ này chỉ có MỘT ô địa chỉ. Bản mới (usa_meva/PhieuDanhDonUsa.tsx) tách
+      // Form cũ này chỉ có MỘT ô địa chỉ. Bản mới (noibo/usa_meva/PhieuDanhDonUsa.tsx) tách
       // thành hai — cửa hàng và địa chỉ giao. Ở đây để null = giao tại địa chỉ trên.
       diaChiGiao: null,
       maNvkd, maNvvc, maGoi: null, ghiChu,
       tienHang, tienVat, tongTien,
       tthaiHd: "nhap",
       tenNvkd, tenNvvc,
-      // Form cũ không có ô nhãn hàng (bản mới usa_meva/ mới có)
+      // Form cũ không có ô nhãn hàng (bản mới noibo/usa_meva/ mới có)
       tenNhan: null,
       lines: hopLe.map((d, i) => ({
         sttLine: i + 1,

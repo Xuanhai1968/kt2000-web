@@ -23,8 +23,8 @@ import {
 } from "../api";
 import type { DonNb, HuongDon } from "../api";
 import { useAuth } from "../AuthContext";
-import { inPhieuDon } from "./mauInPhieu";
-import "./phieu-xuat-nhap.css";
+import { inPhieuDon } from "./noibo/mauInPhieu";
+import "./noibo/phieu-xuat-nhap.css";
 
 const soTien = (n: number) =>
   n.toLocaleString("vi-VN", { minimumFractionDigits: 0, maximumFractionDigits: 4 });

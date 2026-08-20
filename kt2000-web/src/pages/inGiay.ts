@@ -79,7 +79,7 @@ export const CSS_IN = `
  * @param than   phần thân tờ giấy — PHẢI tự bọc trong <div class="pxk">
  * @param kho    khổ giấy, mặc định A4 dọc như Hoa_Sang
  * @param le     lề trang. Mặc định 12mm cho mẫu A4 dọc sẵn có.
- *               Mẫu hai liên (usa_meva/mauInHaiLien.ts) tự kẻ khung và tự chừa lề
+ *               Mẫu hai liên (noibo/usa_meva/mauInHaiLien.ts) tự kẻ khung và tự chừa lề
  *               trong thân nên truyền "0" — để 12mm thì hai liên bị bóp lại, tràn cột.
  *               PHẢI là tham số chứ không sửa cứng: @page của hai <style> khác nhau
  *               HỢP NHẤT chứ không đè nhau, nên mẫu kia không tự ghi đè được từ ngoài.

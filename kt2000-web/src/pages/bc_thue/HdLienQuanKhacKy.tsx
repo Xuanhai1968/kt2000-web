@@ -3,8 +3,8 @@ import { Modal, Table, Button, Alert, Empty, Tag, Tooltip, message, Space } from
 import { SearchOutlined, SaveOutlined, CopyOutlined,
          FileTextOutlined, WarningOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import { thueHdLienQuanKhacKy, loiApi } from "../api";
-import type { DongLienQuan, KetQuaLienQuan } from "../api";
+import { thueHdLienQuanKhacKy, loiApi } from "../../api";
+import type { DongLienQuan, KetQuaLienQuan } from "../../api";
 
 // ============ HÓA ĐƠN THAY THẾ / ĐIỀU CHỈNH KHÁC KỲ (BR-TK-20) ============
 //

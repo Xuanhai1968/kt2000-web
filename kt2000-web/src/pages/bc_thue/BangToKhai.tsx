@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Typography, Modal, InputNumber, Input, Button, message } from "antd";
 import { SaveOutlined, FileDoneOutlined, DiffOutlined, ImportOutlined } from "@ant-design/icons";
-import { thueDocToKhaiTay, thueLuuToKhaiTay, thueDoiChieu, thueTkHaiQuan, loiApi } from "../api";
-import type { ToKhaiGtgt, ToKhaiTay, DongDoiChieu, KetQuaHaiQuan } from "../api";
+import { thueDocToKhaiTay, thueLuuToKhaiTay, thueDoiChieu, thueTkHaiQuan, loiApi } from "../../api";
+import type { ToKhaiGtgt, ToKhaiTay, DongDoiChieu, KetQuaHaiQuan } from "../../api";
 import "./bang-to-khai.css";
 
 // BangToKhai.tsx — TỜ KHAI 01/GTGT, hai component trong một file:

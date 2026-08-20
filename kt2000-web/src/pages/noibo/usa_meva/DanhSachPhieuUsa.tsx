@@ -36,9 +36,9 @@ import { EditOutlined, PrinterOutlined, FileTextOutlined } from "@ant-design/ico
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   nbDanhSachDonTatCa, nbLayDon, loiApi,
-} from "../../api";
-import type { DonNb, DonNbLine, HuongDon } from "../../api";
-import { useAuth } from "../../AuthContext";
+} from "../../../api";
+import type { DonNb, DonNbLine, HuongDon } from "../../../api";
+import { useAuth } from "../../../AuthContext";
 import { inPhieuDon, xemTruocHoaDon } from "../mauInPhieu";
 import { inHaiLien } from "./mauInHaiLien";
 import "../phieu-xuat-nhap.css";

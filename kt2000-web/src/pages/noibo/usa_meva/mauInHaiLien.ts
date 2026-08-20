@@ -22,8 +22,8 @@
 // esc() BẮT BUỘC ở mọi chỗ chèn dữ liệu người dùng: tên hàng/tên khách do họ tự gõ,
 // mà bản NB sắp phơi ra internet (AD-NB-06). Đây là document.write, React không rào hộ.
 
-import { esc, soTienIn, gioIn, ngayIn, inGiay } from "../inGiay";
-import type { DonNb, DonNbLine } from "../../api";
+import { esc, soTienIn, gioIn, ngayIn, inGiay } from "../../inGiay";
+import type { DonNb, DonNbLine } from "../../../api";
 
 // ============================ ĐỌC TIỀN BẰNG CHỮ ============================
 // Bê nguyên thuật toán của bản gốc (numberToVietnamese). Dòng VI của bảng công nợ đọc

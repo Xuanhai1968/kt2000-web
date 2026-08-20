@@ -19,8 +19,8 @@ import {
 } from "antd";
 import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
-import { nbTimKm, nbLuuKm, nbXoaKm, nbTimHang } from "../../api";
-import type { DmKmNb, DmHangNb, QuyCachNb } from "../../api";
+import { nbTimKm, nbLuuKm, nbXoaKm, nbTimHang } from "../../../api";
+import type { DmKmNb, DmHangNb, QuyCachNb } from "../../../api";
 import OGoiYUsa, { type LuaChon } from "./OGoiYUsa";
 
 const kieuSo: React.CSSProperties = {

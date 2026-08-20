@@ -25,9 +25,9 @@ import { EditOutlined, DeleteOutlined, PrinterOutlined } from "@ant-design/icons
 import {
   nbDanhSachGoi, nbLayGoi, nbGhepDonVaoGoi, nbRutDonKhoiGoi,
   nbChotGoi, nbXuatGoi, nbDanhSachDon, loiApi,
-} from "../api";
-import type { GoiHd, DonNb, TrangThaiGoi } from "../api";
-import { useAuth } from "../AuthContext";
+} from "../../api";
+import type { GoiHd, DonNb, TrangThaiGoi } from "../../api";
+import { useAuth } from "../../AuthContext";
 import { inPhieuSoanGoi } from "./mauInPhieu";
 import "./phieu-xuat-nhap.css";
 

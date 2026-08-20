@@ -3,7 +3,7 @@
 //
 // GHI CHÚ TRÙNG LẶP (đọc trước khi sửa):
 // Ba modal này gần như y hệt ModalThemHang / ModalThemKh / ModalTraThue trong
-// ../PhieuXuatNhap.tsx. Chúng thuần NGHIỆP VỤ NB (BR-NB-01/02/03), không mang nét giao
+// ../../PhieuXuatNhap.tsx. Chúng thuần NGHIỆP VỤ NB (BR-NB-01/02/03), không mang nét giao
 // diện nào của USA_Meva — tức là phần ĐÁNG GỘP, không phải phần đáng nhân đôi.
 // Bước 2 của việc port (rà phần trùng với ../) sẽ tách chúng ra một file dùng chung cho
 // cả hai form rồi xóa bản này. Trong lúc đó KHÔNG sửa một bên mà quên bên kia.
@@ -16,8 +16,8 @@ import {
   Modal, Input, InputNumber, Row, Col, Radio, Table, Button, Tag, Typography,
   Empty, message,
 } from "antd";
-import { nbLuuHang, nbLuuKh, nbTraHangThue, loiApi } from "../../api";
-import type { DmHangNb, DmKhNb, LoaiDoiTuong, TraHangThue } from "../../api";
+import { nbLuuHang, nbLuuKh, nbTraHangThue, loiApi } from "../../../api";
+import type { DmHangNb, DmKhNb, LoaiDoiTuong, TraHangThue } from "../../../api";
 
 // ============================ THÊM NHANH MẶT HÀNG (F2) ============================
 function ModalThemHang({ mo, tenGoiY, truongGia, onDong, onXong }: {

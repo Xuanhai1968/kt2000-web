@@ -4,8 +4,8 @@
 //
 // Đây là bản BÊ NGUYÊN GIAO DIỆN của USA_Meva sang kt2000, và là màn ĐANG DÙNG THẬT:
 // route /app/phieu-xuat và /app/phieu-nhap trỏ thẳng vào đây.
-// Bản port cũ (../PhieuXuatNhap.tsx) không còn route nào trỏ tới; giữ file lại vì
-// ../GoiHang.tsx còn dùng chung CSS .pxn__ và mẫu in của nó.
+// Bản port cũ (../../PhieuXuatNhap.tsx) không còn route nào trỏ tới; giữ file lại vì
+// ../../GoiHang.tsx còn dùng chung CSS .pxn__ và mẫu in của nó.
 //
 // CHUYỂN KHUÔN DỮ LIỆU (SPEC mục 4) — chỗ khác bản gốc nhiều nhất:
 //   USA_Meva                          NB (kt2000)
@@ -44,10 +44,10 @@ import {
 import {
   nbTimHang, nbTimKh, nbTimNhan, nbTimMau, nbSoTiep, nbDonGanNhat, nbLayDon, nbLuuDon,
   loiApi,
-} from "../../api";
+} from "../../../api";
 import type {
   DmHangNb, DmKhNb, DmMau, DonNb, HuongDon, LoaiDoiTuong, QuyCachNb,
-} from "../../api";
+} from "../../../api";
 // Không import mẫu in ở đây nữa: form không có nút In (xem khối "IN: không làm ở màn này").
 // Hai mẫu vẫn sống và được màn Danh sách phiếu dùng.
 import OGoiYUsa, { type LuaChon } from "./OGoiYUsa";

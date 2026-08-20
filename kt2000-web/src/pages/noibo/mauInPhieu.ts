@@ -4,10 +4,10 @@
 // nút In trên màn Danh sách phiếu. Trước đây mỗi nơi tự ghép HTML riêng — hai bản chắc
 // chắn lệch nhau dần, mà tờ giấy giao cho khách thì phải giống nhau tuyệt đối.
 
-import type { DonNb, GoiHd } from "../api";
+import type { DonNb, GoiHd } from "../../api";
 import {
   inGiay, xemTruocGiay, esc, soTienIn, ngayIn, khoiDau, khoiChuKy, khoiChan,
-} from "./inGiay";
+} from "../inGiay";
 
 // Lấy phần số của mã đơn (R125 -> 125) để in "Đơn hàng số: 125 /T8-2026" kiểu Hoa_Sang
 const soDon = (ma: string | null | undefined) => {

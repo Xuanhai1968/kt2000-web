@@ -8,8 +8,8 @@ import { InboxOutlined, FileZipOutlined, SaveOutlined,
          ArrowUpOutlined, HomeOutlined, AimOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { thueBcToKhai, thueNapXmlDaNop, thueDuongDanToKhai,
-         thueLuuToKhaiTct, thueDuyetKhoToKhai, getAdminTenants, loiApi } from "../api";
-import type { DongBcToKhai, KetQuaDuyetKho } from "../api";
+         thueLuuToKhaiTct, thueDuyetKhoToKhai, getAdminTenants, loiApi } from "../../api";
+import type { DongBcToKhai, KetQuaDuyetKho } from "../../api";
 import "./bc-to-khai-xml.css";
 
 // ============ BC LẤY TỜ KHAI XML ============

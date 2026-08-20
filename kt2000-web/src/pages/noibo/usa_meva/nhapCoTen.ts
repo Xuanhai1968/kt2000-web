@@ -10,7 +10,7 @@
 //
 // Kiểu dữ liệu để ngỏ (generic T): file này chỉ lo cất/lấy, khuôn đơn là việc của form.
 
-import type { HuongDon } from "../../api";
+import type { HuongDon } from "../../../api";
 
 const KHOA = (h: HuongDon) => `kt2000.nb.nhap-ten.v1.${h}`;
 

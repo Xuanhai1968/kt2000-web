@@ -10,10 +10,10 @@ import { NhapToKhaiTay } from "./BangToKhai";
 import BcToKhaiXml from "./BcToKhaiXml";
 import BangTongHop from "./BangTongHop";
 import HdLienQuanKhacKy from "./HdLienQuanKhacKy";
-import { thueBaoCao, thueRaSoatCheo, loiApi } from "../api";
+import { thueBaoCao, thueRaSoatCheo, loiApi } from "../../api";
 import type { BaoCaoThue as BaoCaoThueDto, BangKeHoaDon, ChiTieuTongHop,
-              DongRaSoatToKhai } from "../api";
-import { useAuth } from "../AuthContext";
+              DongRaSoatToKhai } from "../../api";
+import { useAuth } from "../../AuthContext";
 import "./bao-cao-thue.css";
 
 const CAC_THANG = Array.from({ length: 12 }, (_, i) => i + 1);
