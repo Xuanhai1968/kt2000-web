@@ -10,6 +10,9 @@ import ChoPhatTrien from "./pages/ChoPhatTrien";
 const HoaDonDauVao = lazy(() => import("./pages/HoaDonDauVao"));
 const BaoCaoThue = lazy(() => import("./pages/BaoCaoThue"));
 const BaoCaoTonKho = lazy(() => import("./pages/BaoCaoTonKho"));
+// Màn Định khoản (máy học). Route bị chặn thêm một lần nữa BÊN TRONG DinhKhoan.tsx:
+// gõ thẳng /app/dinh-khoan vào thanh địa chỉ thì bị đá về /app.
+const DinhKhoan = lazy(() => import("./pages/DinhKhoan"));
 const DonViKhachHang = lazy(() => import("./pages/DonViKhachHang"));
 const MoNamLamViec = lazy(() => import("./pages/MoNamLamViec"));
 
@@ -48,6 +51,7 @@ export default function App() {
             <Route path="phieu-chi" element={<ChoPhatTrien title="Phiếu chi" />} />
             <Route path="bao-cao-thue" element={<BaoCaoThue />} />
             <Route path="bao-cao-ton-kho" element={<BaoCaoTonKho />} />
+            <Route path="dinh-khoan" element={<DinhKhoan />} />
             <Route path="bao-cao-cong-no" element={<ChoPhatTrien title="Báo cáo công nợ" />} />
             {/* Đường dẫn giữ nguyên như cũ, chỉ đổi màn hình bên trong sang bản
                 USA_Meva. Nhờ vậy link/bookmark cũ và mọi chỗ navigate() sẵn có

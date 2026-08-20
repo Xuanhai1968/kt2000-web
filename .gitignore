@@ -31,3 +31,7 @@ __pycache__/
 *.xls
 # ...NHUNG XML_MAP.xlsx la file cau hinh cua bo tai HD, BAT BUOC di theo repo
 !tools/XML_MAP.xlsx
+
+# Log của lần di trú DATA_TRAIN.xlsx -> KT2000_PUB.DK_DATA_TRAIN. Sinh ra mỗi lần chạy,
+# mang tên khách hàng thật trong nội dung — không lên repo.
+tools/dinh_khoan/MIGRATE_LOG_*.txt

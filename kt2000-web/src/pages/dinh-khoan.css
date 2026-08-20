@@ -1,0 +1,153 @@
+/* Bố cục màn Định khoản — dựng lại form "Training vụ Prediction" của VFP.
+   Khối trên chia ba cột (đơn vị · huấn luyện · thao tác), khối dưới là lưới kết quả.
+   Chiều cao chia bằng flex chứ không đặt px cứng: form này dày đặc lưới, hụt vài dòng
+   là phải cuộn liên tục. */
+
+.dk-form {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 96px);
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+/* ---- Khối trên: ba cột ---- */
+.dk-tren {
+  display: flex;
+  gap: 6px;
+  flex: 4;                    /* 4:1 với lưới dưới — chỗ soi mặt hàng cần rộng nhất */
+  min-height: 0;              /* BẮT BUỘC trong flex — thiếu là lưới tràn ra ngoài */
+}
+
+.dk-donvi {
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  flex: 0 0 300px;
+  min-height: 0;
+}
+
+.dk-giua {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 4px;
+}
+
+.dk-phai {
+  display: flex;
+  flex-direction: column;
+  width: 210px;
+  flex: 0 0 210px;
+  gap: 6px;
+  padding: 4px;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 4px;
+}
+
+/* Nút cột phải trải hết bề ngang cho thẳng hàng, giống bảng nút của VFP */
+.dk-phai .ant-btn { width: 100%; }
+
+.dk-tieude {
+  font-size: 12px;
+  font-weight: 600;
+  color: #333;
+  padding: 2px 4px;
+}
+
+.dk-luoi { flex: 1; min-height: 0; }
+.dk-luoi-train { flex: 1; min-height: 0; }
+
+/* Lưới dòng hoá đơn: thu hẹp hẳn, nhường chỗ cho lưới định khoản ở trên (chốt Trường
+   20/08). Nó chỉ để LIẾC xem mặt hàng đang chọn nằm ở những hoá đơn nào — công việc
+   thật diễn ra ở lưới trên, nơi phải soi vài trăm mặt hàng. */
+.dk-luoi-kq { flex: 2; min-height: 120px; }
+
+/* ---- Hai trạng thái của một dòng, hai kênh thị giác khác nhau ----
+   Chúng KHÁC việc nên không được dùng chung một cách tô:
+     • đang chọn   = dòng đang xem chi tiết bên dưới — luôn CHỈ MỘT dòng
+     • đã đánh dấu = dòng sắp được ghi — có thể vài trăm dòng
+   Một dòng có thể vừa chọn vừa đánh dấu, nên chọn tô NỀN còn đánh dấu KẺ VẠCH TRÁI:
+   chồng lên nhau vẫn đọc được cả hai.
+   !important vì AG Grid đặt nền dòng bằng biến của theme, cụ thể hơn selector này. */
+.dk-luoi .ag-row.dk-da-danh-dau .ag-cell {
+  background-color: #fff0f6 !important;
+}
+.dk-luoi .ag-row.dk-da-danh-dau .ag-cell:first-child {
+  box-shadow: inset 3px 0 0 0 #eb2f96;
+}
+.dk-luoi .ag-row.dk-dang-chon .ag-cell {
+  background-color: #bae0ff !important;
+  font-weight: 600;
+}
+
+/* ---- Hàng nút giữa hai lưới ---- */
+.dk-nut {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 4px 6px;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 4px;
+}
+
+.dk-nhom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dk-hang {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dk-nhan { font-size: 12px; color: #333; white-space: nowrap; }
+
+.dk-nhan-trangthai {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: #888;
+  padding: 0 6px;
+}
+
+/* ---- Thanh lọc ---- */
+.dk-loc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 6px;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 4px;
+}
+
+/* Màu nút bê theo bản VFP để người dùng cũ nhận ra ngay vị trí quen thuộc.
+   Dùng !important vì antd đặt màu nền ở mức cụ thể hơn. */
+   Không giới hạn ở :disabled nữa — nút nào đã nối chức năng thì vẫn phải giữ đúng màu
+   VFP, không thì bật được cái nào là cái đó mất mốc nhận dạng. */
+.dk-cam, .dk-cam:disabled   { background: #ffe7ba !important; }
+.dk-do, .dk-do:disabled     { background: #ffccc7 !important; }
+.dk-xanh, .dk-xanh:disabled { background: #d6e4ff !important; }
+
+.dk-chuthich {
+  margin: 0 !important;
+  font-size: 11px;
+}
+
+.dk-ghichu { font-size: 11px; color: #999; max-width: 190px; }
+
+/* Một ô xung đột trong màn giải thích: tên hàng + lý do. Viền trái cam để mắt bắt được
+   ngay là "cái này đang chặn", không lẫn với danh sách thường. */
+.dk-xungdot {
+  border-left: 3px solid #fa8c16;
+  padding: 6px 0 6px 10px;
+  margin-bottom: 10px;
+}
+.dk-xungdot > div:first-child { margin-bottom: 4px; }

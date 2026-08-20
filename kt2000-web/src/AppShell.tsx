@@ -27,6 +27,15 @@ const nhanHd = (chu: string, mau: string) => (
 
 // Bộ menu KẾ TOÁN THUẾ — dành cho tenant thường và tenant nội bộ quản trị (MDN_NB).
 // Giữ tên menuThue (không phải menuItems) vì giờ có HAI bộ menu, tên chung dễ lẫn.
+// Màn Định khoản (máy học) CHỈ hiện cho đơn vị được khai ở đây — hiện là MDN.
+// Không mở cho mọi đơn vị: model định khoản là model CHUNG toàn hệ thống, huấn luyện và
+// chốt nhãn là việc của người vận hành, không phải việc của từng khách hàng.
+// Thêm đơn vị mới thì thêm mã vào mảng này. Đây là lớp TIỆN DỤNG — chặn thật phải làm
+// bằng claim ở backend, giống mọi endpoint khác (BR-NB-06).
+// Mã ĐÚNG là MDN_NB (tra Tenants 19/08), không phải "MDN" — đặt sai một ký tự là menu
+// im lặng không hiện, không lỗi, không dấu vết.
+const CO_DINH_KHOAN = ["MDN_NB"];
+
 const menuThue = [
   {
     type: "group" as const, label: "NHẬP DỮ LIỆU",
@@ -56,7 +65,7 @@ const menuThue = [
 //
 // Nhãn "Lấy HĐ…" thay vì "Hóa đơn…" vì việc ở màn này là ĐI LẤY về cho khách,
 // không phải xem hóa đơn của chính mình. Đơn vị khách hàng vẫn giữ nhãn cũ.
-const menuMdnNb = [
+const menuMdnNb = (maDonVi: string) => [
   {
     type: "group" as const, label: "LẤY DỮ LIỆU",
     children: [
@@ -70,6 +79,10 @@ const menuMdnNb = [
     type: "group" as const, label: "BÁO CÁO",
     children: [
       { key: "/app/bao-cao-thue", label: "Báo cáo thuế" },
+      // Xem quy trình bảy bước ở đầu pages/DinhKhoan.tsx
+      ...(CO_DINH_KHOAN.includes(maDonVi)
+          ? [{ key: "/app/dinh-khoan", label: "Định khoản" }]
+          : []),
     ],
   },
 ];
@@ -144,7 +157,7 @@ export default function AppShell() {
       // MDN_NB dùng menu RIÊNG (nhãn "Lấy HĐ…", không Phiếu thu/chi) chứ không
       // phải menuThue — xem chú thích ở menuMdnNb.
       ? [
-          ...menuMdnNb,
+          ...menuMdnNb(session.tenant.code),
           {
             type: "group" as const, label: "QUẢN TRỊ",
             children: NHOM_QUAN_TRI,

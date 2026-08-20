@@ -46,6 +46,14 @@
           CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\tools\XML_MAP.xlsx" Link="tools\XML_MAP.xlsx"
           CopyToOutputDirectory="PreserveNewest" />
+
+    <!-- Bộ đoán định khoản. dk_core.py PHẢI đi kèm: predict.py import nó để dựng đặc
+         trưng, mà đặc trưng lệch một chút là model đoán bậy toàn tập. Giữ đúng cấu trúc
+         thư mục dinh_khoan\ vì predict.py chèn thư mục của chính nó vào sys.path. -->
+    <None Include="..\tools\dinh_khoan\predict.py" Link="tools\dinh_khoan\predict.py"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\tools\dinh_khoan\dk_core.py" Link="tools\dinh_khoan\dk_core.py"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

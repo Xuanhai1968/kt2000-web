@@ -44,6 +44,12 @@ builder.Services.AddScoped<ToKhaiHaiQuanService>();  // đọc thuế GTGT hàng
 // Viên gạch tồn kho dùng chung (SPEC-BAO-CAO-TON-KHO mục 3) — CHỈ ĐỌC, BR-BC-01.
 // Mọi module cần số tồn kho gọi qua đây, không module nào tự viết lại công thức.
 builder.Services.AddScoped<TonKhoService>();
+builder.Services.AddScoped<DinhKhoanService>();
+// Kho học dùng chung của định khoản (KT2000_PUB) — TÁCH khỏi DinhKhoanService vì nó
+// nói chuyện với database khác hẳn: kho học chung toàn hệ thống, không phải sổ đơn vị.
+builder.Services.AddScoped<DkPubService>();
+// Máy đoán định khoản: gọi predict.py rồi ghi nhãn xuống sổ đơn vị.
+builder.Services.AddScoped<DkPredictService>();
 builder.Services.AddScoped<BangToKhaiService>();  // bảng tờ khai nhiều đơn vị (MDN_NB) — CHỈ ĐỌC
 // CÓ GHI (khác ba service trên): đánh dấu ghi_chu cho HĐ thay thế/điều chỉnh khác kỳ.
 builder.Services.AddScoped<GhiChuHdLienQuan>();

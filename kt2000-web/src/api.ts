@@ -1486,3 +1486,130 @@ export const layTonKhoChiTiet = (maHang: string, thang: number) =>
 
 export const layHangAm = (thang?: number) =>
   api.get<HangAmRow[]>("/bao-cao/ton-kho/hang-am", { params: { thang } });
+
+// ===== ĐỊNH KHOẢN (nhóm A — chỉ đọc) =====
+//
+// Backend gate theo MÃ ĐƠN VỊ (chỉ MDN_NB), chặt hơn mọi endpoint khác: danh sách đơn
+// vị đến từ tham số nên gate hỏng là đọc được sổ của khách hàng khác.
+// Năm làm việc KHÔNG truyền lên — backend lấy từ claim.
+
+/** Một mặt hàng gốc DUY NHẤT, gom từ nhiều dòng hoá đơn. */
+export interface DkTenHang {
+  maDonVi: string;
+  huong: "V" | "R";
+  tenHang: string;
+  soDong: number;             // bao nhiêu dòng hoá đơn mang tên này
+  dkGoc: string | null;
+  dinhKhoan: string | null;   // ghi_no (V) hoặc ghi_co (R)
+  daXacNhan: boolean;         // good_pred
+  tinCay: number | null;      // proba, sẽ đổi tên pred_conf ở script 025
+}
+
+/** Một dòng hoá đơn thật của mặt hàng đang chọn. */
+export interface DkDongHoaDon {
+  maHd: string;
+  tenHang: string;
+  ghiNo: string | null;
+  ghiCo: string | null;
+  sttLine: number | null;
+  soLuong: number | null;
+  donGia: number | null;
+  tenKh: string | null;
+  tinCay: number | null;
+}
+
+export const dkLayTenHang = (dsMaDonVi: string[], huong?: "V" | "R") =>
+  api.get<DkTenHang[]>("/dinh-khoan/ten-hang",
+    { params: { maDonVi: dsMaDonVi.join(","), huong } });
+
+/** Một tài khoản trong KT2000_Base.DM_TK — dùng cho ô chọn định khoản. */
+export interface DkTaiKhoan {
+  maTk: string;
+  tenTk: string;
+}
+
+export const dkLayDanhMucTk = () =>
+  api.get<DkTaiKhoan[]>("/dinh-khoan/danh-muc-tk");
+
+export const dkLayDongHoaDon = (maDonVi: string, tenHang: string, huong?: "V" | "R") =>
+  api.get<DkDongHoaDon[]>("/dinh-khoan/dong-hoa-don",
+    { params: { maDonVi, tenHang, huong } });
+
+/** Một thay đổi cho MỘT mặt hàng. Sửa định khoản, xác nhận đúng, hoặc cả hai. */
+export interface DkThayDoi {
+  maDonVi: string;
+  huong: "V" | "R";
+  tenHang: string;
+  tkMoi?: string | null;      // rỗng = không sửa định khoản
+  xacNhanDung: boolean;       // true = ghi good_pred = 1
+}
+
+// Ghi theo TÊN HÀNG: một lần sửa ăn cho mọi dòng hoá đơn mang tên đó. Backend tự chụp
+// dk_goc (chỉ một lần, khi cột còn trống) trước khi đè.
+export const dkCapNhat = (ds: DkThayDoi[]) =>
+  api.put<{ message: string; soDong: number }>("/dinh-khoan/cap-nhat", ds);
+
+// ===== NHÓM C — KHO HỌC CHUNG (KT2000_PUB) =====
+
+/** Kết quả một lượt máy đoán. */
+export interface DkKetQuaDoan {
+  message: string;
+  soMatHang: number;      // tên hàng duy nhất đã đưa cho model
+  soDong: number;         // dòng hoá đơn đã ghi nhãn
+  soChac: number;         // đạt ngưỡng 0,70
+  soCanSoi: number;       // dưới ngưỡng — nên soi trước
+  soBoQua: number;        // dòng ghi chú, danh sách đen gạt ra
+  soKhoiPhuc: number;     // dòng ghi chú đã trả về ĐK gốc
+  tinCayTb: number;
+  canhBao: string[];      // đơn vị chưa mở sổ, đơn vị ghi hỏng…
+}
+
+// Auto Accounting New: máy tự định khoản TOÀN BỘ mặt hàng chưa ai xác nhận, ghi thẳng
+// vào ghi_no/ghi_co (chụp dk_goc trước). Mặt hàng đã xác nhận đúng thì không đụng tới.
+export const dkAutoNew = (maDonVi: string[], huong?: "V" | "R") =>
+  api.post<DkKetQuaDoan>("/dinh-khoan/auto-new", { maDonVi, huong });
+
+/** Một mặt hàng đẩy về kho học. */
+export interface DkChot {
+  maDonVi: string;
+  huong: "V" | "R";
+  tenHang: string;
+  label: string;              // tài khoản đã chốt
+  moTa?: string | null;       // giải thích, chỉ cần khi biết trước là ca xung đột
+}
+
+export interface DkKetQuaChot {
+  maDonVi: string;
+  huong: "V" | "R";
+  tenHang: string;
+  label: string;
+  /** NEW · DUPLICATE · CONFLICT · REJECT_BLACKLIST · REJECT_INVALID */
+  trangThai: string;
+  labelCu: string | null;
+  lyDo: string | null;
+  id: number | null;          // dòng DK_DATA_TRAIN vừa thêm (ca CONFLICT cần để giải thích)
+}
+
+export const dkDayTrain = (ds: DkChot[]) =>
+  api.post<{
+    message: string; moi: number; trung: number; xungDot: number; loai: number;
+    chiTiet: DkKetQuaChot[];
+  }>("/dinh-khoan/day-train", ds);
+
+/** Một xung đột đang chờ người dùng viết lý do. Chưa có lý do = không vào model. */
+export interface DkChoGiaiThich {
+  id: number;
+  tenHang: string;
+  huong: "V" | "R";
+  maDonVi: string;
+  label: string;
+  ghiChu: string | null;      // máy ghi: "CONFLICT: was X, now Y"
+  taoLuc: string;
+  taoBoi: string | null;
+}
+
+export const dkLayChoGiaiThich = () =>
+  api.get<DkChoGiaiThich[]>("/dinh-khoan/cho-giai-thich");
+
+export const dkGiaiThich = (id: number, moTa: string) =>
+  api.put<{ message: string }>("/dinh-khoan/giai-thich", { id, moTa });
