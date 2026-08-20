@@ -54,6 +54,8 @@
           CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\tools\dinh_khoan\dk_core.py" Link="tools\dinh_khoan\dk_core.py"
           CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\tools\dinh_khoan\train.py" Link="tools\dinh_khoan\train.py"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

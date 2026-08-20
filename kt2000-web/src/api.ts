@@ -1572,8 +1572,8 @@ export interface DkKetQuaDoan {
   soDong: number;         // dòng hoá đơn đã ghi nhãn
   soChac: number;         // đạt ngưỡng 0,70
   soCanSoi: number;       // dưới ngưỡng — nên soi trước
-  soBoQua: number;        // dòng ghi chú, danh sách đen gạt ra
-  soKhoiPhuc: number;     // dòng ghi chú đã trả về ĐK gốc
+  soBoQua: number;        // tên hàng bị danh sách đen gạt ra
+  soGhiChu: number;       // dòng đã đóng vào tài khoản trung tính 154
   tinCayTb: number;
   canhBao: string[];      // đơn vị chưa mở sổ, đơn vị ghi hỏng…
 }
@@ -1621,6 +1621,21 @@ export interface DkChoGiaiThich {
   taoLuc: string;
   taoBoi: string | null;
 }
+
+/** Kết quả một lượt huấn luyện lại model. */
+export interface DkKetQuaTrain {
+  message: string;
+  soMau: number;          // dòng ACTIVE đã đem đi học
+  soLop: number;          // số tài khoản model học được
+  doChinhXac: number;     // đo trên 15% giữ lại
+  giaySo: number;
+  lop: string[];
+}
+
+// Huấn luyện lại model từ kho học. KHÁC dkAutoNew: cái kia ĐỌC model, cái này GHI ĐÈ
+// model — và nó ảnh hưởng MỌI đơn vị, không riêng đơn vị đang chọn. Mất khoảng một phút.
+export const dkHuanLuyen = () =>
+  api.post<DkKetQuaTrain>("/dinh-khoan/huan-luyen", {}, { timeout: 300_000 });
 
 export const dkLayChoGiaiThich = () =>
   api.get<DkChoGiaiThich[]>("/dinh-khoan/cho-giai-thich");

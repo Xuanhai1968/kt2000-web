@@ -50,6 +50,9 @@ builder.Services.AddScoped<DinhKhoanService>();
 builder.Services.AddScoped<DkPubService>();
 // Máy đoán định khoản: gọi predict.py rồi ghi nhãn xuống sổ đơn vị.
 builder.Services.AddScoped<DkPredictService>();
+// Huấn luyện lại model. Tách khỏi DkPredictService vì là việc hằng TUẦN, nặng, và ghi
+// đè model dùng chung cho MỌI đơn vị — không phải việc gọi nhầm được.
+builder.Services.AddScoped<DkTrainService>();
 builder.Services.AddScoped<BangToKhaiService>();  // bảng tờ khai nhiều đơn vị (MDN_NB) — CHỈ ĐỌC
 // CÓ GHI (khác ba service trên): đánh dấu ghi_chu cho HĐ thay thế/điều chỉnh khác kỳ.
 builder.Services.AddScoped<GhiChuHdLienQuan>();

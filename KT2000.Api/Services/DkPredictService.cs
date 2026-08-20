@@ -47,8 +47,8 @@ namespace KT2000.Api.Services
             public int SoDong { get; set; }         // dòng hoá đơn đã ghi nhãn
             public int SoChac { get; set; }         // đạt ngưỡng 0,70
             public int SoCanSoi { get; set; }       // dưới ngưỡng — nên soi trước
-            public int SoBoQua { get; set; }        // dòng ghi chú, danh sách đen gạt ra
-            public int SoKhoiPhuc { get; set; }     // dòng ghi chú đã trả về dk_goc
+            public int SoBoQua { get; set; }        // tên hàng bị danh sách đen gạt ra
+            public int SoGhiChu { get; set; }       // dòng đã đóng vào tài khoản trung tính
             public double TinCayTb { get; set; }
             public List<string> CanhBao { get; } = new();
         }
@@ -109,15 +109,14 @@ namespace KT2000.Api.Services
             kq.SoMatHang = dungDuoc.Count;
             kq.SoBoQua = biLoai.Count;
 
-            // Dọn hậu quả của những lần chạy TRƯỚC khi có lằn ranh này: trả ghi_no/ghi_co
-            // của dòng ghi chú về giá trị dk_goc đã chụp. Chỉ đụng dòng do MÁY ghi
-            // (is_predict = 1) và người dùng CHƯA xác nhận — công của kế toán thì không
-            // đụng tới, dù nó nằm trên dòng ghi chú.
+            // Đóng chúng vào tài khoản trung tính và đánh dấu đã xong, để lần sau không
+            // ai phải nhìn lại. Chỉ đụng dòng người dùng CHƯA xác nhận — công của kế
+            // toán thì không động tới, dù nó nằm trên dòng ghi chú.
             foreach (var nhom in biLoai.GroupBy(x => x.Dv, StringComparer.OrdinalIgnoreCase))
             {
-                try { kq.SoKhoiPhuc += await KhoiPhucAsync(nhom.Key, nam, nhom.ToList(), user, ct); }
+                try { kq.SoGhiChu += await DongGhiChuAsync(nhom.Key, nam, nhom.ToList(), user, ct); }
                 catch (SqlException ex)
-                { kq.CanhBao.Add($"{nhom.Key}: không dọn được dòng ghi chú — {ex.Message}"); }
+                { kq.CanhBao.Add($"{nhom.Key}: không xử lý được dòng ghi chú — {ex.Message}"); }
             }
 
             if (dungDuoc.Count == 0) return kq;
@@ -331,18 +330,30 @@ namespace KT2000.Api.Services
                              AND d.ten = LTRIM(RTRIM(ISNULL(l.ten_hang_goc, '')))
              WHERE ISNULL(l.good_pred, 0) = 0";
 
-        // Trả dòng ghi chú về nguyên trạng trước khi máy đụng vào.
+        // Dòng ghi chú (danh sách đen gạt ra) đóng hết vào MỘT tài khoản trung tính
+        // (chốt Trường 20/08). Không để trống, không trả về dk_goc: báo cáo cần một con
+        // số để cộng, còn người thì không nên phải soi lại chúng lần nào nữa.
         //
-        // CHỈ khôi phục được vế máy đã ghi — dk_goc chụp đúng một vế. Vế đối ứng (331 /
-        // 632) thì không có bản sao nào để trả về, đó là món nợ đã ghi trong nhật ký.
-        // is_predict về 0 và proba về NULL để dòng này không còn mang tiếng "máy đã đoán".
-        private const string SqlKhoiPhuc = @"
+        // good_pred = 1 nên chúng biến mất khi tick "Chỉ hiện mặt hàng mới", VÀ lần bấm
+        // Auto sau không đụng tới (điều kiện good_pred = 0 ở mọi câu lệnh ghi). Nhờ vậy
+        // việc này chỉ chạy MỘT lần cho mỗi dòng.
+        //
+        // KHÔNG theo bộ tài khoản cho phép của đơn vị (chốt Trường 20/08): đây không
+        // phải định khoản thật nên lọc theo lịch sử đơn vị là vô nghĩa — mà đơn vị nào
+        // chưa từng dùng 154 thì lại còn ra dòng trống.
+        private const string TK_DONG_GHI_CHU = "154";
+
+        private const string SqlDongGhiChu = @"
             UPDATE l
-               SET ghi_no = CASE WHEN h.huong = 'VAO' AND ISNULL(l.dk_goc, '') <> ''
-                                 THEN l.dk_goc ELSE l.ghi_no END,
-                   ghi_co = CASE WHEN h.huong = 'RA'  AND ISNULL(l.dk_goc, '') <> ''
-                                 THEN l.dk_goc ELSE l.ghi_co END,
-                   is_predict = 0,
+               SET dk_goc = CASE
+                              WHEN ISNULL(l.dk_goc, '') <> '' THEN l.dk_goc
+                              WHEN h.huong = 'VAO' THEN l.ghi_no
+                              ELSE l.ghi_co
+                            END,
+                   ghi_no = CASE WHEN h.huong = 'VAO' THEN @tkRac ELSE @tkRa END,
+                   ghi_co = CASE WHEN h.huong = 'VAO' THEN @tkVao ELSE @tkRac END,
+                   is_predict = 1,
+                   good_pred = 1,
                    proba = NULL,
                    updated_by = @user,
                    updated_at = SYSDATETIME()
@@ -350,19 +361,22 @@ namespace KT2000.Api.Services
               JOIN HOA_DON h ON h.ma_hd = l.ma_hd
               JOIN #dk_doan d ON d.huong = h.huong
                              AND d.ten = LTRIM(RTRIM(ISNULL(l.ten_hang_goc, '')))
-             WHERE ISNULL(l.good_pred, 0) = 0
-               AND ISNULL(l.is_predict, 0) = 1";
+             WHERE ISNULL(l.good_pred, 0) = 0";
 
-        private async Task<int> KhoiPhucAsync(
+        private async Task<int> DongGhiChuAsync(
             string code, int nam, List<(string Dv, string Vr, string Ten)> ds,
             string user, CancellationToken ct)
-        {
             // Mượn nguyên khuôn bảng tạm của GhiNhanAsync — nhãn và độ tin cậy không
             // dùng tới nên nhét chỗ trống, đổi lấy việc chỉ có MỘT chỗ dựng bảng tạm.
-            return await ChayTrenBangTamAsync(code, nam, SqlKhoiPhuc,
+            => await ChayTrenBangTamAsync(code, nam, SqlDongGhiChu,
                 ds.Select(t => (t.Vr, t.Ten, "", 0d)).ToList(),
-                cmd => cmd.Parameters.AddWithValue("@user", user), ct);
-        }
+                cmd =>
+                {
+                    cmd.Parameters.AddWithValue("@tkRac", TK_DONG_GHI_CHU);
+                    cmd.Parameters.AddWithValue("@tkVao", TK_DOI_UNG_VAO);
+                    cmd.Parameters.AddWithValue("@tkRa", TK_DOI_UNG_RA);
+                    cmd.Parameters.AddWithValue("@user", user);
+                }, ct);
 
         private async Task<int> GhiNhanAsync(
             string code, int nam, List<MotDoan> ds, string user, CancellationToken ct)

@@ -23,11 +23,13 @@ namespace KT2000.Api.Controllers
         private readonly DinhKhoanService _dk;
         private readonly DkPubService _pub;
         private readonly DkPredictService _predict;
+        private readonly DkTrainService _train;
         private readonly AppDbContext _db;
 
         public DinhKhoanController(DinhKhoanService dk, DkPubService pub,
-                                   DkPredictService predict, AppDbContext db)
-        { _dk = dk; _pub = pub; _predict = predict; _db = db; }
+                                   DkPredictService predict, DkTrainService train,
+                                   AppDbContext db)
+        { _dk = dk; _pub = pub; _predict = predict; _train = train; _db = db; }
 
         // PHẢI khớp CO_DINH_KHOAN ở AppShell.tsx và DinhKhoan.tsx.
         private static readonly string[] CO_DINH_KHOAN = { "MDN_NB" };
@@ -161,21 +163,21 @@ namespace KT2000.Api.Controllers
             await GhiNhatKy("DK_MAY_DOAN",
                 $"{string.Join(",", ds)} — {kq.SoMatHang} mặt hàng → {kq.SoDong} dòng "
               + $"({kq.SoCanSoi} dưới ngưỡng {DkPredictService.NGUONG_TIN_CAY:0.00}, "
-              + $"{kq.SoBoQua} dòng ghi chú bỏ qua, {kq.SoKhoiPhuc} dòng trả về ĐK gốc)");
+              + $"{kq.SoBoQua} tên hàng ghi chú → {kq.SoGhiChu} dòng)");
 
             string tin = kq.SoMatHang == 0
                 ? "Không còn mặt hàng nào chưa xác nhận"
                 : $"Máy đoán {kq.SoMatHang} mặt hàng → ghi {kq.SoDong} dòng hàng · "
                 + $"{kq.SoCanSoi} cái máy không chắc, nên soi trước";
             if (kq.SoBoQua > 0)
-                tin += $" · bỏ qua {kq.SoBoQua} dòng ghi chú"
-                     + (kq.SoKhoiPhuc > 0 ? $" (trả {kq.SoKhoiPhuc} dòng về ĐK gốc)" : "");
+                tin += $" · {kq.SoBoQua} tên hàng ghi chú đã đóng vào 154 "
+                     + $"({kq.SoGhiChu} dòng), không đưa vào huấn luyện";
 
             return Ok(new
             {
                 message = tin,
                 kq.SoMatHang, kq.SoDong, kq.SoChac, kq.SoCanSoi,
-                kq.SoBoQua, kq.SoKhoiPhuc, kq.TinCayTb, kq.CanhBao,
+                kq.SoBoQua, kq.SoGhiChu, kq.TinCayTb, kq.CanhBao,
             });
         }
 
@@ -217,6 +219,43 @@ namespace KT2000.Api.Controllers
                 message = $"{moi} mới · {trung} đã có · {xungDot} xung đột · {loai} bị loại",
                 moi, trung, xungDot, loai,
                 chiTiet = kq,
+            });
+        }
+
+        /// <summary>
+        /// POST api/dinh-khoan/huan-luyen — huấn luyện lại model từ kho học.
+        ///
+        /// KHÁC HẲN auto-new: cái kia ĐỌC model, cái này GHI ĐÈ model. Và nó ảnh hưởng
+        /// MỌI đơn vị chứ không riêng đơn vị đang chọn — model là model chung.
+        /// </summary>
+        [HttpPost("huan-luyen")]
+        public async Task<IActionResult> HuanLuyen()
+        {
+            var chan = ChanNeuKhongDuocPhep();
+            if (chan != null) return chan;
+
+            DkTrainService.KetQuaTrain kq;
+            try
+            {
+                kq = await _train.HuanLuyenAsync(NguoiDung(), HttpContext.RequestAborted);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // 409 chứ không 500: người dùng bấm trùng lượt hoặc kho học rỗng là
+                // chuyện bình thường, không phải máy chủ hỏng.
+                return Conflict(new { message = ex.Message });
+            }
+
+            await GhiNhatKy("DK_HUAN_LUYEN",
+                $"{kq.SoMau} mẫu · {kq.SoLop} tài khoản · độ chính xác {kq.DoChinhXac:0.0000} "
+              + $"· {kq.GiaySo:0.0}s");
+
+            return Ok(new
+            {
+                message = $"Đã huấn luyện lại: {kq.SoMau:N0} mẫu · {kq.SoLop} tài khoản "
+                        + $"({string.Join(", ", kq.Lop)}) · độ chính xác {kq.DoChinhXac:0.0000} "
+                        + $"· {kq.GiaySo:0.0} giây",
+                kq.SoMau, kq.SoLop, kq.DoChinhXac, kq.GiaySo, kq.Lop,
             });
         }
 

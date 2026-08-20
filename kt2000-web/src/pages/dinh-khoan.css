@@ -136,6 +136,20 @@
 .dk-do, .dk-do:disabled     { background: #ffccc7 !important; }
 .dk-xanh, .dk-xanh:disabled { background: #d6e4ff !important; }
 
+/* Nút "i" cạnh Auto Accounting New — chỉ để rê chuột đọc, không bấm ra việc gì.
+   Nhỏ và nhạt hơn nút thường để không tranh chỗ với nút thật ngay bên cạnh.
+   cursor: help thay vì pointer, vì pointer là lời hứa "bấm vào có chuyện xảy ra". */
+.dk-nut-i {
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 22px !important;
+  padding: 0 !important;
+  font-style: italic;
+  font-weight: 700;
+  color: #1677ff;
+  cursor: help;
+}
+
 .dk-chuthich {
   margin: 0 !important;
   font-size: 11px;

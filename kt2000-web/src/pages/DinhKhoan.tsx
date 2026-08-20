@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { Button, Select, Input, Checkbox, Modal, Tag, Typography, message } from "antd";
+import { Button, Select, Input, Checkbox, Modal, Tag, Tooltip, Typography, message } from "antd";
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef, CellStyle } from "ag-grid-community";
 import {
   getAdminTenants, dkLayTenHang, dkLayDongHoaDon, dkCapNhat, dkLayDanhMucTk,
-  dkAutoNew, dkDayTrain, dkLayChoGiaiThich, dkGiaiThich, loiApi,
+  dkAutoNew, dkDayTrain, dkHuanLuyen, dkLayChoGiaiThich, dkGiaiThich, loiApi,
 } from "../api";
 import type { DkTenHang, DkDongHoaDon, DkChoGiaiThich, DkTaiKhoan } from "../api";
 import { useAuth } from "../AuthContext";
@@ -76,6 +76,37 @@ const STYLE_O_TICH = {
   textAlign: "center", cursor: "pointer", fontWeight: 700, fontSize: 14,
 } as CellStyle;
 
+// Toàn bộ cách màn này vận hành, gói vào tooltip của nút "i" cạnh Auto Accounting New.
+// Trước đây nó nằm dưới chân màn hình và chiếm ba dòng vĩnh viễn, trong khi người cần
+// đọc thì đang nhìn cái nút chứ không nhìn xuống chân trang.
+//
+// KHÔNG ghi cứng con số độ chính xác ở đây: nó đổi sau mỗi lần huấn luyện, mà một con
+// số ghi cứng thì chỉ đúng đúng một lần rồi sai mãi mãi. Số thật hiện trong thông báo
+// ngay sau khi bấm "Huấn luyện dữ liệu".
+const GIAI_THICH = (
+  <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+    <div>
+      <b>Auto Accounting New</b> chạy model (<code>model_v3.joblib</code>) cho mọi mặt
+      hàng chưa xác nhận, ghi thẳng <code>ghi_no</code>/<code>ghi_co</code> và chụp{" "}
+      <code>dk_goc</code> trước khi đè. Mặt hàng đã xác nhận đúng thì không đụng tới.
+    </div>
+    <div style={{ marginTop: 6 }}>
+      <b>Xác nhận đúng</b> đặt <code>good_pred = 1</code>, không đẩy về kho học.
+    </div>
+    <div style={{ marginTop: 6 }}>
+      <b>Update về Data Training</b> sửa sổ trước rồi đẩy vào{" "}
+      <code>KT2000_PUB.DK_DATA_TRAIN</code>, lọc qua <code>DK_BLACKLIST</code>, để vết ở{" "}
+      <code>DK_AUDIT_LOG</code>. Mặt hàng đổi định khoản so với lần trước bị giữ lại ở{" "}
+      <code>CHO_GIAI_THICH</code> cho tới khi có lý do. Dòng ghi chú dính danh sách đen
+      được đóng vào <code>154</code> và đánh dấu xong luôn, không vào kho học.
+    </div>
+    <div style={{ marginTop: 6 }}>
+      <b>Auto Accounting New KHÔNG huấn luyện lại</b> — nó chỉ đọc model có sẵn. Muốn
+      model học cái vừa dạy thì bấm <b>Huấn luyện dữ liệu</b>.
+    </div>
+  </div>
+);
+
 export default function DinhKhoan() {
   const { session } = useAuth();
   const [dsDonVi, setDsDonVi] = useState<DonVi[]>([]);
@@ -102,6 +133,7 @@ export default function DinhKhoan() {
   const [dangAuto, setDangAuto] = useState(false);
   const [dangDayTrain, setDangDayTrain] = useState(false);
   const [dangXacNhan, setDangXacNhan] = useState(false);
+  const [dangHuanLuyen, setDangHuanLuyen] = useState(false);
   // (6) Ô nhập định khoản đúng, dùng CHUNG cho mọi mặt hàng đang đánh dấu. Gõ một lần
   // ăn cho cả loạt — đó là lý do nó nằm ngoài lưới chứ không phải trong từng dòng.
   const [tkDung, setTkDung] = useState("");
@@ -306,6 +338,43 @@ export default function DinhKhoan() {
     }
   };
 
+  // Huấn luyện lại model từ kho học. Đây là việc DUY NHẤT khiến những gì bạn dạy hôm
+  // nay đi vào model — Auto Accounting New chỉ ĐỌC model có sẵn, không học gì cả.
+  //
+  // Hỏi xác nhận trước vì hai lẽ: nó mất khoảng một phút, và nó ghi đè model dùng chung
+  // cho MỌI đơn vị chứ không riêng đơn vị đang chọn.
+  const huanLuyen = () => {
+    Modal.confirm({
+      title: "Huấn luyện lại model?",
+      width: 560,
+      content: (
+        <div>
+          <p style={{ marginTop: 0 }}>
+            Đọc toàn bộ dữ liệu huấn luyện đang ở trạng thái <b>ACTIVE</b> rồi dựng lại
+            model. Mất khoảng <b>một phút</b>, trong lúc đó đừng đóng trang.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            Model là <b>của chung mọi đơn vị</b> — huấn luyện lại thì mọi đơn vị đều
+            dùng bản mới, không riêng đơn vị bạn đang chọn.
+          </p>
+        </div>
+      ),
+      okText: "Huấn luyện",
+      cancelText: "Thôi",
+      onOk: async () => {
+        setDangHuanLuyen(true);
+        try {
+          const r = await dkHuanLuyen();
+          message.success(r.data.message, 10);
+        } catch (e) {
+          message.error(loiApi(e, "Không huấn luyện được"), 10);
+        } finally {
+          setDangHuanLuyen(false);
+        }
+      },
+    });
+  };
+
   const moManGiaiThich = async () => {
     try {
       const r = await dkLayChoGiaiThich();
@@ -395,16 +464,26 @@ export default function DinhKhoan() {
 
   const nhanTk = (ma: string) => ghepNhan(ma, tenTk.get(ma));
 
-  // Ô LỌC: chỉ liệt tài khoản CÓ THẬT trong dữ liệu đang xem, cộng bảy nhãn model học.
-  // Liệt cả 93 tài khoản ở đây là bắt người dùng dò trong đống mã không hề xuất hiện.
-  const optTk = useMemo(() => {
-    const co = new Set(["152", "153", "154", "155", "156", "211", "641"]);
+  // HAI Ô LỌC — CHỈ lấy từ DỮ LIỆU THẬT, không dính dáng gì tới kho học (chốt Trường
+  // 20/08). Trước đây tôi trộn thêm bảy nhãn gán cứng lấy từ dk_core.VALID_LABELS; đó
+  // chính là chỗ kho học lẫn vào, và nó đẻ ra những lựa chọn lọc xong ra 0 dòng.
+  //   ĐK gốc   → cột dk_goc của HOA_DON_LINE
+  //   Máy đoán → cột ghi_no (hàng vào) / ghi_co (hàng ra)
+  // Tên tài khoản vẫn tra từ DM_TK cho dễ đọc — DM_TK là danh mục thật của hệ thống,
+  // không phải dữ liệu huấn luyện.
+  const optLoc = (lay: (x: DkTenHang) => string | null) => {
+    const co = new Set<string>();
     for (const x of dsTenHang) {
-      if (x.dkGoc?.trim()) co.add(x.dkGoc.trim());
-      if (x.dinhKhoan?.trim()) co.add(x.dinhKhoan.trim());
+      const v = lay(x)?.trim();
+      if (v) co.add(v);
     }
     return [...co].sort().map((v) => ({ value: v, label: nhanTk(v) }));
-  }, [dsTenHang, tenTk]);   // eslint-disable-line react-hooks/exhaustive-deps
+  };
+
+  const optDkGoc = useMemo(() => optLoc((x) => x.dkGoc),
+    [dsTenHang, tenTk]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const optDoan = useMemo(() => optLoc((x) => x.dinhKhoan),
+    [dsTenHang, tenTk]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ô ĐỊNH KHOẢN ĐÚNG: liệt ĐỦ danh mục. Người dùng đang sửa cái máy đoán sai, nên tài
   // khoản đúng hoàn toàn có thể là cái chưa từng xuất hiện trong dữ liệu.
@@ -634,7 +713,7 @@ export default function DinhKhoan() {
               <Button size="small" type="primary" loading={dangXacNhan}
                       onClick={xacNhanDung}
                       title="Các mặt hàng đang đánh dấu là ĐÚNG rồi — ghi good_pred = 1">
-                Xác nhận đúng
+                Mark Is Predict OK 
               </Button>
               <span className="dk-ghichu">
                 {soDanhDau > 0 ? `Đang đánh dấu ${soDanhDau} mặt hàng`
@@ -665,20 +744,33 @@ export default function DinhKhoan() {
             <div className="dk-nhom">
               {/* (2) Máy tự định khoản toàn bộ. "New" = chỉ mặt hàng CHƯA ai xác nhận;
                   cái đã gật rồi thì model không được phép đoán đè lên. */}
-              <Button size="small" className="dk-xanh" loading={dangAuto}
-                      onClick={autoAccountingNew}
-                      title="Máy chạy model, định khoản toàn bộ mặt hàng chưa ai xác nhận">
-                Auto Accounting New
-              </Button>
-              {/* Ẩn bớt cho đỡ rối, KHÔNG phải để bỏ qua: không tick thì vẫn hiện đủ. */}
+              <div className="dk-hang">
+                <Button size="small" className="dk-xanh" loading={dangAuto}
+                        onClick={autoAccountingNew}
+                        title="Máy chạy model, định khoản toàn bộ mặt hàng chưa ai xác nhận">
+                  Auto Accounting New
+                </Button>
+                {/* Toàn bộ cách màn này vận hành, gói vào một dấu hỏi. Để dưới chân màn
+                    hình như trước thì nó chiếm ba dòng vĩnh viễn, mà người cần đọc lại
+                    đúng lúc đang nhìn cái nút này. */}
+                <Tooltip title={GIAI_THICH} overlayStyle={{ maxWidth: 560 }}>
+                  <Button size="small" shape="circle" className="dk-nut-i">i</Button>
+                </Tooltip>
+              </div>
+              {/* Ẩn bớt cho đỡ rối, KHÔNG phải để bỏ qua: không tick thì vẫn hiện đủ.
+                  Lời giải thích nằm ở tooltip, không chiếm một dòng riêng. */}
               <Checkbox checked={chiHangMoi}
                         onChange={(e) => setChiHangMoi(e.target.checked)}
-                        title="Ẩn mặt hàng đã xác nhận đúng ở lần trước. Không tick thì hiện đủ để soi lại.">
+                        title="Ẩn mặt hàng đã xác nhận đúng ở lần trước. Không tick thì hiện đủ để soi lại như thường.">
                 Chỉ hiện mặt hàng mới
               </Checkbox>
-              <span className="dk-ghichu">
-                Không tick = hiện đủ, soi lại như thường
-              </span>
+              {/* Việc DUY NHẤT đưa những gì vừa dạy vào model. Auto Accounting New chỉ
+                  đọc model có sẵn, không học gì — đây là chỗ hay bị hiểu nhầm nhất.
+                  Để riêng dưới cùng: nó là việc hằng TUẦN, không phải việc mỗi lượt soi. */}
+              <Button size="small" loading={dangHuanLuyen} onClick={huanLuyen}
+                      title="Dựng lại model từ toàn bộ dữ liệu huấn luyện — mất khoảng một phút, ảnh hưởng mọi đơn vị">
+                Huấn luyện dữ liệu
+              </Button>
             </div>
           </div>
         </div>
@@ -702,11 +794,11 @@ export default function DinhKhoan() {
         <span className="dk-nhan">ĐK gốc</span>
         <Select size="small" style={{ width: 250 }} allowClear showSearch
                 optionFilterProp="label" placeholder="(tất cả)"
-                value={dkGocLoc} onChange={setDkGocLoc} options={optTk} />
+                value={dkGocLoc} onChange={setDkGocLoc} options={optDkGoc} />
         <span className="dk-nhan">Máy đoán</span>
         <Select size="small" style={{ width: 250 }} allowClear showSearch
                 optionFilterProp="label" placeholder="(tất cả)"
-                value={dkPredictLoc} onChange={setDkPredictLoc} options={optTk} />
+                value={dkPredictLoc} onChange={setDkPredictLoc} options={optDoan} />
         <Button size="small"
                 onClick={() => setLocDangDung({ goc: dkGocLoc, doan: dkPredictLoc })}
                 title="Chỉ hiện mặt hàng khớp cặp đã chọn — nhẹ máy và dễ nhìn hơn">
@@ -767,15 +859,7 @@ export default function DinhKhoan() {
 
       <Typography.Paragraph type="secondary" className="dk-chuthich">
         <Tag color="green">Đã chạy đủ</Tag>
-        <b>Auto Accounting New</b> chạy model (<code>model_v3.joblib</code>, độ chính xác
-        đo được 0,9618) cho mọi mặt hàng chưa xác nhận, ghi thẳng <code>ghi_no</code>/
-        <code>ghi_co</code> và chụp <code>dk_goc</code> trước khi đè. Mặt hàng đã xác nhận
-        đúng thì <b>không</b> đụng tới.{" "}
-        <b>Xác nhận đúng</b> đặt <code>good_pred = 1</code>.{" "}
-        <b>Update về Data Training</b> sửa sổ trước rồi đẩy vào{" "}
-        <code>KT2000_PUB.DK_DATA_TRAIN</code>, lọc qua <code>DK_BLACKLIST</code>, để vết
-        ở <code>DK_AUDIT_LOG</code>; mặt hàng đổi định khoản so với lần trước thì bị giữ
-        lại ở <code>CHO_GIAI_THICH</code> cho tới khi có lý do.
+        Chi tiết cách vận hành: rê chuột vào nút <b>i</b> cạnh Auto Accounting New.
       </Typography.Paragraph>
     </div>
   );
