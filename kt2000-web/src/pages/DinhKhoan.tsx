@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { Button, Select, Input, Checkbox, Modal, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Select, Input, Modal, Tag, Tooltip, Typography, message } from "antd";
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef, CellStyle } from "ag-grid-community";
 import {
@@ -23,15 +23,19 @@ const CO_DINH_KHOAN = ["MDN_NB"];
 // BẢY BƯỚC người dùng thật sự làm (Trường mô tả lại 20/08). Bố cục màn này bám đúng
 // thứ tự đó, không phải thứ tự nào khác:
 //
-//   1. Tick MỘT đơn vị → Nạp dữ liệu
-//   2. Auto Accounting New → máy tự định khoản TOÀN BỘ
+//   1. Tick MỘT đơn vị → Nạp dữ liệu (nạp TOÀN BỘ, nhưng lưới chỉ hiện mặt hàng máy
+//      chưa đoán — xem ba tầng lọc ở dsHienThi)
+//   2. Auto Accounting New → máy tự định khoản TOÀN BỘ. Sau bước này lưới TRẮNG vì mọi
+//      mặt hàng đều đã có is_predict = 1; muốn soi lại thì chọn cặp ở bước 7.
 //   3. Soi hai cột ĐK gốc và Định khoản để xem máy đoán có đúng không
-//   4. Đánh dấu lần lượt — mỗi lần bấm quét tiếp một cụm tên hàng gốc
-//   5. Xác nhận đúng → good_pred = 1 cho những cái đang đánh dấu
+//   4. Mark record by prefix — mỗi lần bấm đánh dấu một cụm tên rồi nhảy sang cụm kế
+//      tiếp, kéo nó lên giữa màn hình và mở luôn dòng hoá đơn của nó
+//   5. Mark Is Predict OK → good_pred = 1, mặt hàng BIẾN MẤT khỏi lưới
 //   6. Cái nào sai thì gõ tài khoản đúng vào ô "Định khoản đúng" rồi Update về Data
 //      Training (nó sửa sổ TRƯỚC, đẩy Data Training SAU)
 //   6.1 Mặt hàng từng xác nhận đúng mà lần này sửa khác → giữ lại bắt giải thích
-//   7. Chọn cặp ĐK gốc / Máy đoán rồi bấm Lọc dữ liệu cho nhẹ máy và dễ nhìn
+//   7. Chọn cặp ĐK gốc × Máy đoán rồi bấm Lọc dữ liệu — đây CŨNG là cách duy nhất gọi
+//      lại những mặt hàng máy đã đoán để soi theo từng cặp
 //
 // BỐN LUẬT NGHIỆP VỤ chi phối bố cục:
 //
@@ -50,6 +54,9 @@ const CO_DINH_KHOAN = ["MDN_NB"];
 // (d) Máy đoán KHÔNG đụng vào mặt hàng đã xác nhận đúng (good_pred = 1). Đó là công
 //     sức của kế toán, không phải chỗ cho model thử lại. Bỏ lằn ranh này là mỗi lần
 //     bấm Auto lại xoá sạch công soi của cả tuần.
+//     Cùng cột good_pred đó cũng quyết định lưới hiện gì: xác nhận xong là mặt hàng
+//     biến mất. Lưới luôn chỉ còn thứ CÒN PHẢI LÀM, nên trống = xong, không cần ô tích
+//     nào để bật/tắt.
 //
 // dk_goc: chụp giá trị định khoản ĐẦU TIÊN, chỉ ghi MỘT LẦN khi cột còn trống. Nó là
 // mốc để biết máy đã đè lên cái gì — mất nó thì không truy ngược được. Cả máy đoán lẫn
@@ -124,7 +131,6 @@ export default function DinhKhoan() {
   // — cùng khoá với getRowId của lưới, để hai bên không bao giờ lệch cách nhận dạng.
   const [daDanhDau, setDaDanhDau] = useState<Record<string, boolean>>({});
   const [daSua, setDaSua] = useState<Record<string, string>>({});
-  const [chiHangMoi, setChiHangMoi] = useState(false);
   // Danh mục tài khoản (KT2000_Base.DM_TK) — để ô chọn hiện được TÊN, không chỉ con số.
   const [dsTaiKhoan, setDsTaiKhoan] = useState<DkTaiKhoan[]>([]);
   const [dkGocLoc, setDkGocLoc] = useState<string | undefined>();
@@ -166,12 +172,42 @@ export default function DinhKhoan() {
   // — đây là ẩn cho đỡ rối, KHÔNG phải bỏ qua.
   // (7) Cộng thêm bộ lọc cặp ĐK gốc / Máy đoán: soi một cặp mỗi lượt thì vừa nhẹ máy
   // vừa dễ nhìn hơn hẳn so với cuộn qua vài nghìn dòng lẫn lộn.
+  // BA TẦNG, và ba tầng này khác nhau về bản chất (chốt Trường 20/08):
+  //
+  //   1. Nạp dữ liệu lấy TOÀN BỘ mặt hàng — không cắt gì ở tầng dữ liệu.
+  //   2. Đã XÁC NHẬN (good_pred) thì biến mất HẲN. Xong là xong.
+  //   3. Máy ĐÃ ĐOÁN (is_predict) thì mặc định GIẤU, nhưng chỉ giấu thôi: chọn đúng
+  //      cặp ĐK gốc × Máy đoán rồi bấm Lọc dữ liệu là chúng hiện lại.
+  //
+  // Nhờ tầng 3 mà màn hình vừa là hàng đợi việc (mở ra chỉ thấy thứ chưa ai đụng), vừa
+  // soi lại được theo từng cặp — thay vì cuộn qua vài nghìn dòng đã xử lý để tìm.
+  // BA TRẠNG THÁI của phạm vi vừa nạp (chốt Trường 21/08). Nạp dữ liệu không còn để
+  // ĐỔ mặt hàng ra lưới nữa — nó trả lời đúng một câu: "giờ tôi phải làm gì tiếp".
+  //   chuaDoan → còn mặt hàng máy chưa đụng     → bấm Auto Accounting New
+  //   choSoi   → máy đoán hết, người chưa gật   → đây mới là lúc hiện lưới ra soi
+  //   xong     → gật hết rồi                    → hết việc
+  type TrangThai = "trong" | "chuaDoan" | "choSoi" | "xong";
+  const trangThai = useMemo<TrangThai>(() => {
+    if (dsTenHang.length === 0) return "trong";
+    if (dsTenHang.some((x) => !x.daDoan)) return "chuaDoan";
+    if (dsTenHang.some((x) => !x.daXacNhan)) return "choSoi";
+    return "xong";
+  }, [dsTenHang]);
+
+  // LỌC DỮ LIỆU là đường DUY NHẤT đưa mặt hàng ra lưới (chốt Trường 21/08). Nạp dữ liệu
+  // không bao giờ hiện gì, kể cả khi máy đã đoán xong và đang chờ soi — nhiệm vụ của nó
+  // chỉ là nói người dùng phải làm gì tiếp.
+  //
+  // Vì sao bắt buộc đi qua bộ lọc: soi định khoản là soi theo CẶP (ĐK gốc × Máy đoán),
+  // mỗi lượt một cặp. Đổ cả nghìn mặt hàng đủ mọi cặp ra một lúc thì vừa nặng máy vừa
+  // không ai soi nổi — đúng thứ bộ lọc sinh ra để tránh.
   const dsHienThi = useMemo(() => {
-    let ds = chiHangMoi ? dsTenHang.filter((x) => !x.daXacNhan) : dsTenHang;
+    if (!locDangDung.goc && !locDangDung.doan) return [];
+    let ds = dsTenHang.filter((x) => !x.daXacNhan);
     if (locDangDung.goc) ds = ds.filter((x) => (x.dkGoc ?? "") === locDangDung.goc);
     if (locDangDung.doan) ds = ds.filter((x) => (x.dinhKhoan ?? "") === locDangDung.doan);
     return ds;
-  }, [dsTenHang, chiHangMoi, locDangDung]);
+  }, [dsTenHang, locDangDung]);
 
   // Khoá nhận dạng một mặt hàng. DÙNG CHUNG với getRowId của lưới — hai cách nhận dạng
   // song song là chỗ chắc chắn sẽ lệch nhau.
@@ -209,9 +245,8 @@ export default function DinhKhoan() {
   const cumTen = (ten: string) =>
     ten.trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0, CUM_SO_TU).join(" ");
 
-  const danhDauLanLuot = () => {
-    // Bỏ qua cả cái ĐÃ xác nhận: quay lại đánh dấu thứ mình vừa gật là chạy vòng tròn.
-    const conLai = dsHienThi.filter((x) => !daDanhDau[khoa(x)] && !x.daXacNhan);
+  const markRecordByPrefix = () => {
+    const conLai = dsHienThi.filter((x) => !daDanhDau[khoa(x)]);
     if (conLai.length === 0) {
       message.info("Đã đánh dấu hết mặt hàng đang hiện");
       return;
@@ -220,10 +255,22 @@ export default function DinhKhoan() {
     const them: Record<string, boolean> = {};
     let n = 0;
     for (const x of dsHienThi)
-      if (!x.daXacNhan && cumTen(x.tenHang) === cum) { them[khoa(x)] = true; n++; }
+      if (cumTen(x.tenHang) === cum) { them[khoa(x)] = true; n++; }
     setDaDanhDau((cu) => ({ ...cu, ...them }));
-    // Cuộn tới chỗ vừa đánh dấu — bấm mà màn hình đứng im thì không biết mình đang ở đâu.
-    const i = dsHienThi.indexOf(conLai[0]);
+
+    // Trỏ sang cụm KẾ TIẾP và mở nó ra như vừa bấm chuột vào (chốt Trường 20/08).
+    // Không có bước này thì đánh dấu xong một loạt là mất dấu vị trí, phải tự dò lại
+    // xem mình đang ở đâu — mà cụm càng dài thì càng trôi xa.
+    const tiep = dsHienThi.find((x) => !them[khoa(x)] && !daDanhDau[khoa(x)]);
+    if (!tiep) {
+      message.success(`Đánh dấu ${n} mặt hàng “${cum}…” — hết danh sách`);
+      return;
+    }
+    setHangChon(tiep);
+    void hamRef.current.xemDongHoaDon(tiep);
+    // Kéo lên GIỮA màn hình, không phải chỉ "cho lọt vào khung": ở mép dưới thì bấm
+    // phát nữa là nó lại trôi mất.
+    const i = dsHienThi.indexOf(tiep);
     if (i >= 0) luoiTenHangRef.current?.api?.ensureIndexVisible(i, "middle");
     message.success(`Đánh dấu ${n} mặt hàng “${cum}…”`);
   };
@@ -471,19 +518,31 @@ export default function DinhKhoan() {
   //   Máy đoán → cột ghi_no (hàng vào) / ghi_co (hàng ra)
   // Tên tài khoản vẫn tra từ DM_TK cho dễ đọc — DM_TK là danh mục thật của hệ thống,
   // không phải dữ liệu huấn luyện.
-  const optLoc = (lay: (x: DkTenHang) => string | null) => {
+  const optLoc = (ds: DkTenHang[], lay: (x: DkTenHang) => string | null) => {
     const co = new Set<string>();
-    for (const x of dsTenHang) {
+    for (const x of ds) {
       const v = lay(x)?.trim();
       if (v) co.add(v);
     }
     return [...co].sort().map((v) => ({ value: v, label: nhanTk(v) }));
   };
 
-  const optDkGoc = useMemo(() => optLoc((x) => x.dkGoc),
-    [dsTenHang, tenTk]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const optDoan = useMemo(() => optLoc((x) => x.dinhKhoan),
-    [dsTenHang, tenTk]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Chỉ liệt tài khoản của mặt hàng CÒN PHẢI LÀM. Xác nhận xong cái nào thì tuỳ chọn
+  // của nó tự rụng khỏi ô lọc — hết việc là ô lọc rỗng, không phải chọn rồi mới biết.
+  const dsChuaXong = useMemo(() => dsTenHang.filter((x) => !x.daXacNhan), [dsTenHang]);
+
+  const optDkGoc = useMemo(() => optLoc(dsChuaXong, (x) => x.dkGoc),
+    [dsChuaXong, tenTk]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ô "Máy đoán" phụ thuộc ô "ĐK gốc" đang chọn, không phải toàn bộ dữ liệu (chốt
+  // Trường 20/08): soi xong hết cặp 156 → 154 thì chọn ĐK gốc 156 sẽ KHÔNG còn thấy
+  // 154 nữa. Nhờ vậy danh sách cặp tự ngắn lại theo tiến độ, thay vì cứ chọn bừa một
+  // cặp rồi phát hiện lưới trống.
+  const optDoan = useMemo(
+    () => optLoc(
+      dkGocLoc ? dsChuaXong.filter((x) => (x.dkGoc ?? "") === dkGocLoc) : dsChuaXong,
+      (x) => x.dinhKhoan),
+    [dsChuaXong, dkGocLoc, tenTk]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ô ĐỊNH KHOẢN ĐÚNG: liệt ĐỦ danh mục. Người dùng đang sửa cái máy đoán sai, nên tài
   // khoản đúng hoàn toàn có thể là cái chưa từng xuất hiện trong dữ liệu.
@@ -539,7 +598,7 @@ export default function DinhKhoan() {
     { colId: "dau", headerName: "Dấu", width: 58,
       valueGetter: (p) => (p.data && danhDauRef.current[khoa(p.data)] ? O_TICH : O_TRONG),
       cellStyle: STYLE_O_TICH,
-      headerTooltip: "Bấm để đánh dấu. Rồi bấm “Xác nhận đúng” hoặc “Update về Data Training”." },
+      headerTooltip: "Bấm để đánh dấu. Rồi bấm “Mark Is Predict OK” hoặc “Update về Data Training”." },
     // Cột Sửa: gõ tài khoản ĐÚNG. Ghi vào ghi_no (hàng vào) hay ghi_co (hàng ra) là do
     // cột V/R quyết định — backend tự chọn vế, màn hình không phải biết.
     { colId: "sua", headerName: "Sửa", width: 80, editable: true,
@@ -594,7 +653,25 @@ export default function DinhKhoan() {
       // để dòng của đơn vị khác nằm dưới tên đơn vị mới.
       setHangChon(null);
       setDsHoaDon([]);
-      if (r.data.length === 0) message.info("Không có mặt hàng nào trong phạm vi đã chọn");
+      // Bỏ luôn bộ lọc cũ: nó thuộc phạm vi vừa rời đi, giữ lại thì lưới hiện ra một
+      // tập chẳng ai chủ ý chọn.
+      setLocDangDung({});
+
+      // Nạp xong thì NÓI người dùng phải làm gì, không đổ mặt hàng ra bắt họ tự đoán.
+      const chuaDoan  = r.data.filter((x) => !x.daDoan).length;
+      const choSoi    = r.data.filter((x) => x.daDoan && !x.daXacNhan).length;
+      if (r.data.length === 0)
+        message.info("Không có mặt hàng nào trong phạm vi đã chọn");
+      else if (chuaDoan > 0)
+        message.warning(
+          `Còn ${chuaDoan} mặt hàng CHƯA ĐỊNH KHOẢN — bấm “Auto Accounting New” để máy đoán`, 6);
+      else if (choSoi > 0)
+        message.info(
+          `Đã định khoản xong, còn ${choSoi} mặt hàng chờ soi — `
+        + "chọn cặp ĐK gốc × Máy đoán rồi bấm “Lọc dữ liệu”", 6);
+      else
+        message.success(
+          `Đã định khoản xong và xác nhận hết ${r.data.length} mặt hàng — không còn việc`, 6);
     } catch (e) {
       message.error(loiApi(e, "Không nạp được dữ liệu định khoản"));
     } finally {
@@ -676,7 +753,22 @@ export default function DinhKhoan() {
                 if (e.colDef.colId === "dau") bapDanhDau(khoa(e.data));
                 else if (e.colDef.colId !== "sua") void hamRef.current.xemDongHoaDon(e.data);
               }}
-              overlayNoRowsTemplate="Tick Run ở lưới trái rồi bấm “Nạp dữ liệu”" />
+              // Lưới trống mang HAI nghĩa trái ngược — chưa nạp, hay đã xong sạch. Phải
+              // nói rõ cái nào, không thì "trắng tinh" đọc như hỏng.
+              // Lưới trống mang BA nghĩa khác hẳn nhau. Nói rõ cái nào, không thì
+              // "trắng tinh" đọc như hỏng.
+              // Lưới trống mang BỐN nghĩa khác hẳn nhau. Nói rõ đang ở nghĩa nào, không
+              // thì "trắng tinh" đọc như hỏng — và mỗi nghĩa dẫn tới một việc khác.
+              overlayNoRowsTemplate={
+                (locDangDung.goc || locDangDung.doan)
+                  ? "Không có mặt hàng nào khớp cặp đang lọc"
+                  : trangThai === "trong"
+                    ? "Tick Run ở lưới trái rồi bấm “Nạp dữ liệu”"
+                    : trangThai === "chuaDoan"
+                      ? "Còn mặt hàng chưa định khoản — bấm “Auto Accounting New”"
+                      : trangThai === "xong"
+                        ? "Đã xác nhận hết — chọn cặp ĐK gốc × Máy đoán rồi bấm “Lọc dữ liệu” nếu muốn soi lại"
+                        : "Chọn cặp ĐK gốc × Máy đoán rồi bấm “Lọc dữ liệu” để bắt đầu soi"} />
           </div>
 
           <div className="dk-nut">
@@ -689,14 +781,15 @@ export default function DinhKhoan() {
                       title="Bỏ hết dấu và ô sửa chưa ghi">
                 Bỏ đánh dấu
               </Button>
+              {/* (4) Quét lần lượt từ trên xuống, mỗi lần một cụm tên. Đứng cùng nhóm
+                  với hai nút đánh dấu kia vì cả ba cùng làm một việc: chọn cái để ghi. */}
+              <Button size="small" onClick={markRecordByPrefix}
+                      title="Đánh dấu cả cụm tên giống nhau, rồi nhảy sang cụm kế tiếp và mở nó ra">
+                Mark record by prefix
+              </Button>
             </div>
 
             <div className="dk-nhom">
-              {/* (4) Quét lần lượt từ trên xuống, mỗi lần một cụm tên */}
-              <Button size="small" onClick={danhDauLanLuot}
-                      title="Nhảy tới mặt hàng chưa xử lý tiếp theo và đánh dấu cả cụm tên giống nó">
-                Đánh dấu lần lượt
-              </Button>
               <Button size="small" className="dk-cam" loading={dangDayTrain}
                       onClick={dayVeTrain}
                       title="Đẩy mặt hàng ĐANG ĐÁNH DẤU vào Data Training chung, để lần sau máy đoán đúng">
@@ -757,13 +850,8 @@ export default function DinhKhoan() {
                   <Button size="small" shape="circle" className="dk-nut-i">i</Button>
                 </Tooltip>
               </div>
-              {/* Ẩn bớt cho đỡ rối, KHÔNG phải để bỏ qua: không tick thì vẫn hiện đủ.
-                  Lời giải thích nằm ở tooltip, không chiếm một dòng riêng. */}
-              <Checkbox checked={chiHangMoi}
-                        onChange={(e) => setChiHangMoi(e.target.checked)}
-                        title="Ẩn mặt hàng đã xác nhận đúng ở lần trước. Không tick thì hiện đủ để soi lại như thường.">
-                Chỉ hiện mặt hàng mới
-              </Checkbox>
+              {/* Bỏ ô tích "Chỉ hiện mặt hàng mới": lưới nay LUÔN chỉ hiện mặt hàng
+                  chưa xác nhận, nên cái tích đó không còn gì để bật/tắt. */}
               {/* Việc DUY NHẤT đưa những gì vừa dạy vào model. Auto Accounting New chỉ
                   đọc model có sẵn, không học gì — đây là chỗ hay bị hiểu nhầm nhất.
                   Để riêng dưới cùng: nó là việc hằng TUẦN, không phải việc mỗi lượt soi. */}
@@ -771,20 +859,20 @@ export default function DinhKhoan() {
                       title="Dựng lại model từ toàn bộ dữ liệu huấn luyện — mất khoảng một phút, ảnh hưởng mọi đơn vị">
                 Huấn luyện dữ liệu
               </Button>
+              {/* Nạp dữ liệu về cuối cột này thay vì đứng riêng một cột bên phải: nó là
+                  bước MỞ ĐẦU nhưng bấm đúng một lần, để chiếm hẳn 210px thì phí chỗ. */}
+              <div className="dk-hang">
+                <Button size="small" type="primary" loading={dangNap} onClick={napDuLieu}
+                        title="Đọc mặt hàng của các đơn vị đang tick Run">
+                  Nạp dữ liệu
+                </Button>
+                <span className="dk-ghichu">
+                  {dsChon.length > 0 ? `Đã chọn ${dsChon.length} đơn vị`
+                                     : "Chưa chọn đơn vị nào"}
+                </span>
+              </div>
             </div>
           </div>
-        </div>
-
-        {/* PHẢI — thao tác toàn cục */}
-        <div className="dk-phai">
-          {/* Bỏ nút "Đọc danh sách đơn vị" — danh sách nay tự nạp lúc mở màn. */}
-          <Button size="small" type="primary" loading={dangNap} onClick={napDuLieu}
-                  title="Đọc dòng hàng của các đơn vị đang tick Run">
-            Nạp dữ liệu
-          </Button>
-          <span className="dk-ghichu">
-            {dsChon.length > 0 ? `Đã chọn ${dsChon.length} đơn vị` : "Chưa chọn đơn vị nào"}
-          </span>
         </div>
       </div>
 
@@ -794,7 +882,8 @@ export default function DinhKhoan() {
         <span className="dk-nhan">ĐK gốc</span>
         <Select size="small" style={{ width: 250 }} allowClear showSearch
                 optionFilterProp="label" placeholder="(tất cả)"
-                value={dkGocLoc} onChange={setDkGocLoc} options={optDkGoc} />
+                value={dkGocLoc} options={optDkGoc}
+                onChange={(v) => { setDkGocLoc(v); setDkPredictLoc(undefined); }} />
         <span className="dk-nhan">Máy đoán</span>
         <Select size="small" style={{ width: 250 }} allowClear showSearch
                 optionFilterProp="label" placeholder="(tất cả)"

@@ -1515,7 +1515,8 @@ export interface DkTenHang {
   soDong: number;             // bao nhiêu dòng hoá đơn mang tên này
   dkGoc: string | null;
   dinhKhoan: string | null;   // ghi_no (V) hoặc ghi_co (R)
-  daXacNhan: boolean;         // good_pred
+  daXacNhan: boolean;         // good_pred — xong hẳn, không hiện lại nữa
+  daDoan: boolean;            // is_predict — máy đã đoán; mặc định giấu, lọc cặp thì hiện
   tinCay: number | null;      // proba, sẽ đổi tên pred_conf ở script 025
 }
 

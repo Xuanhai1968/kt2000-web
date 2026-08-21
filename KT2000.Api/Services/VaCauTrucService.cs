@@ -42,6 +42,10 @@ namespace KT2000.Api.Services
             // vẫn 3 và 2, nên màn hình cho gõ thứ mà sổ không giữ nổi: 22,9885 vào DB hóa
             // 22,989, nhân lại lệch 10,75 và hóa đơn bị đá ra trong khi màn hình vẫn xanh.
             (17, "KT2000.Api.va_024_4_so_le.sql"),
+            // gia_von lên 4 số lẻ cho khớp don_gia. Từ 21/08 trình nạp đặt
+            // gia_von = don_gia với hàng VÀO, mà cột chỉ (18,2) nên SQL cắt bớt ngay lúc
+            // gán: 22.249,4159 vào sổ hóa 22.249,42, hai cột cùng một số mà khác giá trị.
+            (18, "KT2000.Api.va_025_gia_von.sql"),
         };
 
         // KHÔNG có khái niệm "phiên bản mới nhất" — xem giải thích ở DocCacPhienBan.
