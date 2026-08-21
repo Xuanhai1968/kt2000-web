@@ -181,10 +181,29 @@ export default function DinhKhoan() {
   //
   // Nhờ tầng 3 mà màn hình vừa là hàng đợi việc (mở ra chỉ thấy thứ chưa ai đụng), vừa
   // soi lại được theo từng cặp — thay vì cuộn qua vài nghìn dòng đã xử lý để tìm.
+  // BA TRẠNG THÁI của phạm vi vừa nạp (chốt Trường 21/08). Nạp dữ liệu không còn để
+  // ĐỔ mặt hàng ra lưới nữa — nó trả lời đúng một câu: "giờ tôi phải làm gì tiếp".
+  //   chuaDoan → còn mặt hàng máy chưa đụng     → bấm Auto Accounting New
+  //   choSoi   → máy đoán hết, người chưa gật   → đây mới là lúc hiện lưới ra soi
+  //   xong     → gật hết rồi                    → hết việc
+  type TrangThai = "trong" | "chuaDoan" | "choSoi" | "xong";
+  const trangThai = useMemo<TrangThai>(() => {
+    if (dsTenHang.length === 0) return "trong";
+    if (dsTenHang.some((x) => !x.daDoan)) return "chuaDoan";
+    if (dsTenHang.some((x) => !x.daXacNhan)) return "choSoi";
+    return "xong";
+  }, [dsTenHang]);
+
+  // LỌC DỮ LIỆU là đường DUY NHẤT đưa mặt hàng ra lưới (chốt Trường 21/08). Nạp dữ liệu
+  // không bao giờ hiện gì, kể cả khi máy đã đoán xong và đang chờ soi — nhiệm vụ của nó
+  // chỉ là nói người dùng phải làm gì tiếp.
+  //
+  // Vì sao bắt buộc đi qua bộ lọc: soi định khoản là soi theo CẶP (ĐK gốc × Máy đoán),
+  // mỗi lượt một cặp. Đổ cả nghìn mặt hàng đủ mọi cặp ra một lúc thì vừa nặng máy vừa
+  // không ai soi nổi — đúng thứ bộ lọc sinh ra để tránh.
   const dsHienThi = useMemo(() => {
+    if (!locDangDung.goc && !locDangDung.doan) return [];
     let ds = dsTenHang.filter((x) => !x.daXacNhan);
-    const dangLoc = !!(locDangDung.goc || locDangDung.doan);
-    if (!dangLoc) return ds.filter((x) => !x.daDoan);
     if (locDangDung.goc) ds = ds.filter((x) => (x.dkGoc ?? "") === locDangDung.goc);
     if (locDangDung.doan) ds = ds.filter((x) => (x.dinhKhoan ?? "") === locDangDung.doan);
     return ds;
@@ -634,7 +653,25 @@ export default function DinhKhoan() {
       // để dòng của đơn vị khác nằm dưới tên đơn vị mới.
       setHangChon(null);
       setDsHoaDon([]);
-      if (r.data.length === 0) message.info("Không có mặt hàng nào trong phạm vi đã chọn");
+      // Bỏ luôn bộ lọc cũ: nó thuộc phạm vi vừa rời đi, giữ lại thì lưới hiện ra một
+      // tập chẳng ai chủ ý chọn.
+      setLocDangDung({});
+
+      // Nạp xong thì NÓI người dùng phải làm gì, không đổ mặt hàng ra bắt họ tự đoán.
+      const chuaDoan  = r.data.filter((x) => !x.daDoan).length;
+      const choSoi    = r.data.filter((x) => x.daDoan && !x.daXacNhan).length;
+      if (r.data.length === 0)
+        message.info("Không có mặt hàng nào trong phạm vi đã chọn");
+      else if (chuaDoan > 0)
+        message.warning(
+          `Còn ${chuaDoan} mặt hàng CHƯA ĐỊNH KHOẢN — bấm “Auto Accounting New” để máy đoán`, 6);
+      else if (choSoi > 0)
+        message.info(
+          `Đã định khoản xong, còn ${choSoi} mặt hàng chờ soi — `
+        + "chọn cặp ĐK gốc × Máy đoán rồi bấm “Lọc dữ liệu”", 6);
+      else
+        message.success(
+          `Đã định khoản xong và xác nhận hết ${r.data.length} mặt hàng — không còn việc`, 6);
     } catch (e) {
       message.error(loiApi(e, "Không nạp được dữ liệu định khoản"));
     } finally {
@@ -720,12 +757,18 @@ export default function DinhKhoan() {
               // nói rõ cái nào, không thì "trắng tinh" đọc như hỏng.
               // Lưới trống mang BA nghĩa khác hẳn nhau. Nói rõ cái nào, không thì
               // "trắng tinh" đọc như hỏng.
+              // Lưới trống mang BỐN nghĩa khác hẳn nhau. Nói rõ đang ở nghĩa nào, không
+              // thì "trắng tinh" đọc như hỏng — và mỗi nghĩa dẫn tới một việc khác.
               overlayNoRowsTemplate={
-                dsTenHang.length === 0
-                  ? "Tick Run ở lưới trái rồi bấm “Nạp dữ liệu”"
-                  : (locDangDung.goc || locDangDung.doan)
-                    ? "Không có mặt hàng nào khớp cặp đang lọc"
-                    : "Máy đã đoán hết — chọn cặp ĐK gốc × Máy đoán rồi bấm Lọc dữ liệu để soi lại"} />
+                (locDangDung.goc || locDangDung.doan)
+                  ? "Không có mặt hàng nào khớp cặp đang lọc"
+                  : trangThai === "trong"
+                    ? "Tick Run ở lưới trái rồi bấm “Nạp dữ liệu”"
+                    : trangThai === "chuaDoan"
+                      ? "Còn mặt hàng chưa định khoản — bấm “Auto Accounting New”"
+                      : trangThai === "xong"
+                        ? "Đã xác nhận hết — chọn cặp ĐK gốc × Máy đoán rồi bấm “Lọc dữ liệu” nếu muốn soi lại"
+                        : "Chọn cặp ĐK gốc × Máy đoán rồi bấm “Lọc dữ liệu” để bắt đầu soi"} />
           </div>
 
           <div className="dk-nut">
