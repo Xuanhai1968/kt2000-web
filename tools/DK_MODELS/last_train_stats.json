@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-08-20 16:46:57",
+  "input": "E:\\DEV_DATA_HDDT\\dk_train\\TRAIN_20260820_164655.json",
+  "models_dir": "D:\\WebAPP\\kt2000-web\\tools\\DK_MODELS",
+  "success": true,
+  "n_samples": 52177,
+  "n_classes": 7,
+  "classes": [
+    "152",
+    "153",
+    "154",
+    "155",
+    "156",
+    "211",
+    "641"
+  ],
+  "accuracy": 0.9633,
+  "elapsed_sec": 44.98,
+  "model_path": "D:\\WebAPP\\kt2000-web\\tools\\DK_MODELS\\model_v3.joblib"
+}
