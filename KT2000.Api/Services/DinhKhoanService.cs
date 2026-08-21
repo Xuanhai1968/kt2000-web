@@ -33,6 +33,7 @@ namespace KT2000.Api.Services
             public string? DkGoc { get; set; }
             public string? DinhKhoan { get; set; }       // ghi_no (V) hoặc ghi_co (R)
             public bool DaXacNhan { get; set; }          // good_pred
+            public bool DaDoan { get; set; }             // is_predict
             public decimal? TinCay { get; set; }         // proba (sẽ đổi tên pred_conf)
         }
 
@@ -63,7 +64,13 @@ namespace KT2000.Api.Services
                    MAX(l.dk_goc)                             AS dk_goc,
                    MAX(CASE WHEN h.huong = 'VAO' THEN l.ghi_no ELSE l.ghi_co END) AS dinh_khoan,
                    MAX(CASE WHEN ISNULL(l.good_pred, 0) = 1 THEN 1 ELSE 0 END)    AS da_xac_nhan,
-                   MAX(CAST(l.proba AS DECIMAL(9,4)))        AS tin_cay
+                   MAX(CAST(l.proba AS DECIMAL(9,4)))        AS tin_cay,
+                   -- Máy đã đoán mặt hàng này chưa. Vẫn NẠP hết về, nhưng màn hình
+                   -- mặc định giấu cái đã đoán đi — chúng chỉ hiện lại khi người dùng
+                   -- chọn đúng cặp ĐK gốc × Máy đoán rồi bấm Lọc dữ liệu (chốt Trường
+                   -- 20/08). Nhờ vậy soi lại được theo từng cặp mà không phải cuộn qua
+                   -- vài nghìn dòng đã xử lý.
+                   MAX(CASE WHEN ISNULL(l.is_predict, 0) = 1 THEN 1 ELSE 0 END)   AS da_doan
               FROM HOA_DON_LINE l
               JOIN HOA_DON h ON h.ma_hd = l.ma_hd
              WHERE LTRIM(RTRIM(ISNULL(l.ten_hang_goc, ''))) <> ''
@@ -99,6 +106,7 @@ namespace KT2000.Api.Services
                             DinhKhoan = r.IsDBNull(4) ? null : r.GetString(4),
                             DaXacNhan = !r.IsDBNull(5) && r.GetInt32(5) == 1,
                             TinCay = r.IsDBNull(6) ? null : r.GetDecimal(6),
+                            DaDoan = !r.IsDBNull(7) && r.GetInt32(7) == 1,
                         });
                 }
                 catch (SqlException ex) when (ex.Number is 4060 or 911)

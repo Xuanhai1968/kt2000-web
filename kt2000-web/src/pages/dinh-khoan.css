@@ -1,5 +1,5 @@
 /* Bố cục màn Định khoản — dựng lại form "Training vụ Prediction" của VFP.
-   Khối trên chia ba cột (đơn vị · huấn luyện · thao tác), khối dưới là lưới kết quả.
+   Khối trên chia hai cột (đơn vị · lưới mặt hàng + nút), khối dưới là lưới dòng hoá đơn.
    Chiều cao chia bằng flex chứ không đặt px cứng: form này dày đặc lưới, hụt vài dòng
    là phải cuộn liên tục. */
 
@@ -11,7 +11,7 @@
   padding: 6px 8px;
 }
 
-/* ---- Khối trên: ba cột ---- */
+/* ---- Khối trên: hai cột ---- */
 .dk-tren {
   display: flex;
   gap: 6px;
@@ -34,21 +34,6 @@
   min-height: 0;
   gap: 4px;
 }
-
-.dk-phai {
-  display: flex;
-  flex-direction: column;
-  width: 210px;
-  flex: 0 0 210px;
-  gap: 6px;
-  padding: 4px;
-  background: #fafafa;
-  border: 1px solid #eee;
-  border-radius: 4px;
-}
-
-/* Nút cột phải trải hết bề ngang cho thẳng hàng, giống bảng nút của VFP */
-.dk-phai .ant-btn { width: 100%; }
 
 .dk-tieude {
   font-size: 12px;
@@ -129,7 +114,7 @@
 }
 
 /* Màu nút bê theo bản VFP để người dùng cũ nhận ra ngay vị trí quen thuộc.
-   Dùng !important vì antd đặt màu nền ở mức cụ thể hơn. */
+   Dùng !important vì antd đặt màu nền ở mức cụ thể hơn.
    Không giới hạn ở :disabled nữa — nút nào đã nối chức năng thì vẫn phải giữ đúng màu
    VFP, không thì bật được cái nào là cái đó mất mốc nhận dạng. */
 .dk-cam, .dk-cam:disabled   { background: #ffe7ba !important; }
