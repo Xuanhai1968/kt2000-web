@@ -21,7 +21,8 @@ tools/.wdm/
 tools/logs/
 __pycache__/
 *.pyc
-
+*.joblib
+*.json
 # Linh tinh
 *.user
 .vscode/
