@@ -47,6 +47,12 @@ const menuThue = [
       { key: "/app/bao-cao-cong-no", label: "Báo cáo công nợ" },
     ],
   },
+  {
+    type: "group" as const, label: "NHÂN SỰ",
+    children: [
+      { key: "/app/hop-dong", label: "Hợp đồng" },
+    ],
+  },
 ];
 
 // Bộ menu MDN_NB (tenant_type = 'internal') — bàn làm việc của kế toán DỊCH VỤ.
@@ -70,6 +76,12 @@ const menuMdnNb = [
     type: "group" as const, label: "BÁO CÁO",
     children: [
       { key: "/app/bao-cao-thue", label: "Báo cáo thuế" },
+    ],
+  },
+  {
+    type: "group" as const, label: "CÔNG VIỆC",
+    children: [
+      { key: "/app/hop-dong", label: "Lương đơn vị" },
     ],
   },
 ];

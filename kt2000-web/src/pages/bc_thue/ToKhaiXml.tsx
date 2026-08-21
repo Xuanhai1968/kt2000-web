@@ -9,9 +9,11 @@ import { FileTextOutlined, InboxOutlined, FileExcelOutlined,
 import type { ColumnsType } from "antd/es/table";
 import { thueBaoCao, thueBaoCaoDonVi, thueDocBangKe, thueKhoBangKe, thueRaSoat,
          thueLapToKhai, thueToKhaiXml, thueHtmlHoaDon, thueXoaHoaDon,
-         thueTkHaiQuan, thueHdLechMuaVao, thueHdLechBanRa, loiApi } from "../../api";
+         thueTkHaiQuan, thueHdLechMuaVao, thueHdLechBanRa,
+         thueDoiChieuBangKe, thueHaiQuanVaoSo, loiApi } from "../../api";
 import HtmlHoaDon from "../HtmlHoaDon";
-import type { BaoCaoThue, BangKeHoaDon, DongBangKe, HoaDonFile, KetQuaRaSoat,
+import type { BaoCaoThue, BangKeHoaDon, DongBangKe, DoiChieuBangKe,
+  HoaDonFile, KetQuaRaSoat,
               NhomSuat, NhomSuatHd, ToKhaiGtgt, KetQuaHaiQuan,
               KetQuaHdLech, HoaDonLech } from "../../api";
 import BangToKhai from "./BangToKhai";
@@ -473,14 +475,31 @@ export default function ToKhaiXml(
     });
   }, [maDonVi, napBaoCao]);
 
+  /**
+   * Dòng này có phải TỜ KHAI HẢI QUAN đã ghi vào sổ không.
+   *
+   * Nhận theo tiền tố ma_hd — do HaiQuanVaoSo.MaHdCuaKy đặt ra và cũng chính là thứ
+   * cột `huong` của HOA_DON dựa vào, nên đổi tiền tố là hỏng cả hai chỗ cùng lúc.
+   */
+  const laToKhaiHaiQuan = (m: BangKeHoaDon) =>
+    (m.maHd ?? "").startsWith("VAO_HQ_");
+
   const locHd = (ds: BangKeHoaDon[] | undefined, tu: string,
                  huong?: "VAO" | "RA") => {
     let kq = ds ?? [];
     if (huong && locLech?.huong === huong)
       kq = kq.filter((m) => locLech.maHd.has(m.maHd));
     const k = boDau(tu);
-    if (!k) return kq;
-    return kq.filter((m) => chuoiTim(m).includes(k));
+    if (k) kq = kq.filter((m) => chuoiTim(m).includes(k));
+
+    // ĐẨY dòng TỜ KHAI HẢI QUAN lên ĐẦU lưới.
+    //
+    // Nó là dòng gộp cả kỳ (ma_hd = VAO_HQ_...), không phải hóa đơn của một ngày cụ
+    // thể nên xếp theo ngày là nó lạc vào giữa mấy trăm dòng — mà đây đúng là dòng kế
+    // toán cần soi trước tiên khi đối chiếu [23a]/[24a].
+    // sort ỔN ĐỊNH: mọi dòng còn lại giữ nguyên thứ tự cũ.
+    return [...kq].sort(
+      (a, b) => Number(laToKhaiHaiQuan(b)) - Number(laToKhaiHaiQuan(a)));
   };
 
   // Báo kết quả — tách riêng để hai nhánh dưới không lặp lại bốn dòng message.
@@ -577,6 +596,15 @@ export default function ToKhaiXml(
   const [dangLapTk, setDangLapTk] = useState(false);
   const [toKhai, setToKhai] = useState<ToKhaiGtgt | null>(null);
   const [hq, setHq] = useState<KetQuaHaiQuan | null>(null);
+
+  // Đối chiếu bảng kê gốc (IN_VALUE) với sổ. null = chưa lập tờ khai, hoặc database
+  // chưa có bảng IN_VALUE (đời đầu) — cả hai đều ẩn khối đối chiếu đi.
+  const [dcBangKe, setDcBangKe] = useState<DoiChieuBangKe | null>(null);
+
+  // Đang ghi tờ khai hải quan vào sổ. Khóa nút trong lúc chạy — bấm hai lần liên tiếp
+  // thì lần hai bị server chặn trùng, nhưng người dùng thấy hai thông báo khác nhau
+  // và tưởng hỏng.
+  const [dangVaoSo, setDangVaoSo] = useState(false);
   const [dangHq, setDangHq] = useState(false);
   const [dangXuatPdf, setDangXuatPdf] = useState(false);
   const tkRef = useRef<HTMLDivElement | null>(null);
@@ -849,13 +877,6 @@ export default function ToKhaiXml(
       const r = await thueLapToKhai(thang, xmlKyTruoc ?? undefined,
                                     maDonVi || undefined, dsChon());
 
-      // Tờ khai lập từ sổ luôn để trống [23a]/[24a] — thuế khâu nhập khẩu nằm ở tờ
-      // khai hải quan chứ không có trong bảng kê hóa đơn điện tử. CÓ thư mục hải quan
-      // của kỳ thì đọc và cộng vào luôn, để tờ khai vừa tạo đã đủ số, kế toán không
-      // phải nhớ bấm thêm một nút nữa mới đúng.
-      //
-      // Đọc lỗi thì KHÔNG chặn việc lập tờ khai: tờ khai phần sổ vẫn dùng được, chỉ
-      // báo để kế toán tự bấm "Tờ khai hải quan" xem vì sao.
       let tk = r.data;
       try {
         const h = await thueTkHaiQuan(maDonVi, thang, nam);
@@ -871,6 +892,22 @@ export default function ToKhaiXml(
           "Lập được tờ khai nhưng chưa đọc được kho tờ khai hải quan — "
           + "[23a]/[24a] đang để trống, bấm 'Tờ khai hải quan' để xem lại");
       }
+
+      try {
+        const d = await thueDoiChieuBangKe(maDonVi, thang, nam);
+        setDcBangKe(d.data.chuaCoBang ? null : d.data);
+        if (d.data.chuaLenSo.length > 0) {
+          const thieuTien = d.data.chuaLenSo
+            .reduce((t, x) => t + x.tienHang, 0);
+          message.warning(
+            `${d.data.chuaLenSo.length} hóa đơn có ở bảng kê mà CHƯA lên sổ `
+            + `(${tienTron(thieuTien)} tiền hàng) — chưa vào tờ khai này`);
+        }
+      } catch {
+        // Không chặn: đối chiếu hỏng thì tờ khai phần sổ vẫn dùng được.
+        setDcBangKe(null);
+      }
+
       setToKhai(tk);
     } catch (e) {
       const loi = loiApi(e, "Không lập được tờ khai");
@@ -903,6 +940,30 @@ export default function ToKhaiXml(
       message.error(loiApi(e, "Không đọc được tờ khai hải quan"));
     } finally {
       setDangHq(false);
+    }
+  };
+
+  // GHI tổng tờ khai hải quan của kỳ vào sổ. Khác nút "Lấy số vào [23a]/[24a]" (chỉ
+  // điền vào ô trên màn): đây là ghi xuống DB, lần sau lập tờ khai tự cộng, không phải
+  // đọc lại file.
+  const ghiHaiQuanVaoSo = async () => {
+    if (!maDonVi) return;
+    setDangVaoSo(true);
+    try {
+      const r = await thueHaiQuanVaoSo(maDonVi, thang, nam);
+      if (r.data.daGhi) {
+        message.success(r.data.thongDiep);
+        // Ghi xong PHẢI lập lại tờ khai thì số mới đổi — tự lập lại luôn cho khỏi
+        // bắt người dùng nhớ thêm một bước.
+        await lapToKhai();
+      } else {
+        // Không ghi (đã có sẵn / kỳ trống / cờ tắt) — không phải lỗi, chỉ báo lý do.
+        message.info(r.data.thongDiep);
+      }
+    } catch (e) {
+      message.error(loiApi(e, "Không ghi được tờ khai hải quan vào sổ"));
+    } finally {
+      setDangVaoSo(false);
     }
   };
 
@@ -1072,7 +1133,7 @@ export default function ToKhaiXml(
   const luoi = (
     ten: string, viTat: string, huong: "VAO" | "RA",
     ds: BangKeHoaDon[] | undefined,
-    dsHien: BangKeHoaDon[],          // đã qua lọc lệch + ô tìm nhanh
+    dsHien: BangKeHoaDon[],
     cot: ColumnsType<BangKeHoaDon>, dt: number, vat: number, so: number,
     tuTim: string, doiTuTim: (v: string) => void,
     phuThem?: React.ReactNode,
@@ -1167,7 +1228,6 @@ export default function ToKhaiXml(
         const mauLoai = (l: string) =>
           l === "lech-tien" ? "orange"
           : l === "thieu-trong-so" ? "red" : "blue";
-        // null = không so được (bảng kê không có số để đối chiếu) → ô để trống.
         const lechHang = (d: HoaDonLech) =>
           d.tienHangFile == null ? null
           : d.tienHangFile - (d.coTrongSo ? d.doanhThuChuaVat : 0);
@@ -1215,9 +1275,9 @@ export default function ToKhaiXml(
                     <th>{huong === "VAO" ? "Tên người bán" : "Tên người mua"}</th>
                     <th>MST</th>
                     <th>Tên hàng</th>
-                    <th className="phai">Tiền hàng sổ</th>
-                    <th className="giua">VAT</th>
-                    <th className="phai">Tiền VAT sổ</th>
+                    <th className="phai">Tiền hàng HĐ</th>
+                    <th className="giua">%VAT</th>
+                    <th className="phai">Tiền VAT HĐ</th>
                     <th className="phai">Tiền hàng bảng kê</th>
                     <th className="phai">Tiền VAT bảng kê</th>
                     <th className="phai">Lệch hàng</th>
@@ -1306,6 +1366,7 @@ export default function ToKhaiXml(
         columns={cot}
         loading={tai}
         pagination={false}
+        rowClassName={(m) => laToKhaiHaiQuan(m) ? "dong-tkhq" : ""}
         scroll={{ x: RONG_LUOI, y: "calc(50vh - 190px)" }}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
                                     description={tuTim
@@ -1372,9 +1433,6 @@ export default function ToKhaiXml(
                     </span>}
           </span>
 
-          {/* Hiện NGAY, không đợi có tờ khai: đọc kho hải quan là việc CHUẨN BỊ số
-              [23a]/[24a], kế toán cần xem trước rồi mới bấm tạo. Bắt tạo tờ khai xong
-              mới cho đọc là ngược quy trình. */}
           <Button icon={<ImportOutlined />} loading={dangHq}
                   onClick={layHaiQuan}
                   title={"Đọc kho tờ khai hải quan của kỳ để lấy [23a]/[24a] — "
@@ -1391,9 +1449,6 @@ export default function ToKhaiXml(
             </>
           )}
 
-          {/* Đã có tờ khai thì "Tạo lại" lùi về nút phụ — việc chính lúc này là TẢI XML
-              (bấm là chốt: lưu file vào kho + ghi số vào sổ). Chưa có tờ khai thì "Tạo"
-              vẫn là nút chính vì chưa có gì để tải. */}
           <Button size={toKhai ? "middle" : "large"}
                   type={toKhai ? "default" : "primary"}
                   icon={toKhai ? <ReloadOutlined /> : <FileDoneOutlined />}
@@ -1433,10 +1488,6 @@ export default function ToKhaiXml(
             {o("Doanh thu 8%", tong.ra8.dt)}
             {o("Doanh thu 10%", tong.ra10.dt)}
             {o("Doanh thu KCT", tong.raKct.dt)}
-            {/* KKKNT (không kê khai nộp thuế — xăng dầu, hàng đã nộp thuế khâu đầu
-                nguồn) hầu như chỉ phát sinh bên MUA VÀO. Đo 18/08: bán ra không có
-                dòng nào ở cả DAT_VIET_THANH lẫn USA_MEVA. Ẩn khi bằng 0 cho gọn cột,
-                nhưng vẫn hiện nếu có phát sinh — giấu số khác 0 là giấu lỗi. */}
             {tong.raKkknt.dt !== 0 && o("Doanh thu KKKNT", tong.raKkknt.dt)}
             {tong.raLa.soHd > 0
               && o(`Doanh thu thuế suất LẠ (${tong.raLa.soHd} HĐ)`,
@@ -1583,7 +1634,53 @@ export default function ToKhaiXml(
                 </div>
               </>)}
 
- 
+        {dcBangKe && dcBangKe.chuaLenSo.length > 0 && (
+          <div className="dc-khoi khong-in">
+            <div className="dc-dau">
+              <b>Bảng kê cổng thuế {thang}/{nam}</b>
+              <span className="dc-mo">
+                {dcBangKe.chuaLenSo.length} hóa đơn CHƯA lên sổ — chưa vào tờ khai này
+              </span>
+              <span className="dc-day" />
+              <Button size="small" onClick={() => setDcBangKe(null)}>Đóng</Button>
+            </div>
+
+            <div className="dc-khop" style={{ marginBottom: 6 }}>
+              Nạp nốt những hóa đơn này vào sổ rồi <b>lập lại tờ khai</b> thì số mới đủ.
+              Số trên tờ khai luôn lấy từ sổ, không lấy từ bảng kê.
+            </div>
+
+            <table className="dc-bang">
+              <thead>
+                <tr>
+                  <th>Chiều</th>
+                  <th>Ký hiệu</th>
+                  <th>Số HĐ</th>
+                  <th>Ngày</th>
+                  <th>MST</th>
+                  <th>Tên đối tác</th>
+                  <th className="r">Tiền hàng</th>
+                  <th className="r">Tiền VAT</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dcBangKe.chuaLenSo.map((x, i) => (
+                  <tr key={`${x.khhd}|${x.soHd}|${x.mst}|${i}`}>
+                    <td>{x.huong === "VAO" ? "Mua vào" : "Bán ra"}</td>
+                    <td>{x.khhd}</td>
+                    <td>{x.soHd}</td>
+                    <td>{(x.ngay ?? "").slice(0, 10)}</td>
+                    <td>{x.mst}</td>
+                    <td title={x.tenKh}>{x.tenKh}</td>
+                    <td className="r">{tienTron(x.tienHang)}</td>
+                    <td className="r">{tienTron(x.tienVat)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
         {hq && (
           <div className="dc-khoi khong-in">
             <div className="dc-dau">
@@ -1597,7 +1694,16 @@ export default function ToKhaiXml(
                           ? "Cộng [23a]/[24a] vào [23]/[24] rồi tính lại [36]/[41]/[43]"
                           : "Tạo tờ khai trước đã — số này điền vào tờ khai, "
                             + "chưa có tờ khai thì chưa có chỗ điền"}>
-                  Lấy số vào [23a]/[24a]
+                  Lấy số vào hóa đơn
+                </Button>
+              )}
+
+              {hq.choGhiVaoSo && hq.soToKhai > 0 && (
+                <Button size="small" loading={dangVaoSo}
+                        onClick={() => void ghiHaiQuanVaoSo()}
+                        title={"Ghi tổng tờ khai hải quan của kỳ vào sổ "
+                             + "(HOA_DON + HOA_DON_LINE).\nMột kỳ chỉ ghi một lần."}>
+                  Ghi vào sổ
                 </Button>
               )}
               <Button size="small" onClick={() => setHq(null)}>Đóng</Button>

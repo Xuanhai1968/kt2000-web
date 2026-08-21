@@ -10,8 +10,8 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 // Balham là chủ đề dày đặc nhất trong bộ có sẵn — gần lưới VFP hơn Quartz.
 // Từ v33 dùng Theming API, không import file CSS nào cả.
 export const themeVfp = themeBalham.withParams({
-  fontSize: 12,
-  headerFontSize: 12,
+  fontSize: 14,
+  headerFontSize: 14,
   rowVerticalPaddingScale: 0.5,   // dồn dòng sát lại
   cellHorizontalPadding: 6,
   headerVerticalPaddingScale: 0.6,

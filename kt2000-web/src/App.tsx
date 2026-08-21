@@ -10,6 +10,7 @@ import ChoPhatTrien from "./pages/ChoPhatTrien";
 const HoaDonDauVao = lazy(() => import("./pages/HoaDonDauVao"));
 const BaoCaoThue = lazy(() => import("./pages/bc_thue/BaoCaoThue"));
 const BaoCaoTonKho = lazy(() => import("./pages/BaoCaoTonKho"));
+const HopDong = lazy(() => import("./pages/hop_dong/HopDong"));
 const DonViKhachHang = lazy(() => import("./pages/DonViKhachHang"));
 const MoNamLamViec = lazy(() => import("./pages/MoNamLamViec"));
 
@@ -48,6 +49,7 @@ export default function App() {
             <Route path="phieu-chi" element={<ChoPhatTrien title="Phiếu chi" />} />
             <Route path="bao-cao-thue" element={<BaoCaoThue />} />
             <Route path="bao-cao-ton-kho" element={<BaoCaoTonKho />} />
+            <Route path="hop-dong" element={<HopDong />} />
             <Route path="bao-cao-cong-no" element={<ChoPhatTrien title="Báo cáo công nợ" />} />
             {/* Đường dẫn giữ nguyên như cũ, chỉ đổi màn hình bên trong sang bản
                 USA_Meva. Nhờ vậy link/bookmark cũ và mọi chỗ navigate() sẵn có

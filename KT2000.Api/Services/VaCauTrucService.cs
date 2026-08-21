@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using KT2000.Api.Data;
 
@@ -42,6 +42,34 @@ namespace KT2000.Api.Services
             // vẫn 3 và 2, nên màn hình cho gõ thứ mà sổ không giữ nổi: 22,9885 vào DB hóa
             // 22,989, nhân lại lệch 10,75 và hóa đơn bị đá ra trong khi màn hình vẫn xanh.
             (17, "KT2000.Api.va_024_4_so_le.sql"),
+
+            // 18 (025 nhân sự + hợp đồng) và 19 (026 chấm công + lương) ĐÃ RÚT KHỎI ĐÂY
+            // — chốt 21/08. Chúng KHÔNG phải bản vá cấu trúc:
+            //
+            // Bản vá ở danh sách này sửa thứ MỌI database đều phải có (thêm cột vào
+            // HOA_DON, nới số lẻ đơn giá) — thiếu là nạp hóa đơn chết. Còn nhân sự,
+            // hợp đồng, chấm công, lương là một MODULE RIÊNG mà phần lớn đơn vị không
+            // dùng: khách chỉ thuê làm kế toán thuế thì lương họ tự làm.
+            //
+            // Để ở đây thì mọi database của mọi đơn vị, mọi năm đều bị dựng thêm 4 bảng
+            // rỗng ngay lần đầu ai đó mở sổ — không ai yêu cầu, không ai dùng, mà lại
+            // gánh rủi ro: BaoDam() chạy ngầm ở mọi lối vào và nuốt lỗi có chủ đích, nên
+            // bảng dựng dở sẽ không ai biết.
+            //
+            // Nay dựng bảng là việc CÓ CHỦ Ý: Quản trị -> Mở năm làm việc, tích đơn vị
+            // rồi bấm "Tạo bảng Hợp đồng + Lương" (AdminService.TaoBangHopDongLuong).
+            // Màn Lương đơn vị chỉ liệt kê đơn vị đã được tạo bảng.
+        };
+
+        /// <summary>
+        /// Hai script của module Hợp đồng + Lương. KHÔNG nằm trong CAC_BAN_VA (xem giải
+        /// thích ngay trên) — chỉ chạy khi người dùng bấm nút.
+        /// Thứ tự QUAN TRỌNG: 026 có khóa ngoại trỏ về NHAN_SU do 025 tạo.
+        /// </summary>
+        public static readonly (int Ver, string TaiNguyen)[] MODULE_HOP_DONG_LUONG =
+        {
+            (18, "KT2000.Api.va_025_nhansu_hopdong.sql"),
+            (19, "KT2000.Api.va_026_chamcong_bangluong.sql"),
         };
 
         // KHÔNG có khái niệm "phiên bản mới nhất" — xem giải thích ở DocCacPhienBan.
@@ -163,6 +191,62 @@ namespace KT2000.Api.Services
                 try { moKhoa.ExecuteNonQuery(); } catch { /* mất kết nối thì khóa tự tan */ }
             }
             return daVa;
+        }
+
+        public bool CoBangHopDongLuong(string code, int nam)
+        {
+            try
+            {
+                using var conn = new SqlConnection(_resolver.GetTenantConnection(code, nam));
+                conn.Open();
+                using var cmd = new SqlCommand(
+                    "SELECT CASE WHEN OBJECT_ID('NHAN_SU') IS NOT NULL "
+                  + "        AND OBJECT_ID('HOP_DONG') IS NOT NULL "
+                  + "        AND OBJECT_ID('CHAM_CONG') IS NOT NULL "
+                  + "        AND OBJECT_ID('BANG_LUONG') IS NOT NULL "
+                  + "       THEN 1 ELSE 0 END", conn);
+                return Convert.ToInt32(cmd.ExecuteScalar()) == 1;
+            }
+            catch
+            {
+                // Chưa mở năm / không nối được — coi như CHƯA có. Người gọi phân biệt hai
+                // trường hợp đó bằng đường khác (đếm bảng), ở đây chỉ cần một câu trả lời.
+                return false;
+            }
+        }
+
+        public bool TaoBangHopDongLuong(string code, int nam, string nguoiDung)
+        {
+            using var conn = new SqlConnection(_resolver.GetTenantConnection(code, nam));
+            conn.Open();
+
+            var daCo = DocCacPhienBan(conn);
+            var thieu = MODULE_HOP_DONG_LUONG.Where(x => !daCo.Contains(x.Ver))
+                                             .OrderBy(x => x.Ver).ToList();
+
+            // Script tự kiểm (IF OBJECT_ID ... IS NULL) nên chạy lại vô hại; nhưng đủ cả
+            // hai số phiên bản rồi thì khỏi mở lô SQL cho nhanh.
+            if (thieu.Count == 0) return false;
+
+            var daTao = new List<int>();
+            foreach (var (ver, taiNguyen) in thieu)
+            {
+                foreach (var lo in TachLo(DocNhung(taiNguyen)))
+                {
+                    using var cmd = new SqlCommand(lo, conn) { CommandTimeout = 300 };
+                    cmd.ExecuteNonQuery();
+                }
+                daTao.Add(ver);
+            }
+
+            // Bộ nhớ đệm của BaoDam giữ theo database; module này không nằm trong
+            // CAC_BAN_VA nên không đụng gì tới nó — để nguyên.
+            _log.LogInformation("Tạo bảng Hợp đồng + Lương cho {Db}: {Ver}",
+                                $"{code}_{nam}", string.Join(", ", daTao));
+            GhiNhatKy(code, nam, nguoiDung,
+                      $"{code}_{nam} — đã tạo bảng module Hợp đồng + Lương "
+                    + $"(script {string.Join(", ", daTao)})");
+            return true;
         }
 
         // GO không phải lệnh T-SQL, chỉ là dấu ngắt lô của sqlcmd — SqlCommand không hiểu.

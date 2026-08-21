@@ -9,8 +9,7 @@
   <ItemGroup>
     <!-- Khuôn schema đơn vị-năm: nhúng thẳng vào .dll để bản publish (xcopy) không
          bao giờ thiếu file, và không ai sửa được schema trên server mà không build lại. -->
-    <EmbeddedResource Include="..\database\010_tenant_template_v6.sql"
-                      LogicalName="KT2000.Api.tenant_template.sql" />
+    <EmbeddedResource Include="..\database\010_tenant_template_v6.sql" LogicalName="KT2000.Api.tenant_template.sql" />
 
     <!-- Khuôn NỘI BỘ (NB) — MỘT file duy nhất. Trước đây là bốn file rời (013 danh
          mục, 014 cột bổ sung, 015 gói hàng, 017 cột tri_gia) phải chạy đúng thứ tự,
@@ -18,34 +17,27 @@
          lỗi câm. Nay gộp hết vào 015_tenant_nb.sql, thứ tự đọc từ trên xuống là ra.
          Tách khỏi 010 để 010 giữ nguyên vai "bản sao đúng của khuôn thuế".
          CHỈ chạy cho đơn vị 'noibo' — xem AdminService.CreateTenantDatabase(laNoiBo). -->
-    <EmbeddedResource Include="..\database\015_tenant_nb.sql"
-                      LogicalName="KT2000.Api.tenant_nb.sql" />
+    <EmbeddedResource Include="..\database\015_tenant_nb.sql" LogicalName="KT2000.Api.tenant_nb.sql" />
 
     <!-- BẢN VÁ cấu trúc cho database đơn vị-năm ĐÃ TỒN TẠI. Khác hai file trên: chúng là
          KHUÔN để dựng database mới, còn đây là thứ VaCauTrucService chạy khi gặp database
          còn ở phiên bản cũ. Thêm bản vá mới thì phải thêm MỘT dòng ở đây VÀ một dòng
          trong mảng CAC_BAN_VA của VaCauTrucService — thiếu một trong hai thì vá không
          chạy mà chẳng báo gì. -->
-    <EmbeddedResource Include="..\database\017_hoa_don_line_loai_thue.sql"
-                      LogicalName="KT2000.Api.va_017_loai_thue.sql" />
-    <EmbeddedResource Include="..\database\019_hoa_don_dinh_khoan_kieu.sql"
-                      LogicalName="KT2000.Api.va_019_dinh_khoan_kieu.sql" />
-    <EmbeddedResource Include="..\database\020_hoa_don_line_pt_vat_int.sql"
-                      LogicalName="KT2000.Api.va_020_pt_vat_int.sql" />
-    <EmbeddedResource Include="..\database\021_in_value_bu_bang.sql"
-                      LogicalName="KT2000.Api.va_021_in_value.sql" />
-    <EmbeddedResource Include="..\database\023_bu_loai_thue.sql"
-                      LogicalName="KT2000.Api.va_023_bu_loai_thue.sql" />
-    <EmbeddedResource Include="..\database\024_hoa_don_line_4_so_le.sql"
-                      LogicalName="KT2000.Api.va_024_4_so_le.sql" />
+    <EmbeddedResource Include="..\database\017_hoa_don_line_loai_thue.sql" LogicalName="KT2000.Api.va_017_loai_thue.sql" />
+    <EmbeddedResource Include="..\database\019_hoa_don_dinh_khoan_kieu.sql" LogicalName="KT2000.Api.va_019_dinh_khoan_kieu.sql" />
+    <EmbeddedResource Include="..\database\020_hoa_don_line_pt_vat_int.sql" LogicalName="KT2000.Api.va_020_pt_vat_int.sql" />
+    <EmbeddedResource Include="..\database\021_in_value_bu_bang.sql" LogicalName="KT2000.Api.va_021_in_value.sql" />
+    <EmbeddedResource Include="..\database\023_bu_loai_thue.sql" LogicalName="KT2000.Api.va_023_bu_loai_thue.sql" />
+    <EmbeddedResource Include="..\database\024_hoa_don_line_4_so_le.sql" LogicalName="KT2000.Api.va_024_4_so_le.sql" />
+    <EmbeddedResource Include="..\database\025_tenant_nhansu_hopdong.sql" LogicalName="KT2000.Api.va_025_nhansu_hopdong.sql" />
+    <EmbeddedResource Include="..\database\026_tenant_chamcong_bangluong.sql" LogicalName="KT2000.Api.va_026_chamcong_bangluong.sql" />
 
     <!-- Bộ tải HĐ của TCT đi kèm bản build: TctFetchService gọi nó bằng Process.Start
          theo đường dẫn <thư mục exe>\tools\. Copy chứ không nhúng, vì python.exe cần
          file thật trên đĩa. Đè được bằng khóa Paths:TctScript nếu muốn để nơi khác. -->
-    <None Include="..\tools\TRA_CUU_HDDT_2_0.py" Link="tools\TRA_CUU_HDDT_2_0.py"
-          CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\tools\XML_MAP.xlsx" Link="tools\XML_MAP.xlsx"
-          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\tools\TRA_CUU_HDDT_2_0.py" Link="tools\TRA_CUU_HDDT_2_0.py" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\tools\XML_MAP.xlsx" Link="tools\XML_MAP.xlsx" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
@@ -54,6 +46,8 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
+    <PackageReference Include="NPOI" Version="2.7.2" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.13" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
   </ItemGroup>
 

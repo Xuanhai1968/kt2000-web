@@ -197,6 +197,16 @@ export const createTenant = (p: CreateTenantPayload) =>
 
 export const openFiscalYears = (year: number, tenantIds: string[]) =>
   api.post<OpenYearResult[]>("/admin/fiscal-years", { year, tenantIds });
+
+/**
+ * Dựng 4 bảng module Hợp đồng + Lương (script 025 + 026) vào database đơn vị-năm.
+ *
+ * Việc riêng, KHÔNG chạy tự động cùng bản vá cấu trúc: phần lớn khách chỉ thuê làm kế
+ * toán thuế nên không cần module này. Đơn vị chưa bấm thì màn Lương đơn vị không liệt kê.
+ * Phải mở năm TRƯỚC — backend trả status "error" nếu năm chưa mở.
+ */
+export const taoBangLuong = (year: number, tenantIds: string[]) =>
+  api.post<OpenYearResult[]>("/admin/tao-bang-luong", { year, tenantIds });
 // "vao" = chỉ đầu vào, "ra" = chỉ đầu ra, "all" = cả hai.
 // Có "ra" từ khi màn Hóa đơn đầu ra dùng lại đúng bộ máy này, chỉ khác hướng.
 export type HuongLay = "vao" | "ra" | "all";
@@ -860,6 +870,17 @@ export interface HoaDonThue {
   sohdLienquan: string | null;
   ngayLienquan: string | null;
   trangThaiHdLienQuan: string | null;
+
+  // Bộ tứ audit — hiện ở khối bên phải form (Người lập / Thời gian lập / NV Sửa /
+  // Thời gian sửa), đúng vị trí bản VFP. CHỈ ĐỌC, do server ghi.
+  createdBy: string | null;
+  createdAt: string | null;
+  updatedBy: string | null;
+  updatedAt: string | null;
+
+  /** Σ gia_von của các dòng hàng — tiền BỎ RA mua hàng, KHÁC tongTien (tiền thu). */
+  tongGiaVon: number;
+
   lines: HoaDonLine[];
 }
 
@@ -892,6 +913,15 @@ export interface DmTk {
 }
 
 export const thueDmTaiKhoan = () => api.get<DmTk[]>("/thue/tk-hd");
+
+/** Một dòng danh mục khách hàng (KT2000_Base.DM_KH) cho ô "Mã CT nợ / Mã CT có". */
+export interface DmKh {
+  maKh: string;
+  tenKh: string | null;
+  mst: string | null;
+}
+
+export const thueDmKhachHang = () => api.get<DmKh[]>("/thue/kh-hd");
 
 // ===== BÁO CÁO THUẾ GTGT (FRM_BC_THUE) =====
 
@@ -1346,10 +1376,62 @@ export interface KetQuaHaiQuan {
   tongTienThue: number;      // gợi ý cho [24a]
   dong: DongThueHq[];
   canhBao: string[];
+  /** Mã hóa đơn dòng tổng nếu kỳ này được ghi vào sổ. */
+  maHdTrongSo: string | null;
+  /** Cờ HaiQuan:GhiVaoSo của server — false thì ẩn nút "Ghi vào sổ". */
+  choGhiVaoSo: boolean;
 }
 
 export const thueTkHaiQuan = (ma: string, thang: number, nam?: number) =>
   api.get<KetQuaHaiQuan>("/thue/tk-hai-quan", { params: { ma, thang, nam } });
+
+/**
+ * GHI tổng tờ khai hải quan của kỳ vào sổ (HOA_DON + HOA_DON_LINE).
+ *
+ * POST chứ không GET: GET bị trình duyệt gọi lại khi nạp trang, mà đây là lệnh GHI —
+ * gọi lại là số nhân đôi. Server đọc lại file rồi mới ghi, không nhận số từ đây.
+ * Một kỳ MỘT dòng: bấm lần hai thì mã đã có, server bỏ qua.
+ */
+export const thueHaiQuanVaoSo = (ma: string, thang: number, nam?: number) =>
+  api.post<{ daGhi: boolean; maHd: string; soDong: number; thongDiep: string }>(
+    "/thue/tk-hai-quan/vao-so", null, { params: { ma, thang, nam } });
+
+// ===== ĐỐI CHIẾU BẢNG KÊ GỐC (IN_VALUE / IN_VALUE_LINE) VỚI SỔ =====
+//
+// IN_VALUE_LINE là bản chép nguyên si file Excel bảng kê của cổng thuế đã chuyển vào
+// DB. Tờ khai lập tự động chỉ tính từ HOA_DON, nên hóa đơn nào cổng có mà sổ chưa có
+// thì tờ khai thiếu đúng phần đó mà không có gì báo.
+//
+// CHỈ ĐỂ XEM — không cộng vào chỉ tiêu nào, cùng luật với thueTkHaiQuan.
+
+/** Một dòng của bảng kê gốc IN_VALUE_LINE. */
+export interface DongInValue {
+  huong: "VAO" | "RA";
+  khhd: string;
+  soHd: string;
+  mst: string;
+  tenKh: string;
+  ngay: string | null;
+  tienHang: number;
+  tienVat: number;
+  /** false = cổng có liệt kê mà sổ chưa có dòng nào. */
+  coTrongSo: boolean;
+}
+
+export interface DoiChieuBangKe {
+  thang: number;
+  /** Database chưa có IN_VALUE (đời đầu) — màn ẩn khối đối chiếu đi. */
+  chuaCoBang: boolean;
+  bangKeVao: number;
+  bangKeVatVao: number;
+  bangKeRa: number;
+  bangKeVatRa: number;
+  /** Hóa đơn có ở bảng kê mà CHƯA lên sổ — phần tờ khai đang thiếu. */
+  chuaLenSo: DongInValue[];
+}
+
+export const thueDoiChieuBangKe = (ma: string, thang: number, nam?: number) =>
+  api.get<DoiChieuBangKe>("/thue/doi-chieu-bang-ke", { params: { ma, thang, nam } });
 
 // ===== ĐỐI CHIẾU BA NGUỒN: tờ khai · sổ hóa đơn · bản TCT trả về =====
 export interface DongDoiChieu {
@@ -1500,3 +1582,350 @@ export const layTonKhoChiTiet = (maHang: string, thang: number) =>
 
 export const layHangAm = (thang?: number) =>
   api.get<HangAmRow[]>("/bao-cao/ton-kho/hang-am", { params: { thang } });
+
+// ===== NHÂN SỰ & HỢP ĐỒNG LAO ĐỘNG =====
+// Hai bảng nằm trong database ĐƠN VỊ-NĂM (database/025_tenant_nhansu_hopdong.sql).
+//
+// maDonVi là TÙY CHỌN: bỏ trống thì backend dùng đơn vị đang đăng nhập. Chỉ MDN_NB
+// mới truyền mã khác để lập hợp đồng hộ khách — đơn vị thường truyền mã khác sẽ bị
+// backend trả 403.
+
+export interface NhanSu {
+  id: number;
+  maNs: string | null;
+  hoTen: string;
+  ngaySinh: string | null;
+  gioiTinh: string | null;
+  quocTich: string | null;
+  soCmnd: string | null;
+  ngayCap: string | null;
+  noiCap: string | null;
+  diaChi: string | null;
+  dienThoai: string | null;
+  email: string | null;
+  soBhxh: string | null;
+  mstNs: string | null;
+  ngheNghiep: string | null;
+  chucDanh: string | null;
+  chucVu: string | null;
+  boPhan: string | null;
+  dangLam: boolean;
+  ngayVao: string | null;
+  ngayNghi: string | null;
+  ghiChu: string | null;
+  soHopDong: number;
+}
+
+export interface HopDong {
+  id: number;
+  nhanSuId: number;
+  soHd: string | null;
+  ngayKy: string | null;
+  loaiHd: string | null;
+  tuNgay: string | null;
+  denNgay: string | null;
+  diaDiemLv: string | null;
+  congViec: string | null;
+  thoiGianLv: string | null;
+  phuongTien: string | null;
+  luongChinh: number | null;
+  pcAnCa: number | null;
+  pcDienThoai: number | null;
+  pcXangXe: number | null;
+  pcKhac: number | null;
+  hinhThucTra: string | null;
+  baoHoLd: string | null;
+  thoaThuan: string | null;
+  nsdldHoTen: string | null;
+  nsdldChucVu: string | null;
+  nsdldDaiDien: string | null;
+  nsdldDiaChi: string | null;
+  trangThai: string | null;
+  ghiChu: string | null;
+  // Ghép từ NHAN_SU khi đọc — form in cần một lượt là đủ dữ liệu
+  hoTen: string | null;
+  ngaySinh: string | null;
+  soCmnd: string | null;
+  quocTich: string | null;
+  ngheNghiep: string | null;
+  chucDanh: string | null;
+}
+
+// Một dòng trên lưới CHỌN ĐƠN VỊ của trang Hợp đồng
+export interface DonViHopDong {
+  maDonVi: string;
+  tenDonVi: string | null;
+  mst: string | null;
+  soNhanSu: number;
+  soHopDong: number;
+  /** Chưa mở năm làm việc — lưới hiện "chưa mở năm" thay vì số 0. */
+  chuaMoNam: boolean;
+  /**
+   * Đã mở năm nhưng database chưa có 4 bảng của module Hợp đồng + Lương.
+   * Đơn vị như vậy bị LOẠI khỏi lưới — vào Quản trị → Mở năm làm việc, tích đơn vị
+   * rồi bấm "Tạo bảng Hợp đồng + Lương".
+   */
+  chuaTaoBang?: boolean;
+  /** Chỉ dùng ở frontend: đang chờ kết quả đếm, lưới hiện dấu … thay vì số 0. */
+  dangDem?: boolean;
+}
+
+/** Danh sách đơn vị — trả NGAY, chưa có số đếm (soNhanSu/soHopDong = 0). */
+export const hdLuoiDonVi = () =>
+  api.get<{ nam: number; dong: DonViHopDong[] }>("/hop-dong/don-vi");
+
+/** Đếm nhân sự + hợp đồng của MỘT đơn vị. Gọi song song cho từng dòng trên lưới. */
+export const hdDemDonVi = (maDonVi: string) =>
+  api.get<DonViHopDong>(`/hop-dong/don-vi/${encodeURIComponent(maDonVi)}/dem`);
+
+export const nsDanhSach = (maDonVi?: string, caNguoiDaNghi = false) =>
+  api.get<NhanSu[]>("/hop-dong/nhan-su", { params: { maDonVi, caNguoiDaNghi } });
+
+export const nsThem = (x: Partial<NhanSu>, maDonVi?: string) =>
+  api.post<{ message: string; id: number }>("/hop-dong/nhan-su", x,
+    { params: { maDonVi } });
+
+export const nsSua = (id: number, x: Partial<NhanSu>, maDonVi?: string) =>
+  api.put<{ message: string }>(`/hop-dong/nhan-su/${id}`, x, { params: { maDonVi } });
+
+export const nsXoa = (id: number, maDonVi?: string) =>
+  api.delete<{ message: string }>(`/hop-dong/nhan-su/${id}`, { params: { maDonVi } });
+
+/**
+ * NHẬP EXCEL cho đơn vị đang chọn — cửa vào của cả module Hợp đồng lao động.
+ *
+ * Nhận BỐN loại file, server tự đoán loại rồi đưa đúng bộ đọc:
+ *   1. HĐLĐ (mỗi nhân sự một sheet)  -> nhân sự + hợp đồng
+ *   2. DS_NV (danh sách nhân sự)     -> nhân sự + hợp đồng dựng từ mức lương
+ *   3. Chấm công (sheet ccNN)        -> bảng chấm công
+ *   4. Bảng lương (sheet THANG n)    -> bảng thanh toán lương
+ *
+ * GHI THẲNG vào sổ, khác nút Nhập Excel trong hai màn Chấm công / Bảng lương (trả
+ * nháp để soát): ở đây đang nạp DỮ LIỆU GỐC cho đơn vị vừa mở, chưa có gì để đối chiếu.
+ *
+ * File cả năm (26 sheet) nhập TRỌN mọi tháng có trong file. Người đã có trong sổ
+ * (trùng tên) thì bỏ qua — nhập lại cùng file hai lần không nhân đôi nhân sự.
+ *
+ * ngayCongChuan chỉ dùng cho file BẢNG LƯƠNG (BR-BL-01 — khuôn Excel không có ô đó).
+ */
+/** @deprecated Ghi THẲNG vào sổ. Màn Hợp đồng đã chuyển sang hdDocNhap +
+ *  hdLuuNhap (đọc nháp -> soát -> Lưu). Giữ endpoint cũ cho tương thích,
+ *  không dùng cho màn mới. */
+export const hdNhapExcel = (
+  file: File, maDonVi?: string, ngayCongChuan = 26,
+) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post<KetQuaNhap<unknown>>("/hop-dong/nhap-excel", fd,
+    { params: { maDonVi, ngayCongChuan },
+      headers: { "Content-Type": "multipart/form-data" } });
+};
+
+export const hdDanhSach = (maDonVi?: string, nhanSuId?: number) =>
+  api.get<HopDong[]>("/hop-dong", { params: { maDonVi, nhanSuId } });
+
+export const hdMot = (id: number, maDonVi?: string) =>
+  api.get<HopDong>(`/hop-dong/${id}`, { params: { maDonVi } });
+
+export const hdThem = (x: Partial<HopDong>, maDonVi?: string) =>
+  api.post<{ message: string; id: number }>("/hop-dong", x, { params: { maDonVi } });
+
+export const hdSua = (id: number, x: Partial<HopDong>, maDonVi?: string) =>
+  api.put<{ message: string }>(`/hop-dong/${id}`, x, { params: { maDonVi } });
+
+export const hdXoa = (id: number, maDonVi?: string) =>
+  api.delete<{ message: string }>(`/hop-dong/${id}`, { params: { maDonVi } });
+
+// ===== CHẤM CÔNG & BẢNG THANH TOÁN LƯƠNG =====
+// Hai bảng nằm trong database ĐƠN VỊ-NĂM (database/026_tenant_chamcong_bangluong.sql).
+// maDonVi tùy chọn, cùng luật với hợp đồng: bỏ trống = đơn vị đang đăng nhập.
+
+export interface ChamCong {
+  id: number;
+  nhanSuId: number;
+  thang: number;
+  /** 31 ký hiệu, index 0 = ngày 1. Rỗng/null = chưa chấm. */
+  ngay: (string | null)[];
+  tongCong: number | null;
+  congThemGio: number | null;
+  ghiChu: string | null;
+  hoTen: string | null;
+  chucDanh: string | null;
+  boPhan: string | null;
+}
+
+export interface BangLuong {
+  id: number;
+  nhanSuId: number;
+  thang: number;
+  boPhan: string | null;
+  ngayCongChuan: number;
+  ngayCongTt: number | null;
+  luongChinh: number | null;
+  luongThucTe: number | null;
+  pcAnCa: number | null;
+  pcDienThoai: number | null;
+  pcXangXe: number | null;
+  pcChuyenCan: number | null;
+  pcHieuQua: number | null;
+  tienThuong: number | null;
+  tongPhuCap: number | null;
+  tongLuong: number | null;
+  tamUng: number | null;
+  khauTruBh: number | null;
+  thueTncn: number | null;
+  tongKhauTru: number | null;
+  thucLinh: number | null;
+  ghiChu: string | null;
+  hoTen: string | null;
+  chucDanh: string | null;
+}
+
+export const ccDanhSach = (thang: number, maDonVi?: string) =>
+  api.get<ChamCong[]>("/cham-cong", { params: { thang, maDonVi } });
+
+export const ccKhoiTao = (thang: number, maDonVi?: string) =>
+  api.post<{ message: string; soDong: number }>("/cham-cong/khoi-tao", null,
+    { params: { thang, maDonVi } });
+
+export const ccLuu = (thang: number, ds: ChamCong[], maDonVi?: string) =>
+  api.put<{ message: string; soDong: number }>("/cham-cong", ds,
+    { params: { thang, maDonVi } });
+
+export const blDanhSach = (thang: number, maDonVi?: string) =>
+  api.get<BangLuong[]>("/bang-luong", { params: { thang, maDonVi } });
+
+/** Trả bản NHÁP, chưa ghi DB — kế toán soát rồi mới blLuu. */
+export const blTinh = (thang: number, ngayCongChuan: number, maDonVi?: string) =>
+  api.post<BangLuong[]>("/bang-luong/tinh", null,
+    { params: { thang, ngayCongChuan, maDonVi } });
+
+export const blLuu = (thang: number, ds: BangLuong[], maDonVi?: string) =>
+  api.put<{ message: string; soDong: number }>("/bang-luong", ds,
+    { params: { thang, maDonVi } });
+
+// ===== NHẬP TỪ FILE EXCEL =====
+// Đọc ở SERVER (ClosedXML) chứ không ở trình duyệt — cùng lối với bảng kê thuế
+// (thueDocBangKe). Frontend chưa có sheetjs và thêm ~400KB vào bundle chỉ để đọc vài
+// chục dòng là không đáng.
+//
+// Cả hai đường trả bản NHÁP, KHÔNG ghi DB — kế toán soát rồi mới ccLuu / blLuu.
+
+/** Một dòng trong file bị bỏ qua, kèm lý do — hiện thành cảnh báo trên màn. */
+export interface DongBo {
+  /** Số dòng trong file Excel, để kế toán mở file dò đúng chỗ. */
+  dong: number;
+  hoTen: string | null;
+  lyDo: string;
+}
+
+export interface KetQuaNhap<T> {
+  dong: T[];
+  bo: DongBo[];
+  /** Sheet đã đọc — file lương có 26 sheet, phải nói rõ lấy sheet nào. */
+  sheet: string | null;
+
+  /** Tên đơn vị đọc được ở đầu file (ô A1). */
+  tenDonViFile: string | null;
+  /** Mã đơn vị suy từ tên trong file — chỉ để đối chiếu, không dùng mở DB. */
+  maDonViFile: string | null;
+  /** Cảnh báo về đơn vị; null = khớp đúng đơn vị đang mở. */
+  canhBaoDonVi: string | null;
+  /** False = file của đơn vị khác → chặn Lưu. */
+  dungDonVi: boolean;
+  /** File gốc .xls đã tự chuyển sang .xlsx để đọc. */
+  daChuyenXls: boolean;
+
+  /** Số nhân sự đã ghi vào sổ — chỉ đường nhập HĐLĐ, đường khác để 0. */
+  soNhanSu: number;
+  /** Số hợp đồng đã ghi vào sổ. */
+  soHopDong: number;
+}
+
+export const ccNhapExcel = (thang: number, file: File, maDonVi?: string) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post<KetQuaNhap<ChamCong>>("/cham-cong/nhap-excel", fd,
+    { params: { thang, maDonVi },
+      headers: { "Content-Type": "multipart/form-data" } });
+};
+
+/**
+ * Đọc bảng lương từ file. Khác blTinh: lấy NGUYÊN SỐ TRONG FILE, không chạy công thức
+ * — người dùng nhập lên là để xem số của bản Excel đang dùng.
+ *
+ * ngayCongChuan vẫn phải truyền vì khuôn Excel không có ô đó (BR-BL-01, nó là tham số).
+ */
+export const blNhapExcel = (
+  thang: number, ngayCongChuan: number, file: File, maDonVi?: string,
+) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post<KetQuaNhap<BangLuong>>("/bang-luong/nhap-excel", fd,
+    { params: { thang, ngayCongChuan, maDonVi },
+      headers: { "Content-Type": "multipart/form-data" } });
+};
+
+// ===================== NHẬP EXCEL: ĐỌC NHÁP -> LƯU =====================
+//
+// Hai nhịp thay cho hdNhapExcel ghi thẳng:
+//   hdDocNhap  -> đọc file, trả NHÁP, không chạm DB
+//   hdLuuNhap  -> gửi lại đúng nháp đó, lúc này mới INSERT
+//
+// Nháp nằm ở FE giữa hai lần gọi, server không giữ state — bấm Lưu lúc nào cũng được.
+
+/** Một người trong nháp, kèm các hợp đồng đọc được của người đó. */
+export interface NhapNguoi {
+  nhanSu: NhanSu;
+  hopDong: HopDong[];
+}
+
+export interface NhapChamCongThang {
+  thang: number;
+  dong: ChamCong[];
+}
+
+export interface NhapBangLuongThang {
+  thang: number;
+  dong: BangLuong[];
+}
+
+/** Nháp đọc từ MỘT file Excel. Gửi lại y nguyên khi bấm Lưu. */
+export interface NhapNhap {
+  tenFile: string;
+  /** HopDong | DanhSachNhanSu | ChamCong | BangLuong | LuongCaNam */
+  loai: string;
+  sheet: string | null;
+  tenDonViFile: string | null;
+  maDonViFile: string | null;
+  canhBaoDonVi: string | null;
+  dungDonVi: boolean;
+  ngayCongChuan: number;
+  nguoi: NhapNguoi[];
+  chamCong: NhapChamCongThang[];
+  bangLuong: NhapBangLuongThang[];
+  bo: DongBo[];
+}
+
+export interface KetQuaLuuNhap {
+  soNhanSu: number;
+  soHopDong: number;
+  soChamCong: number;
+  soBangLuong: number;
+  bo: DongBo[];
+}
+
+/** Đọc file ra nháp để soát. KHÔNG ghi vào sổ. */
+export const hdDocNhap = (
+  file: File, maDonVi?: string, ngayCongChuan = 26,
+) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post<NhapNhap>("/hop-dong/nhap-excel/doc", fd,
+    { params: { maDonVi, ngayCongChuan },
+      headers: { "Content-Type": "multipart/form-data" } });
+};
+
+/** Ghi nháp đang giữ ở FE vào sổ. Đây là bước DUY NHẤT chạm DB. */
+export const hdLuuNhap = (ds: NhapNhap[], maDonVi?: string) =>
+  api.post<KetQuaLuuNhap>("/hop-dong/nhap-excel/luu", ds, { params: { maDonVi } });

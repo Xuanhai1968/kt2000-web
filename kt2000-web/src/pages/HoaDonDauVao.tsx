@@ -9,21 +9,21 @@ import {
   getTctCredential, saveTctCredential, xemTctCredential,
   fetchStart, fetchProgress, fetchStop,
   loiApi, thueDanhSachHoaDon, thueChiTietHoaDon, thueHtmlHoaDon,
-  thueLinesNhieuHoaDon, thueLuuLinesHoaDon,
+  thueLinesNhieuHoaDon, thueLuuLinesHoaDon, thueDmTaiKhoan, thueDmKhachHang,
 } from "../api";
 import type {
   AdminTenant, LeftoverInfo, HuongLay, HoaDonConLai, MatHang, PhienLay,
-  HoaDonThue, HoaDonLine,
+  HoaDonThue, HoaDonLine, DmTk, DmKh,
 } from "../api";
 import { useAuth } from "../AuthContext";
 import DanhSachHoaDon from "./DanhSachHoaDon";
 import HtmlHoaDon from "./HtmlHoaDon";
 import { AgGridReact } from "ag-grid-react";
-import type { ColDef } from "ag-grid-community";
+import type { ColDef, GridApi } from "ag-grid-community";
 import { mauDonVi, damDonVi } from "../theme/donViColors";
 import {
   themeVfp, luoiVfpProps, colVfp, colSua, colSo, dinhDangTien, dinhDang4SoLe,
-  nhoDoRongCot,
+  nhoDoRongCot, nhanThueSuat,
 } from "../theme/luoiVfp";
 import "./luoi-gon.css";
 import "./mau-huong.css";
@@ -42,6 +42,15 @@ interface Props { huongMacDinh: "vao" | "ra" }
 // một lần do thiếu phép trừ, một lần do cộng nhầm.
 //   Ca thật C26TLC/10: Σ 12 dòng = 128.929.583, TgTCThue = 120.538.935,
 //   chênh 8.390.648 = 2 × 4.195.324 (đúng số TTCKTMai).
+/** "07/08/2026 09:59" — dạng ngày giờ của khối audit, giống bản VFP. */
+const gioPhutIn = (s: string | null | undefined) => {
+  if (!s) return "";
+  const [ngay, gio] = s.split("T");
+  const p = (ngay ?? "").split("-");
+  if (p.length !== 3) return s;
+  return `${p[2]}/${p[1]}/${p[0]} ${(gio ?? "").slice(0, 5)}`.trim();
+};
+
 const laDongChietKhau = (m: MatHang) => m.tinhChat === "3";
 
 // Sai số cho phép giữa Σ dòng hàng và tiền hàng của hóa đơn. Phải bằng đúng
@@ -221,7 +230,7 @@ const COT_MAT_HANG: ColDef<MatHang>[] = [
           { ...colSua, headerName: "ĐVT", field: "dvt", width: 85 },
           // SL và ĐG giữ 4 số lẻ — chúng là THỪA SỐ, cắt bớt thì nhân ra không khớp
           // Thành tiền. Các cột tiền bên dưới vẫn 2 số như cũ.
-          { ...colSo, headerName: "Số lượng", field: "soLuong", width: 110,
+          { ...colSo, headerName: "SL", field: "soLuong", width: 110,
             valueFormatter: (p) => dinhDang4SoLe(p.value) },
           { ...colSo, headerName: "Đơn giá", field: "donGia", width: 130,
             valueFormatter: (p) => dinhDang4SoLe(p.value) },
@@ -1061,8 +1070,11 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
 }
 
 // ============ RUỘT 2: đơn vị thường (TUAN_NGA…) — FRM_NHAP_HANG ============
+// DỰ PHÒNG khi không lấy được DM_TK từ KT2000_Base (mất mạng, Base chưa dựng).
+// Đường chính là danh mục thật — xem state dsTk trong HoaDonCuaDonVi: mã nào cũng phải
+// tra ra được TÊN tài khoản, mà tên thì chỉ DM_TK mới có.
 const TK_NO_GOI_Y = ["156", "152", "153", "211", "242", "641", "642", "627"];
-const TK_CO_GOI_Y = ["331", "111", "112", "141", "331"];
+const TK_CO_GOI_Y = ["331", "111", "112", "141"];
 const TK_VAT_GOI_Y = ["1331", "1332"];
 
 interface DinhKhoan {
@@ -1118,34 +1130,145 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
   // lại về bảng thường ngay dưới tay người dùng.
   const [soSanhDuLieu, setSoSanhDuLieu] = useState(false);
 
+  // ===== DANH MỤC TÀI KHOẢN (KT2000_Base.DM_TK) =====
+  //
+  // Trước đây ô tên tài khoản là chữ CHẾT ghi cứng trong code ("Hàng hoá", "Phải trả
+  // cho người bán"): đổi mã TK từ 156 sang 152 thì tên vẫn đứng nguyên "Hàng hoá" —
+  // màn hình nói dối, mà kế toán tin cái tên chứ không nhẩm mã.
+  //
+  // Nay hai ô gộp làm MỘT: chọn "156 — Hàng hoá", lưu xuống vẫn chỉ là mã "156".
+  // Tên lấy từ DM_TK nên đổi mã là tên đổi theo, và có gì trong sổ thì hiện đúng thứ đó.
+  const [dsTk, setDsTk] = useState<DmTk[]>([]);
+  useEffect(() => {
+    // Backend đã cache 10 phút; ở đây tải MỘT lần cho cả phiên.
+    void thueDmTaiKhoan()
+      // Hỏng thì để rỗng — ô rơi về danh sách gợi ý cứng, vẫn định khoản được.
+      .then((r) => setDsTk(r.data))
+      .catch(() => undefined);
+  }, []);
+
+  // ===== DANH MỤC KHÁCH HÀNG (KT2000_Base.DM_KH) =====
+  //
+  // Bốn ô "Mã CT nợ / có" (cả cụm chính lẫn cụm CK) trong bản VFP là COMBOBOX tra
+  // thẳng DM_KH. Web trước nay để ô gõ tay: gõ sai một ký tự thì định khoản trỏ vào
+  // mã không tồn tại mà không có gì báo, tới lúc lên sổ mới lòi ra.
+  const [dsKh, setDsKh] = useState<DmKh[]>([]);
+  useEffect(() => {
+    void thueDmKhachHang()
+      // Hỏng thì để rỗng — ô rơi về đường gõ tay, vẫn định khoản được.
+      .then((r) => setDsKh(r.data))
+      .catch(() => undefined);
+  }, []);
+
+  /**
+   * Options cho một ô Mã CT. Nhãn "KH990 — izi coffee anh mart", GIÁ TRỊ là mã trần.
+   *
+   * Mã đang có mà KHÔNG nằm trong DM_KH vẫn phải hiện (hóa đơn cũ trỏ vào khách đã bị
+   * xóa khỏi danh mục) — thiếu thì ô trống trơn, người dùng tưởng chưa định khoản rồi
+   * bấm lưu là mất luôn mã cũ.
+   */
+  const optKh = (dangChon?: string) => {
+    const nguon = dsKh.map((k) => ({
+      value: k.maKh,
+      label: k.tenKh ? `${k.maKh} — ${k.tenKh}` : k.maKh,
+    }));
+    if (dangChon && !nguon.some((x) => x.value === dangChon))
+      nguon.unshift({ value: dangChon, label: dangChon });
+    return nguon;
+  };
+
+  /**
+   * Dựng options cho một ô tài khoản. Nhãn "156 — Hàng hoá", GIÁ TRỊ vẫn là mã trần.
+   *
+   * Mã đang chọn mà KHÔNG có trong DM_TK vẫn phải hiện được (hóa đơn cũ định khoản
+   * bằng tài khoản sau đó bị xóa khỏi danh mục) — thiếu thì ô trống trơn và người dùng
+   * tưởng chưa định khoản, bấm lưu là mất luôn mã cũ.
+   */
+  const optTk = (dangChon?: string) => {
+    const nguon = dsTk.length > 0
+      ? dsTk.map((t) => ({
+          value: t.maTk,
+          label: t.tenTk ? `${t.maTk} — ${t.tenTk}` : t.maTk,
+        }))
+      : [];
+    if (dangChon && !nguon.some((x) => x.value === dangChon))
+      nguon.unshift({ value: dangChon, label: dangChon });
+    return nguon;
+  };
+
+  /** Gộp mã + tên gợi ý cứng khi chưa có DM_TK — giữ được nhịp thao tác cũ. */
+  const optGoiY = (ds: string[], dangChon?: string) => {
+    const nguon = ds.map((x) => ({ value: x, label: x }));
+    if (dangChon && !nguon.some((x) => x.value === dangChon))
+      nguon.unshift({ value: dangChon, label: dangChon });
+    return nguon;
+  };
+
+  /** Options của một ô: ưu tiên DM_TK, chưa có thì rơi về danh sách gợi ý. */
+  const optCuaO = (goiY: string[], dangChon?: string) =>
+    dsTk.length > 0 ? optTk(dangChon) : optGoiY(goiY, dangChon);
+
+
   const hd = dsHd.find((x) => x.maHd === tenFileChon) ?? null;
   const tenDoiTac = hd?.tenKh ?? "";
   const mstDoiTac = hd?.mst ?? "";
   const dk = (tenFileChon && dinhKhoanTheoFile[tenFileChon]) || dinhKhoanRong();
 
-  const luoiHangRef = useRef<HTMLDivElement | null>(null);
-  const phimLuoiHang = (e: React.KeyboardEvent) => {
-    const ds = hd?.lines ?? [];
-    if (ds.length === 0) return;
-    const iHienTai = ds.findIndex((m) => m.sttLine === sttChon);
-    let i: number;
-    switch (e.key) {
-      case "ArrowDown": i = Math.min(iHienTai + 1, ds.length - 1); break;
-      case "ArrowUp":   i = Math.max(iHienTai - 1, 0); break;
-      case "Home":      i = 0; break;
-      case "End":       i = ds.length - 1; break;
-      case "PageDown":  i = Math.min(iHienTai + 10, ds.length - 1); break;
-      case "PageUp":    i = Math.max(iHienTai - 10, 0); break;
-      default: return;
-    }
-    e.preventDefault();
-    const dong = ds[i < 0 ? 0 : i];
-    if (!dong) return;
-    setSttChon(dong.sttLine);
-    luoiHangRef.current
-      ?.querySelector<HTMLElement>(`[data-row-key="${dong.sttLine}"]`)
-      ?.scrollIntoView({ block: "nearest" });
-  };
+
+  // Định khoản chung của hóa đơn, đọc qua REF chứ không đọc thẳng dk.
+  //
+  // Hai cột Nợ/Có lấy dk.ghiNo/ghiCo làm giá trị gợi ý khi ô trống. Nếu để mảng cột
+  // phụ thuộc dk thì chọn hóa đơn khác là mảng dựng mới, AG Grid coi là BỘ CỘT KHÁC
+  // và ĐẶT LẠI BỀ RỘNG — người dùng kéo cột xong, bấm sang hóa đơn kế là mất hết
+  // (gặp thật 21/08). Ref đọc được giá trị mới nhất mà không làm mảng cột đổi.
+  const dkRef = useRef(dk);
+
+  // Giữ api lưới trong STATE (không phải ref) để effect có thứ để phụ thuộc.
+  const [luoiHangApi, setLuoiHangApi] = useState<GridApi<HoaDonLine> | null>(null);
+
+  // Cập nhật ref VÀ vẽ lại hai cột trong CÙNG một effect — gán ref ngay trong thân
+  // render là sai luật React (ref không được đụng lúc render).
+  // Chỉ vẽ lại ĐÚNG hai cột gợi ý, không đụng bề rộng cột nào.
+  useEffect(() => {
+    dkRef.current = dk;
+    luoiHangApi?.refreshCells({ columns: ["ghiNo", "ghiCo"], force: true });
+  }, [luoiHangApi, dk]);
+
+  const cotHang = useMemo<ColDef<HoaDonLine>[]>(() => [
+    { colId: "sttLine", headerName: "STT", field: "sttLine", width: 52,
+      pinned: "left" },
+    { colId: "tenHang", headerName: "Tên hàng hoá dịch vụ", field: "tenHang",
+      width: 300, ...colSua, tooltipField: "tenHang" },
+    { colId: "dvt", headerName: "ĐVT", field: "dvt", width: 64, ...colSua },
+    { colId: "soLuong", headerName: "SL", field: "soLuong", width: 90,
+      ...colSo, valueFormatter: (p) => dinhDang4SoLe(p.value) },
+    { colId: "donGia", headerName: "Đơn giá", field: "donGia", width: 120,
+      ...colSo, valueFormatter: (p) => dinhDang4SoLe(p.value) },
+    { colId: "ghiNo", headerName: "Nợ", field: "ghiNo", width: 64, ...colSua,
+      valueFormatter: (p) => p.value || dkRef.current.ghiNo || "",
+      cellStyle: (p) => (p.value ? undefined : { color: "#8c8c8c" }) },
+    { colId: "ghiCo", headerName: "Có", field: "ghiCo", width: 64, ...colSua,
+      valueFormatter: (p) => p.value || dkRef.current.ghiCo || "",
+      cellStyle: (p) => (p.value ? undefined : { color: "#8c8c8c" }) },
+    { colId: "ptVat", headerName: "% VAT", field: "ptVat", width: 70, ...colSo,
+      valueFormatter: (p) => nhanThueSuat(p.value),
+      valueParser: (p) => {
+        const v = Number(String(p.newValue ?? "").replace(",", "."));
+        return Number.isFinite(v) ? v : 0;
+      } },
+    { colId: "tienCk", headerName: "C.Khấu", field: "tienCk", width: 100,
+      ...colSo, valueFormatter: (p) => dinhDangTien(p.value) },
+    { colId: "thanhTien", headerName: "Thành tiền", field: "thanhTien", width: 130,
+      ...colVfp, type: "numericColumn",
+      valueFormatter: (p) => dinhDang4SoLe(p.value),
+      cellStyle: { backgroundColor: "#f5f5f5", fontWeight: 600,
+                   textAlign: "right" } },
+
+    { colId: "ghiChu", headerName: "Ghi chú", field: "ghiChu", width: 240,
+      ...colSua, tooltipField: "ghiChu" },
+    // Không phụ thuộc gì: dựng ĐÚNG MỘT LẦN, nhờ vậy bề rộng cột giữ được.
+  ], []);
+
 
   const suaDk = (thayDoi: Partial<DinhKhoan>) => {
     if (!tenFileChon) return;
@@ -1226,14 +1349,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
     }
   };
 
-  // ===== Nạp nền dòng hàng =====
-  // API danh sách không kèm lines cho nhẹ tải, nên lướt ↑/↓ ở modal danh sách là
-  // mỗi hóa đơn một request — bảng dưới trống một nhịp rồi mới có dữ liệu. Ở đây
-  // kéo sẵn lines của cả danh sách về, CHIA LÔ và chỉ chạy SAU khi màn hình đã
-  // tải xong, để người dùng không phải chờ thêm gì ở lần vẽ đầu.
-  //
-  // Chia lô thay vì một cú 1000 dòng: có dữ liệu dùng dần ngay từ lô đầu, và
-  // một lô hỏng thì các lô khác vẫn xong. 200 nằm dưới trần 500 của backend.
   const CO_LO_NAP_NEN = 200;
   const napNenRef = useRef<AbortController | null>(null);
 
@@ -1255,8 +1370,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
         if (bo.signal.aborted) return;
         const map = r.data;
         setDsHd((cu) => cu.map((x) => {
-          // Đừng đè lên hóa đơn đã có lines: trong lúc lô này chạy, người dùng có
-          // thể đã bấm vào một hóa đơn và taiChiTiet đã ghi bản đầy đủ vào đó.
           if (x.lines.length > 0) return x;
           const lines = map[x.maHd];
           return lines ? { ...x, lines } : x;
@@ -1350,6 +1463,10 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
       tichChatHdLienquan: null, loaiHdLienquan: null, mauSoHdLienquan: null,
       khhdLienquan: null, sohdLienquan: null, ngayLienquan: null,
       trangThaiHdLienQuan: null,
+      // Hóa đơn chưa lưu / dòng chỉ có ở cổng: chưa có vết audit nào.
+      createdBy: null, createdAt: null, updatedBy: null, updatedAt: null,
+      // Hóa đơn mới chưa có dòng hàng nào -> chưa có giá vốn.
+      tongGiaVon: 0,
       lines: [],
     };
     setDsHd((ds) => [hdMoi, ...ds]);
@@ -1441,6 +1558,16 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
     () => (hd?.lines ?? []).reduce((s, x) => s + x.thanhTien, 0), [hd]);
   const congThanhToan = congTienHang - (dk.chietKhau || 0) + (dk.tienVat || 0);
 
+  // Hóa đơn CÓ tiền chiết khấu hay không — quyết định bốn ô định khoản CK bên phải
+  // có mở hay không.
+  //
+  // Tính từ HAI nguồn: ô "Chiết khấu" ở khối cộng (kế toán gõ tay sau khi tích Sửa
+  // tiền CK) VÀ cột C.Khấu của từng dòng hàng (hóa đơn điện tử mang sẵn). Chỉ nhìn
+  // một nguồn thì hóa đơn có CK trong dòng hàng vẫn bị khóa, mà đó mới là ca thường
+  // gặp — CK của hóa đơn điện tử nằm ở dòng hàng chứ không ở ô tổng.
+  const coChietKhau = (dk.chietKhau || 0) !== 0
+    || (hd?.lines ?? []).some((x) => (x.tienCk || 0) !== 0);
+
   const oNhan = (t: string, rong: number, do_ = false) => (
     <span className={do_ ? "nhan nhan-do" : "nhan"} style={{ width: rong }}>{t}</span>
   );
@@ -1469,14 +1596,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
     </Button>
   );
 
-  // Ba nút Tạo mới / Tìm / Đọc lại nằm CÙNG HÀNG với khung tiêu đề phiếu, dồn sang
-  // phải. Trước đây chúng ở thanh title của Card, nhưng cả thanh đó chỉ để chở ba
-  // nút và một dòng chữ lặp lại thứ đã có ở header ứng dụng (tên màn + tên đơn vị +
-  // năm) — bỏ Card đi thì phiếu cao thêm ~46px, tiền nào cũng thấy rõ hơn.
-  //
-  // Ô Select chọn hóa đơn đã bỏ từ trước: danh sách xổ xuống chỉ hiện được một mẩu
-  // tên khách nên tra bằng nó rất khó, trong khi nút "Tìm" mở modal danh sách đầy đủ
-  // (lọc tháng, tìm nhanh, xem dòng hàng) — cùng việc nhưng làm tốt hơn hẳn.
   return (
     <div className={laDauRa ? "huong-ra" : "huong-vao"}>
         {!tai && dsHd.length === 0 && (
@@ -1502,6 +1621,13 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
               </Button>
             </Space>
           </div>
+
+          {/* HAI CỘT: trái là hai hàng đầu của phiếu, phải là khối audit.
+              Trước đây khối audit nằm thẳng trong luồng dọc nên nó cao 4 hàng, đẩy
+              mọi thứ dưới nó xuống và chừa một mảng trắng to bên trái (gặp 21/08).
+              Xếp thành hai cột thì nó ngồi cạnh chứ không chen vào giữa. */}
+          <div className="dau-phieu">
+            <div className="dau-phieu__trai">
 
           <div className="hang">
             {oNhan("Mã HĐ", 52)}
@@ -1543,22 +1669,74 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             <Checkbox checked={dk.daIn} onChange={(e) => suaDk({ daIn: e.target.checked })}>
               Đã In
             </Checkbox>
-            <span style={{ flex: 1 }} />
-            <Checkbox checked={dk.printPreview}
-                      onChange={(e) => suaDk({ printPreview: e.target.checked })}>
-              Print Preview
-            </Checkbox>
-            <Checkbox checked={dk.chiInMotTrang}
-                      onChange={(e) => suaDk({ chiInMotTrang: e.target.checked })}>
-              Chỉ in một trang
-            </Checkbox>
+          </div>
+
+            </div>
+
+          {/* ===== BỘ TỨ AUDIT — khối chỉ đọc ở MÉP PHẢI, đúng vị trí bản VFP =====
+              created_by/at + updated_by/at vốn đã ghi xuống DB từ lâu nhưng chưa bao
+              giờ đọc lên, nên nhìn màn không biết ai lập, ai sửa hóa đơn — mà đây là
+              chứng từ thuế, câu đó phải trả lời được.
+
+              Khối là CỘT PHẢI của .dau-phieu (xem CSS) — không dùng position:absolute.
+              Absolute phải đoán top bằng pixel, mà số hàng ở đầu form đổi một cái là
+              khối đè lên hàng khác; xếp thẳng vào luồng dọc thì nó lại chen vào giữa,
+              chừa mảng trắng bên trái. Hai cột giải được cả hai (lệch hai lần 21/08).
+
+              Chỉ hiện khi ĐANG CHỌN một hóa đơn: form trống thì bốn ô rỗng chỉ tổ
+              chiếm chỗ. */}
+          <div className="khoi-audit">
+            {/* Hai ô tích IN đứng TRƯỚC bốn ô audit — cùng cột phải, cùng là thứ
+                không thuộc luồng gõ bên trái. Trước đây chúng nằm cuối hàng "Ngày HĐ"
+                bên cột trái, bị đẩy sang tận mép và rời khỏi cụm liên quan. */}
+            <div className="hang hang-in">
+              <Checkbox checked={dk.printPreview}
+                        onChange={(e) => suaDk({ printPreview: e.target.checked })}>
+                Print Preview
+              </Checkbox>
+              <Checkbox checked={dk.chiInMotTrang}
+                        onChange={(e) => suaDk({ chiInMotTrang: e.target.checked })}>
+                Chỉ in một trang
+              </Checkbox>
+            </div>
+
+            {/* Bốn ô audit chỉ hiện khi ĐANG CHỌN hóa đơn — form trống thì chúng rỗng,
+                chỉ tổ chiếm chỗ. Hai ô tích trên vẫn hiện vì luôn dùng được. */}
+            {hd && (
+              <>
+              <div className="hang">
+                {oNhan("Người lập", 96)}
+                <Input size="small" style={{ width: 170 }} readOnly
+                       value={hd.createdBy ?? ""} />
+              </div>
+              <div className="hang">
+                {oNhan("Thời gian lập", 96)}
+                <Input size="small" style={{ width: 170 }} readOnly
+                       value={gioPhutIn(hd.createdAt)} />
+              </div>
+              <div className="hang">
+                {oNhan("NV Sửa", 96)}
+                <Input size="small" style={{ width: 170 }} readOnly
+                       value={hd.updatedBy ?? ""} />
+              </div>
+              <div className="hang">
+                {oNhan("Thời gian sửa", 96)}
+                <Input size="small" style={{ width: 170 }} readOnly
+                       // Chưa sửa lần nào thì bản VFP để " /  / " — giữ đúng dấu hiệu
+                       // đó thay vì ô trống, để phân biệt "chưa sửa" với "chưa tải".
+                       value={hd.updatedAt ? gioPhutIn(hd.updatedAt) : " /  / "} />
+              </div>
+              </>
+            )}
+          </div>
           </div>
 
           <div className="hang">
             {oNhan("MST KH", 52)}
             <Input size="small" style={{ width: 150 }} readOnly value={mstDoiTac} />
             {oNhan("Địa chỉ", 52)}
-            <Input size="small" style={{ flex: 1, minWidth: 240 }} readOnly
+
+            <Input size="small" style={{ width: 520 }} readOnly
                    value={hd?.diaChi ?? ""} title={hd?.diaChi ?? ""} />
             {oNhan("Người GD", 62)}
             <Input size="small" style={{ width: 240 }} value={dk.nguoiGD}
@@ -1567,55 +1745,53 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
 
           <div className="hang">
             {oNhan("Tên NB", 52)}
-            <Input size="small" style={{ width: 110 }} readOnly value={mstDoiTac} />
-            <Input size="small" style={{ flex: 1, minWidth: 240 }} readOnly
-                   value={tenDoiTac} title={tenDoiTac} />
-            {oNhan("Địa chỉ GH", 70)}
-            <Input size="small" style={{ width: 240 }} disabled />
-          </div>
 
-          {/* Hai cột định khoản | HĐ Liên quan. Cột trái CO THEO NỘI DUNG (flex: none)
-              chứ không chiếm 62% như trước: sau khi thu mấy ô Mã CT lại, 62% để dư
-              một mảng trống to giữa hai cột. Khoảng trống dồn hết ra sau cột phải. */}
+            <Input size="small" style={{ width: 650 }} readOnly
+                   value={[mstDoiTac, tenDoiTac].filter(Boolean).join(" — ")}
+                   title={[mstDoiTac, tenDoiTac].filter(Boolean).join(" — ")} />
+
+          </div>
           <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
             <div style={{ flex: "none", minWidth: 0 }}>
               <div className="hang">
                 {oNhan("GHI NỢ", 52, true)}
-                <Select size="small" style={{ width: 74 }} value={dk.ghiNo}
+
+                <Select size="small" style={{ width: 248 }} value={dk.ghiNo}
                         onChange={(v) => suaDk({ ghiNo: v })}
-                        options={TK_NO_GOI_Y.map((x) => ({ value: x, label: x }))} />
-                <Input size="small" style={{ width: 170 }} value="Hàng hoá" readOnly />
+                        showSearch optionFilterProp="label"
+                        options={optCuaO(TK_NO_GOI_Y, dk.ghiNo)} />
                 {oNhan("Mã CT nợ", 66)}
-                {/* Mã chứng từ chỉ vài ký tự — trước để flex:1 nên ô kéo dài hết
-                    hàng, nhìn như ô nhập văn bản dài. */}
-                <Input size="small" style={{ width: 150 }} value={dk.maCtNo}
-                       onChange={(e) => suaDk({ maCtNo: e.target.value })} />
+                <Select size="small" style={{ width: 248 }}
+                        value={dk.maCtNo || undefined}
+                        onChange={(v) => suaDk({ maCtNo: v ?? "" })}
+                        showSearch optionFilterProp="label" allowClear
+                        options={optKh(dk.maCtNo)} />
               </div>
               <div className="hang">
                 {oNhan("GHI CÓ", 52, true)}
-                <Select size="small" style={{ width: 74 }} value={dk.ghiCo}
+                <Select size="small" style={{ width: 248 }} value={dk.ghiCo}
                         onChange={(v) => suaDk({ ghiCo: v })}
-                        options={TK_CO_GOI_Y.map((x) => ({ value: x, label: x }))} />
-                <Input size="small" style={{ width: 170 }} value="Phải trả cho người bán"
-                       readOnly />
+                        showSearch optionFilterProp="label"
+                        options={optCuaO(TK_CO_GOI_Y, dk.ghiCo)} />
                 {oNhan("Mã CT có", 66)}
-                <Input size="small" style={{ width: 150 }} value={dk.maCtCo}
-                       onChange={(e) => suaDk({ maCtCo: e.target.value })}
-                       placeholder={tenDoiTac} />
+                <Select size="small" style={{ width: 248 }}
+                        value={dk.maCtCo || undefined}
+                        onChange={(v) => suaDk({ maCtCo: v ?? "" })}
+                        showSearch optionFilterProp="label" allowClear
+                        placeholder={tenDoiTac}
+                        options={optKh(dk.maCtCo)} />
               </div>
               <div className="hang">
                 {oNhan("TK VAT", 52, true)}
-                <Select size="small" style={{ width: 74 }} value={dk.tkVat}
+                <Select size="small" style={{ width: 248 }} value={dk.tkVat}
                         onChange={(v) => suaDk({ tkVat: v })}
-                        options={TK_VAT_GOI_Y.map((x) => ({ value: x, label: x }))} />
-                <Input size="small" style={{ width: 170 }} value="Thuế GTGT được khấu trừ"
-                       readOnly />
+                        showSearch optionFilterProp="label"
+                        options={optCuaO(TK_VAT_GOI_Y, dk.tkVat)} />
                 {oNhan("TK DƯ VAT", 76, true)}
-                <Select size="small" style={{ width: 74 }} value={dk.tkDuVat}
+                <Select size="small" style={{ width: 248 }} value={dk.tkDuVat}
                         onChange={(v) => suaDk({ tkDuVat: v })}
-                        options={TK_CO_GOI_Y.map((x) => ({ value: x, label: x }))} />
-                <Input size="small" style={{ width: 170 }}
-                       value="Phải trả cho người bán" readOnly />
+                        showSearch optionFilterProp="label"
+                        options={optCuaO(TK_CO_GOI_Y, dk.tkDuVat)} />
               </div>
               <div className="hang">
                 {oNhan("Đ.T.K.T", 52, true)}
@@ -1627,17 +1803,12 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
               </div>
               <div className="hang">
                 {oNhan("Ghi chú", 52)}
-                {/* Cố định 340px chứ không %: cột trái giờ co theo nội dung nên %
-                    sẽ tính trên bề rộng đã co, ra ô hẹp hơn nhiều so với ý muốn. */}
                 <Input size="small" style={{ width: 340 }} value={dk.ghiChu}
                        onChange={(e) => suaDk({ ghiChu: e.target.value })} />
               </div>
 
               {/* Cụm nút giữa form */}
               <div className="hang" style={{ marginTop: 4, flexWrap: "wrap" }}>
-                {/* KHÔNG dùng suaDk: đây là chế độ xem của màn hình, mà suaDk ghi vào bộ
-                    định khoản của riêng hóa đơn đang chọn. Ô này cũng không cần chọn
-                    hóa đơn trước mới bấm được — suaDk thì return sớm khi chưa chọn. */}
                 <Checkbox checked={soSanhDuLieu}
                           onChange={(e) => setSoSanhDuLieu(e.target.checked)}>
                   So sánh dữ liệu
@@ -1685,11 +1856,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             </div>
           </div>
 
-          {/* ===== THANH CÔNG CỤ TRÊN LƯỚI =====
-               Một hàng duy nhất: nhãn + số dòng + các tùy chọn, rồi hai nút bám mép
-               phải. Trước đây tách làm hai hàng nên nhãn "Chi tiết hàng hoá dịch vụ"
-               hiện hai lần, và ô đếm số dòng readOnly lặp lại đúng con số đã có
-               trong nhãn. */}
           <div className="hang" style={{ marginTop: 6, flexWrap: "wrap" }}>
             <Typography.Text strong style={{ fontSize: 14, color: "var(--hd-dam)",
                                              marginRight: 4 }}>
@@ -1735,104 +1901,42 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
             </Button>
           </div>
 
-          <div ref={luoiHangRef} tabIndex={0} onKeyDown={phimLuoiHang}
-               className="khung-luoi-hang">
-          <Table
-            className="luoi-hang"
-            rowKey="sttLine" size="small" pagination={false}
-            dataSource={hd?.lines ?? []}
-            loading={tai}
-            scroll={{ x: 1286, y: 210 }}
-            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
-                                        description="Hóa đơn không có dòng hàng" /> }}
-            onRow={(m: HoaDonLine) => ({
-              onClick: () => setSttChon(m.sttLine),
-              className: m.sttLine === sttChon ? "dong-dang-chon" : undefined,
-              style: { cursor: "pointer" },
-            })}
-            columns={[
-              { title: "STT", dataIndex: "sttLine", width: 36, fixed: "left" },
-              { title: "Tên hàng hoá dịch vụ", dataIndex: "tenHang", width: 230,
-                render: (v: string, m: HoaDonLine) => (
-                  <Input size="small" value={v} title={v}
-                         onChange={(e) => suaDongHang(m.sttLine, { tenHang: e.target.value })} />
-                ) },
-              // o-giua: căn giữa chữ TRONG ô nhập, xem hoa-don-dau-vao.css.
-              { title: "ĐVT", dataIndex: "dvt", width: 54, align: "center",
-                onCell: () => ({ className: "o-giua" }),
-                render: (v: string | null, m: HoaDonLine) => (
-                  <Input size="small" value={v ?? ""}
-                         onChange={(e) => suaDongHang(m.sttLine, { dvt: e.target.value })} />
-                ) },
-              { title: "Số lượng", dataIndex: "soLuong", width: 72, align: "right",
-                render: (v: number, m: HoaDonLine) => (
-                  <InputNumber size="small" value={v} controls={false}
-                               style={{ width: "100%" }}
-                               formatter={tienVn} parser={docTienVn}
-                               onChange={(x) => suaDongHang(m.sttLine, { soLuong: x ?? 0 })} />
-                ) },
-              { title: "Đơn giá", dataIndex: "donGia", width: 120, align: "right",
-                render: (v: number, m: HoaDonLine) => (
-                  <InputNumber size="small" value={v} controls={false}
-                               style={{ width: "100%" }}
-                               formatter={tienVn} parser={docTienVn}
-                               onChange={(x) => suaDongHang(m.sttLine, { donGia: x ?? 0 })} />
-                ) },
-               // Để trống thì lấy định khoản chung của hóa đơn (dk.ghiNo/ghiCo) làm
-              // giá trị gợi ý — gõ vào là ghi đè riêng cho dòng này.
-              { title: "Nợ", dataIndex: "ghiNo", width: 56, align: "center",
-                onCell: () => ({ className: "o-giua" }),
-                render: (v: string | null, m: HoaDonLine) => (
-                  <Input size="small" value={v ?? ""} placeholder={dk.ghiNo}
-                         onChange={(e) => suaDongHang(m.sttLine, { ghiNo: e.target.value })} />
-                ) },
-              { title: "Có", dataIndex: "ghiCo", width: 56, align: "center",
-                onCell: () => ({ className: "o-giua" }),
-                render: (v: string | null, m: HoaDonLine) => (
-                  <Input size="small" value={v ?? ""} placeholder={dk.ghiCo}
-                         onChange={(e) => suaDongHang(m.sttLine, { ghiCo: e.target.value })} />
-                ) },
-              { title: "% VAT", dataIndex: "ptVat", width: 56, align: "center",
-                onCell: () => ({ className: "o-giua" }),
-                onHeaderCell: () => ({ style: { textAlign: "center" as const } }),
-                render: (v: number, m: HoaDonLine) => (
-                  <InputNumber size="small" controls={false}
-                               style={{ width: "100%" }}
-                               value={v > 0 && v <= 1 ? v * 100 : v}
-                               onChange={(x) => suaDongHang(m.sttLine, { ptVat: x ?? 0 })} />
-                ) },
-              { title: "C.Khấu", dataIndex: "tienCk", width: 96, align: "right",
-                onHeaderCell: () => ({ style: { textAlign: "center" as const } }),
-                render: (v: number, m: HoaDonLine) => (
-                  <InputNumber size="small" value={v} controls={false}
-                               style={{ width: "100%" }}
-                               formatter={tienVn} parser={docTienVn}
-                               onChange={(x) => suaDongHang(m.sttLine, { tienCk: x ?? 0 })} />
-                ) },  
 
-              { title: "Thành tiền", dataIndex: "thanhTien", width: 140, align: "right",
-                render: (v: number) => (
-                  <b>{v.toLocaleString("vi-VN",
-                      { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</b>
-                ) },
-              { title: "Ghi chú", dataIndex: "ghiChu", width: 260,
-                render: (v: string | null, m: HoaDonLine) => (
-                  <Input size="small" value={v ?? ""} placeholder={m.tenHang}
-                         title={v || m.tenHang}
-                         onChange={(e) => suaDongHang(m.sttLine, { ghiChu: e.target.value })} />
-                ) },
-            ]}
-          />
+          <div className="khung-luoi-hang">
+            <AgGridReact<HoaDonLine>
+              theme={themeVfp}
+              {...luoiVfpProps}
+              {...nhoDoRongCot("hang_hoa_don")}
+              // nhoDoRongCot cũng khai onGridReady (nạp bề rộng đã lưu). Khai lại ở
+              // đây sẽ ĐÈ MẤT nó, nên phải gọi lại tay rồi mới giữ api.
+              onGridReady={(e) => {
+                nhoDoRongCot("hang_hoa_don").onGridReady(e);
+                setLuoiHangApi(e.api);
+              }}
+              rowData={hd?.lines ?? []}
+              getRowId={(p) => String(p.data.sttLine)}
+              defaultColDef={colVfp}
+              columnDefs={cotHang}
+              overlayNoRowsTemplate={hd ? "Hóa đơn không có dòng hàng"
+                                        : "Chưa chọn hóa đơn"}
+              onRowClicked={(e) => e.data && setSttChon(e.data.sttLine)}
+              // Tô dòng đang chọn — dùng lại .dong-dang-chon của mau-huong.css.
+              getRowClass={(p) => p.data?.sttLine === sttChon
+                ? "dong-dang-chon" : undefined}
+              onCellValueChanged={(e) => {
+                const f = e.colDef.field as keyof HoaDonLine | undefined;
+                if (f) suaDongHang(e.data.sttLine,
+                                   { [f]: e.newValue } as Partial<HoaDonLine>);
+              }}
+            />
           </div>
 
-          {/* ===== KHỐI CỘNG TIỀN + NÚT DƯỚI ===== */}
           <div style={{ display: "flex", gap: 12, marginTop: 6 }}>
             {/* ô ghi chú trống bên trái như bản gốc */}
             <Input.TextArea rows={4} style={{ flex: "0 0 230px" }}
                             value={dk.ghiChu}
                             onChange={(e) => suaDk({ ghiChu: e.target.value })} />
 
-            {/* 190 (cột nhãn) + 4 (gap) + 165 (ô số) = 359 */}
             <div className="khoi-cong" style={{ flex: "0 0 359px" }}>
               <div className="hang">
                 {oNhan("Cộng tiền hàng", 190)}
@@ -1857,8 +1961,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
                   <InputNumber size="small" style={{ width: 58 }} controls={false}
                                value={thueSuatHienThi}
                                placeholder="—"
-                               // Xóa trắng ô -> null -> quay lại bám theo hóa đơn,
-                               // KHÔNG gán 0 (0% là một thuế suất có thật).
                                onChange={(v) => suaDk({ thueSuat: v })} />
                   <span className="nhan">% Tiền VAT</span>
                 </span>
@@ -1880,21 +1982,48 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
 
             {/* Cụm GHI NỢ/CÓ CK bên phải */}
             <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+              {/* Bốn ô định khoản CHIẾT KHẤU. "tk" = tra DM_TK (tài khoản),
+                  "kh" = tra DM_KH (khách hàng) — cùng hai danh mục mà cụm định khoản
+                  chính đang dùng, không để ô nào gõ tay trơn: gõ sai một ký tự thì
+                  định khoản trỏ vào mã không tồn tại mà chẳng có gì báo.
+
+                  KHOÁ khi hóa đơn KHÔNG có chiết khấu: bốn ô này sinh ra bút toán cho
+                  khoản CK, mà không có tiền CK thì bút toán đó trỏ vào số 0 — điền
+                  vào chỉ tạo ra một cặp Nợ/Có rỗng nằm trong sổ. Mở khóa bằng cách
+                  tích "Sửa tiền CK" rồi gõ số, hoặc để dòng hàng tự mang tiền CK. */}
+              {!coChietKhau && (
+                <div className="nhac-ck">
+                  Hóa đơn chưa có tiền chiết khấu — tích <b>Sửa tiền CK</b> và nhập số
+                  để định khoản khoản này.
+                </div>
+              )}
               {([
-                ["GHI NỢ CK", "ghiNoCk"], ["Mã CT Nợ CK", "maCtNoCk"],
-                ["GHI CÓ CK", "ghiCoCk"], ["Mã CT Có CK", "maCtCoCk"],
-              ] as [string, keyof DinhKhoan][]).map(([nhan, khoa]) => (
+                ["GHI NỢ CK", "ghiNoCk", "tk", TK_NO_GOI_Y],
+                ["Mã CT Nợ CK", "maCtNoCk", "kh", null],
+                ["GHI CÓ CK", "ghiCoCk", "tk", TK_CO_GOI_Y],
+                ["Mã CT Có CK", "maCtCoCk", "kh", null],
+              ] as [string, keyof DinhKhoan, "tk" | "kh", string[] | null][]).map(
+                ([nhan, khoa, loai, goiY]) => {
+                const dangChon = String(dk[khoa] ?? "") || undefined;
+                return (
                 <div className="hang" key={khoa}>
                   <span className="nhan nhan-do" style={{ width: 96, textAlign: "right" }}>
                     {nhan}
                   </span>
-                  {/* Nửa hàng là đủ: bốn ô này chứa số tiền và mã chứng từ ngắn,
-                      để flex:1 thì kéo dài hết cột mà phần lớn bỏ trống. */}
-                  <Input size="small" style={{ flex: "0 1 50%", minWidth: 150 }}
-                         value={String(dk[khoa] ?? "")}
-                         onChange={(e) => suaDk({ [khoa]: e.target.value } as Partial<DinhKhoan>)} />
+
+                  <Select size="small" style={{ flex: "0 1 50%", minWidth: 150 }}
+                          value={dangChon}
+                          onChange={(v) => suaDk({ [khoa]: v ?? "" } as Partial<DinhKhoan>)}
+                          showSearch optionFilterProp="label" allowClear
+                          disabled={!coChietKhau}
+                          placeholder={coChietKhau ? "— không định khoản —"
+                                                   : "— không có tiền CK —"}
+                          options={loai === "kh"
+                            ? optKh(dangChon)
+                            : optCuaO(goiY ?? [], dangChon)} />
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -1924,9 +2053,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
         onXemHtml={xemHtml}
         onLamMoi={() => napHoaDon(true)}
         dangTai={tai}
-        // Ô tích "So sánh dữ liệu" ở form quyết định danh sách mở ra ở chế độ nào.
-        // Đọc tại lúc render nên tích/bỏ tích rồi bấm Tìm lại là đổi ngay, không phải
-        // đóng mở lại màn hình.
         soSanh={soSanhDuLieu}
       />
 
@@ -1940,9 +2066,6 @@ function HoaDonCuaDonVi({ huongMacDinh }: Props) {
   );
 }
 
-// ============ BỘ CHIA: nhìn claim tenant_type để chọn ruột ============
-// Hai màn Đầu vào / Đầu ra là CÙNG một màn, chỉ khác hướng — nên chỉ có một chỗ
-// sửa khi nghiệp vụ đổi, không có chuyện vá một bên quên bên kia.
 export default function HoaDonDauVao({ huongMacDinh = "vao" }: Partial<Props> = {}) {
   const { session } = useAuth();
   return session?.tenant.tenantType === "internal"

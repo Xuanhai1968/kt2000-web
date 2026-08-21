@@ -1062,6 +1062,30 @@ namespace KT2000.Api.Services
             var thueNhom = gom.Values.Sum(n => n.Thue);
             var lech = thueHeader - thueNhom;
 
+            // BR-TK-03 — CHỐT THEO TỪNG HÓA ĐƠN TRƯỚC KHI KẾT LUẬN LỆCH.
+            //
+            // Đối soát tờ khai chuẩn HUY_THANH T7/2026 (TKG_T7_2026): bảng kê của cổng
+            // cộng đúng ct24 = 2.421.404.161, nhưng cộng theo nhóm ra 2.421.184.645 còn
+            // cộng theo header ra 2.421.582.829 — SAI CẢ HAI PHÍA. Ba ca hỏng:
+            //
+            //  • C26THD/0008262: hàng 7.884.600, VAT 414.979 = 5,26% — hóa đơn NHIỀU
+            //    THUẾ SUẤT. Nhân cả hóa đơn với một suất thì không suất nào khớp.
+            //  • C26TYY/0004923: hàng 12.602.700, VAT 1.008.216 = đúng 8% (NQ142) nhưng
+            //    dòng ghi pt_vat = 10 nên bị nhân thành 1.260.270.
+            //  • K26DAA/2265013: hóa đơn ĐIỀU CHỈNH GIẢM (hàng −168.025, VAT −16.803);
+            //    làm tròn số ÂM lệch 1 đ mỗi dòng, gộp lại vượt ngưỡng.
+            //
+            // Cách chữa: VAT trên header của hóa đơn mới là số cổng thuế công nhận, nên
+            // phần lệch của MỘT hóa đơn phải trả về ĐÚNG các nhóm của chính hóa đơn đó
+            // (chia theo tỷ trọng tiền hàng), thay vì dồn hết vào nhóm doanh thu lớn
+            // nhất — dồn như cũ làm nhóm 5%/8% mang thuế của nhóm 10% và ngược lại.
+            var lechTheoNhom = ChotTheoTungHoaDon(dsHd, dong, gom);
+            if (lechTheoNhom)
+            {
+                thueNhom = gom.Values.Sum(n => n.Thue);
+                lech = thueHeader - thueNhom;
+            }
+
             if (lech != 0 && gom.Count > 0)
             {
                 var soHd = dsHd.Count;
@@ -1094,6 +1118,85 @@ namespace KT2000.Api.Services
             return gom.Values.OrderBy(n => n.ThueSuat).ToList();
         }
 
+        /// <summary>
+        /// Chốt thuế từng hóa đơn về đúng nhóm thuế suất của nó (BR-TK-03).
+        ///
+        /// Với mỗi hóa đơn: tính thuế theo suất của từng dòng rồi so với `tien_vat` trên
+        /// header. Lệch bao nhiêu thì trả lại các nhóm CỦA CHÍNH HÓA ĐƠN ẤY theo tỷ
+        /// trọng tiền hàng, nên hóa đơn nhiều thuế suất / hóa đơn 8% ghi nhầm pt_vat /
+        /// hóa đơn điều chỉnh giảm đều về đúng dòng của mình.
+        ///
+        /// Chỉ chốt khi lệch còn NHỎ so với hóa đơn (≤ 1% hoặc ≤ 5 đ mỗi dòng): lệch lớn
+        /// là sai dữ liệu thật, phải để BR-TK-03 chặn chứ không được lấp liếm.
+        /// </summary>
+        /// <returns>true nếu có ít nhất một hóa đơn được chốt lại.</returns>
+        private static bool ChotTheoTungHoaDon(
+            List<HoaDonKy> dsHd, List<DongTheoSuat> dong,
+            Dictionary<decimal, NhomThueSuatDto> gom)
+        {
+            var dongTheoHd = dong
+                .GroupBy(d => d.MaHd, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+            // Cộng LẠI TỪ ĐẦU theo từng hóa đơn thay vì chỉnh con số đã gộp sẵn: gộp
+            // trước rồi mới làm tròn (round(Σ)) khác với làm tròn từng hóa đơn rồi mới
+            // cộng (Σ round) đúng 1 đ mỗi lần bắc cầu, mà đã lệch 1 đ thì BR-TK-03 vẫn
+            // kêu. Dựng lại từ header nên tổng các nhóm bằng tổng tien_vat theo định
+            // nghĩa, không phải nhờ bù trừ.
+            var thueMoi = new Dictionary<decimal, decimal>();
+            var chotDuoc = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var h in dsHd)
+            {
+                if (!dongTheoHd.TryGetValue(h.MaHd, out var dsDong)) continue;
+
+                var nhan = dsDong.Where(d => gom.ContainsKey(d.PtVat)).ToList();
+                if (nhan.Count == 0) continue;
+
+                var thueTinh = nhan.Sum(d => d.PtVat <= 0 ? 0m
+                    : Math.Round(d.TienHang * d.PtVat / 100m, 0, MidpointRounding.AwayFromZero));
+                var lechHd = h.TienVat - thueTinh;
+
+                // Ngưỡng: hóa đơn càng nhiều dòng càng dễ lệch do làm tròn, nhưng lệch
+                // quá 1% tiền thuế thì không còn là làm tròn nữa — để BR-TK-03 chặn.
+                var nguongHd = Math.Max(5m * nhan.Count, Math.Abs(h.TienVat) / 100m);
+                if (Math.Abs(lechHd) > nguongHd) continue;
+
+                // Chia thuế của hóa đơn về các nhóm của chính nó; dòng cuối ôm phần dư
+                // để cộng lại đúng bằng tien_vat trên header.
+                var tongHang = nhan.Sum(d => d.TienHang);
+                var conLai = h.TienVat;
+                for (int i = 0; i < nhan.Count; i++)
+                {
+                    var d = nhan[i];
+                    var phan = i == nhan.Count - 1 || tongHang == 0
+                        ? conLai
+                        : Math.Round(h.TienVat * d.TienHang / tongHang, 0,
+                                     MidpointRounding.AwayFromZero);
+                    thueMoi[d.PtVat] = thueMoi.GetValueOrDefault(d.PtVat) + phan;
+                    conLai -= phan;
+                }
+                chotDuoc.Add(h.MaHd);
+            }
+
+            if (chotDuoc.Count == 0) return false;
+
+            // Hóa đơn KHÔNG chốt được (lệch quá ngưỡng) vẫn giữ cách tính cũ, để phần
+            // lệch thật còn nguyên cho BR-TK-03 báo.
+            foreach (var d in dong)
+            {
+                if (chotDuoc.Contains(d.MaHd) || !gom.ContainsKey(d.PtVat)) continue;
+                var thue = d.PtVat <= 0 ? 0m
+                    : Math.Round(d.TienHang * d.PtVat / 100m, 0, MidpointRounding.AwayFromZero);
+                thueMoi[d.PtVat] = thueMoi.GetValueOrDefault(d.PtVat) + thue;
+            }
+
+            foreach (var (suat, n) in gom)
+                n.Thue = thueMoi.GetValueOrDefault(suat);
+
+            return true;
+        }
+
         private static string ThuPhamLech(List<HoaDonKy> dsHd, List<DongTheoSuat> dong)
         {
             var theoHd = dong
@@ -1105,11 +1208,28 @@ namespace KT2000.Api.Services
                                                MidpointRounding.AwayFromZero)),
                     StringComparer.OrdinalIgnoreCase);
 
+            // Tiền hàng từng hóa đơn + suất đang ghi, để suy ra suất THỰC TẾ mà cổng
+            // thuế đã dùng — kế toán cần biết "phải sửa pt_vat thành mấy %", chứ chỉ
+            // báo lệch bao nhiêu đồng thì vẫn phải tự mở từng hóa đơn ra dò.
+            var hangTheoHd = dong
+                .GroupBy(d => d.MaHd, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Sum(x => x.TienHang),
+                              StringComparer.OrdinalIgnoreCase);
+            var suatTheoHd = dong
+                .GroupBy(d => d.MaHd, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(x => x.PtVat).Distinct().OrderBy(x => x).ToList(),
+                    StringComparer.OrdinalIgnoreCase);
+
             var thuPham = dsHd
                 .Select(h => new
                 {
                     h.MaHd,
                     Lech = h.TienVat - theoHd.GetValueOrDefault(h.MaHd),
+                    Hang = hangTheoHd.GetValueOrDefault(h.MaHd),
+                    Vat = h.TienVat,
+                    Suat = suatTheoHd.GetValueOrDefault(h.MaHd) ?? new List<decimal>(),
                 })
                 .Where(x => Math.Abs(x.Lech) > 5m)
                 .OrderByDescending(x => Math.Abs(x.Lech))
@@ -1124,8 +1244,26 @@ namespace KT2000.Api.Services
                 return m.Length >= 2 ? $"{m[^2]}/{m[^1]}" : maHd;
             }
 
-            var ke = string.Join("; ", thuPham.Select(
-                x => $"{NhanHd(x.MaHd)} lệch {x.Lech:N0}đ"));
+            var ke = string.Join("; ", thuPham.Select(x =>
+            {
+                var mo = $"{NhanHd(x.MaHd)} lệch {x.Lech:N0}đ";
+                if (x.Hang == 0) return mo;
+
+                // Suất thực = VAT header / tiền hàng. Khớp một suất chuẩn thì nói thẳng
+                // "đang ghi 10% nhưng thực tế là 8%"; không khớp suất nào thì gần như
+                // chắc chắn hóa đơn NHIỀU THUẾ SUẤT.
+                var thuc = x.Vat * 100m / x.Hang;
+                var chuan = new[] { 0m, 5m, 8m, 10m }
+                    .FirstOrDefault(s => Math.Abs(thuc - s) <= 0.05m, -1m);
+                var dangGhi = x.Suat.Count == 1 ? $"{x.Suat[0]:0.##}%" : "nhiều suất";
+
+                return chuan >= 0 && x.Suat.Count == 1 && chuan != x.Suat[0]
+                    ? $"{mo} (dòng ghi {dangGhi} nhưng VAT thực tế là {chuan:0.##}% — sửa pt_vat)"
+                    : chuan < 0
+                        ? $"{mo} (VAT/tiền hàng = {thuc:0.##}%, không khớp suất nào — "
+                          + "hóa đơn nhiều thuế suất, phải tách dòng)"
+                        : mo;
+            }));
             var them = dsHd.Count(h => Math.Abs(h.TienVat - theoHd.GetValueOrDefault(h.MaHd)) > 5m)
                      - thuPham.Count;
             return $". Hóa đơn lệch nhiều nhất: {ke}"
@@ -1754,8 +1892,12 @@ namespace KT2000.Api.Services
             var maDs = ds.Select(d => d.MaDonVi)
                          .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (maDs.Count == 0) return;
+            // Đơn vị nào chưa có IN_VALUE_LINE (database đời đầu, script 021 chưa chạy)
+            // thì loại khỏi câu hỏi luôn — cùng luật với DoiChieuInValue: thiếu bảng chỉ
+            // là không có gì để đối chiếu, không phải lỗi.
             var dung = await LocDonViCoBang(
-                maDs.Select(m => new DonViKy { Ma = m }).ToList(), nam, huy);
+                maDs.Select(m => new DonViKy { Ma = m }).ToList(), nam, huy,
+                "IN_VALUE_LINE");
             if (dung.Count == 0) return;
 
             var nhanh = new List<string>();
@@ -1764,21 +1906,16 @@ namespace KT2000.Api.Services
             {
                 var db = _resolver.BuildDbName(dung[i].Ma, nam);
                 nhanh.Add($@"
-                    SELECT @m{i} AS ma_donvi, h.thang, h.huong,
-                           SUM(ISNULL(l.tien_hang, 0)) AS gt_hang,
-                           SUM(ISNULL(h.tien_vat, 0))  AS vat
-                      FROM [{db}].dbo.HOA_DON h
-                      OUTER APPLY (
-                            SELECT SUM(CASE WHEN ISNULL(x.tinh_chat, '1') = '3' THEN 0
-                                            ELSE ISNULL(x.so_luong, 0) * ISNULL(x.don_gia, 0)
-                                       END) AS tien_hang
-                              FROM [{db}].dbo.HOA_DON_LINE x WHERE x.ma_hd = h.ma_hd
-                      ) l
-                     GROUP BY h.thang, h.huong");
+                    SELECT @m{i} AS ma_donvi, v.thang, v.loai_ct,
+                           SUM(ISNULL(l.value1, 0)) AS gt_hang,
+                           SUM(ISNULL(l.tax, 0))    AS vat
+                      FROM [{db}].dbo.IN_VALUE v
+                      JOIN [{db}].dbo.IN_VALUE_LINE l ON l.ma_input = v.ma_input
+                     GROUP BY v.thang, v.loai_ct");
                 thamSo.Add(($"@m{i}", dung[i].Ma));
             }
 
-            // (mã đơn vị, tháng) → số của sổ
+            // (mã đơn vị, kỳ kê khai) → số của BẢNG KÊ gốc TCT
             var so = new Dictionary<string, (decimal HangVao, decimal VatVao,
                                              decimal HangRa, decimal VatRa)>(
                 StringComparer.OrdinalIgnoreCase);
@@ -1791,10 +1928,11 @@ namespace KT2000.Api.Services
             using var r = await cmd.ExecuteReaderAsync(huy);
             while (await r.ReadAsync(huy))
             {
-                if (r.IsDBNull(1)) continue;             // hóa đơn chưa gán kỳ kê khai
+                if (r.IsDBNull(1)) continue;             // dòng bảng kê chưa gán kỳ
                 var k = $"{r.GetString(0)}|{r.GetInt32(1)}".ToUpperInvariant();
+                // IN_VALUE ghi hướng bằng MỘT ký tự V/R, không phải VAO/RA như HOA_DON.
                 var laVao = string.Equals(r.IsDBNull(2) ? "" : r.GetString(2),
-                                          "VAO", StringComparison.OrdinalIgnoreCase);
+                                          "V", StringComparison.OrdinalIgnoreCase);
                 var hang = r.IsDBNull(3) ? 0m : r.GetDecimal(3);
                 var vat = r.IsDBNull(4) ? 0m : r.GetDecimal(4);
 
@@ -2462,8 +2600,15 @@ namespace KT2000.Api.Services
             return kq;
         }
 
+        /// <param name="bang">
+        /// Bảng dùng để dò xem database của đơn vị đã dựng chưa. Mặc định HOA_DON; chỗ
+        /// đọc bảng kê gốc truyền IN_VALUE_LINE vì database đời đầu chưa có bảng đó
+        /// (script 021 mới bù), mà tên bảng thiếu thì cả câu UNION hỏng chứ không chỉ
+        /// nhánh của riêng đơn vị ấy.
+        /// </param>
         private async Task<List<DonViKy>> LocDonViCoBang(
-            IReadOnlyList<DonViKy> dsDonVi, int nam, CancellationToken huy)
+            IReadOnlyList<DonViKy> dsDonVi, int nam, CancellationToken huy,
+            string bang = "HOA_DON")
         {
             var hopLe = new List<DonViKy>(dsDonVi.Count);
             var ve = new List<string>();
@@ -2478,7 +2623,7 @@ namespace KT2000.Api.Services
                 hopLe.Add(dsDonVi[i]);
                 ve.Add($"SELECT @m{i} AS ma, OBJECT_ID(@o{i}) AS id");
                 thamSo.Add(($"@m{i}", dsDonVi[i].Ma));
-                thamSo.Add(($"@o{i}", $"[{db}].dbo.HOA_DON"));
+                thamSo.Add(($"@o{i}", $"[{db}].dbo.{bang}"));
             }
             if (ve.Count == 0) return new List<DonViKy>();
 

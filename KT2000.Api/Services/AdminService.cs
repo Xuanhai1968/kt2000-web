@@ -10,8 +10,9 @@ namespace KT2000.Api.Services
     {
         private readonly AppDbContext _db;
         private readonly TenantDbResolver _resolver;
-        public AdminService(AppDbContext db, TenantDbResolver resolver)
-        { _db = db; _resolver = resolver; }
+        private readonly VaCauTrucService _va;
+        public AdminService(AppDbContext db, TenantDbResolver resolver, VaCauTrucService va)
+        { _db = db; _resolver = resolver; _va = va; }
 
         // Ghi một dòng nhật ký. Nuốt lỗi có chủ đích: thao tác quản trị đã commit rồi,
         // ném tiếp chỉ khiến người dùng tưởng thất bại và bấm lại lần nữa.
@@ -129,6 +130,85 @@ namespace KT2000.Api.Services
             }
             return results;
         }
+
+        // ============ Tạo bảng module Hợp đồng + Lương ============
+
+        /// <summary>
+        /// Dựng 4 bảng NHAN_SU / HOP_DONG / CHAM_CONG / BANG_LUONG vào database đơn
+        /// vị-năm đã chọn (script 025 + 026).
+        ///
+        /// VÌ SAO LÀ NÚT RIÊNG chứ không nằm trong bản vá tự động (chốt 21/08): đây là
+        /// một MODULE, không phải sửa cấu trúc bắt buộc. Phần lớn khách chỉ thuê làm kế
+        /// toán thuế, lương họ tự làm — dựng sẵn 4 bảng rỗng cho mọi đơn vị × mọi năm là
+        /// rác. Xem giải thích đầy đủ ở VaCauTrucService.CAC_BAN_VA.
+        ///
+        /// Năm lấy từ req.Year, KHÔNG phải năm đang đăng nhập: người dùng đứng ở màn Mở
+        /// năm và vừa gõ năm cần mở ngay bên cạnh — dùng năm khác đi là dựng bảng vào
+        /// database họ không hề nhắm tới.
+        /// </summary>
+        public async Task<List<object>> TaoBangHopDongLuong(
+            OpenYearsRequest req, string nguoiDung)
+        {
+            var ketQua = new List<object>();
+
+            foreach (var idStr in req.TenantIds)
+            {
+                if (!Guid.TryParse(idStr, out var id)) continue;
+                var tenant = await _db.Tenants.FindAsync(id);
+                if (tenant == null) continue;
+
+                // Đơn vị nội bộ (tạo đơn bán hàng) không có màn Hợp đồng / Lương —
+                // BR-HD-02. Dựng bảng ở đó chỉ tạo ra thứ không lối nào chạm tới.
+                if (tenant.TenantType == "noibo")
+                {
+                    ketQua.Add(new
+                    {
+                        code = tenant.Code, status = "skip",
+                        message = "Đơn vị nội bộ không dùng module Hợp đồng / Lương",
+                    });
+                    continue;
+                }
+
+                try
+                {
+                    // Chưa mở năm thì KHÔNG tự tạo database ở đây. Mở năm là việc riêng,
+                    // có nút riêng ngay trên cùng màn hình; lặng lẽ tạo hộ thì người dùng
+                    // mất luôn cơ hội nhận ra mình vừa chọn nhầm năm.
+                    bool coNam = await _db.FiscalYears
+                        .AnyAsync(f => f.TenantId == tenant.Id && f.Year == req.Year);
+                    if (!coNam)
+                    {
+                        ketQua.Add(new
+                        {
+                            code = tenant.Code, status = "error",
+                            message = $"Chưa mở năm {req.Year} — bấm \"Mở năm\" trước",
+                        });
+                        continue;
+                    }
+
+                    bool vuaTao = _va.TaoBangHopDongLuong(tenant.Code, req.Year, nguoiDung);
+                    ketQua.Add(new
+                    {
+                        code = tenant.Code,
+                        status = vuaTao ? "ok" : "skip",
+                        message = vuaTao
+                            ? $"Đã tạo bảng Hợp đồng + Lương trong {tenant.Code}_{req.Year}"
+                            : $"{tenant.Code}_{req.Year} đã có sẵn bảng",
+                    });
+                }
+                catch (Exception ex)
+                {
+                    ketQua.Add(new
+                    { code = tenant.Code, status = "error", message = ex.Message });
+                    await GhiNhatKy(nguoiDung, tenant.Id, req.Year, "TAO_BANG_LUONG_LOI",
+                        $"Tạo bảng Hợp đồng + Lương cho {tenant.Code}_{req.Year} "
+                      + $"thất bại: {ex.Message}");
+                }
+            }
+
+            return ketQua;
+        }
+
         // ============ Sửa đơn vị (5 khóa kỷ luật) ============
         public async Task<object> UpdateTenant(Guid tenantId, UpdateTenantRequest req, string changedBy)
         {

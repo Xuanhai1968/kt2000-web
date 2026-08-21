@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Microsoft.Data.SqlClient;
 
 namespace KT2000.Api.Services
@@ -135,5 +135,33 @@ namespace KT2000.Api.Services
         }
 
         private static string? Rong(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+        /// <summary>
+        /// Danh sách khách hàng cho ô "Mã CT nợ / Mã CT có" trên màn hóa đơn.
+        ///
+        /// Bản VFP gốc để hai ô này là combobox tra thẳng DM_KH — web trước nay chỉ có ô
+        /// gõ tay, gõ sai một ký tự thì định khoản trỏ vào mã không tồn tại mà không có
+        /// gì báo. Trả cả tên để người dùng chọn bằng mắt; giá trị lưu vẫn là ma_kh.
+        ///
+        /// DM_KH nằm ở KT2000_Base (dùng chung mọi đơn vị) nên mở kết nối riêng, cùng
+        /// cách LayDanhMucTaiKhoan của ThueService. Tên database chỉ lấy qua resolver.
+        /// </summary>
+        public async Task<List<Models.DmKhDto>> LayDanhSachKhachHang()
+        {
+            var ds = new List<Models.DmKhDto>();
+            using var c = new SqlConnection(_resolver.GetBaseConnection());
+            await c.OpenAsync();
+            using var cmd = new SqlCommand(
+                "SELECT ma_kh, ten_kh, mst FROM DM_KH ORDER BY ma_kh", c);
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+                ds.Add(new Models.DmKhDto
+                {
+                    MaKh = r.GetString(0),
+                    TenKh = r.IsDBNull(1) ? null : r.GetString(1),
+                    Mst = r.IsDBNull(2) ? null : r.GetString(2),
+                });
+            return ds;
+        }
     }
 }

@@ -119,7 +119,13 @@ namespace KT2000.Api.Services
                            -- vá chỉ chạy lúc NẠP). Không ép kiểu thì GetInt32 ném
                            -- InvalidCastException và cả màn danh sách trả 500 — mà chỉ ở
                            -- đúng những đơn vị chưa nạp, nên rất dễ tưởng là đã hết lỗi.
-                           CAST(MAX(x.pt_vat) AS INT) AS pt_vat_line
+                           CAST(MAX(x.pt_vat) AS INT) AS pt_vat_line,
+                           -- Tổng GIÁ VỐN của hóa đơn = Sigma gia_von các dòng hàng.
+                           -- Khác hẳn tong_tien (tiền thanh toán): giá vốn là tiền BỎ RA
+                           -- mua hàng, dùng để tính lỗ lãi. Cột Tổng G.Von trên lưới
+                           -- trước nay hiển thị nhầm tong_tien nên số luôn bằng doanh thu
+                           -- và cột Lỗ-Lãi vô nghĩa.
+                           SUM(ISNULL(x.gia_von, 0)) AS tong_gia_von
                       FROM HOA_DON_LINE x
                      WHERE x.ma_hd = h.ma_hd
               ) s";
@@ -143,7 +149,11 @@ namespace KT2000.Api.Services
                    h.trang_thai_hd_lien_quan,
                    h.ghi_no_vat, h.ghi_co_vat,
                    h.vat,
-                   s.pt_vat_line
+                   s.pt_vat_line,
+                   -- Bộ tứ audit đặt CUỐI cùng: DocHoaDon đọc theo VỊ TRÍ cột, chèn
+                   -- vào giữa là mọi chỉ số sau đó lệch một nấc mà không báo lỗi gì.
+                   h.created_by, h.created_at, h.updated_by, h.updated_at,
+                   ISNULL(s.tong_gia_von, 0) AS tong_gia_von
               FROM HOA_DON h" + SqlGopTuLine;
 
         private static HoaDonThueDto DocHoaDon(SqlDataReader r) => new()
@@ -183,6 +193,11 @@ namespace KT2000.Api.Services
             GhiCoVat            = TaiKhoan(r, 32),
             Vat                = r.IsDBNull(33) ? null : r.GetInt32(33),
             VatLine            = r.IsDBNull(34) ? null : r.GetInt32(34),
+            CreatedBy          = r.IsDBNull(35) ? null : r.GetString(35),
+            CreatedAt          = r.IsDBNull(36) ? null : r.GetDateTime(36),
+            UpdatedBy          = r.IsDBNull(37) ? null : r.GetString(37),
+            UpdatedAt          = r.IsDBNull(38) ? null : r.GetDateTime(38),
+            TongGiaVon         = r.IsDBNull(39) ? 0m : r.GetDecimal(39),
         };
 
 

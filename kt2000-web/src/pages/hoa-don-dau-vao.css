@@ -1,20 +1,3 @@
-/* Khung PHIẾU NHẬP HÀNG / PHIẾU XUẤT HÀNG của màn Hóa đơn đầu vào — đầu ra.
-   Dựng lại form VFP (FRM_NHAP_HANG) của KT2000.
-
-   Vì sao dùng CSS riêng chứ không Form của antd: form gốc là lưới nhãn-ô dày đặc,
-   nhãn nằm SÁT trái ô và mỗi hàng có 3–4 cặp nhãn/ô độ rộng khác nhau. Form antd
-   với labelCol/wrapperCol chia cột đều nhau nên không tả được bố cục đó; ở đây
-   dùng grid tự khai độ rộng từng cặp, bám đúng ảnh chụp màn hình.
-
-   KHÔNG dùng !important. Để thắng CSS mặc định của antd, mọi luật đều lặp lớp
-   gốc (.phieu-nhap.phieu-nhap) cho đủ độ đặc hiệu. Cách này giữ nguyên khả năng
-   ghi đè về sau: muốn sửa chỗ nào chỉ cần một selector cụ thể hơn, thay vì phải
-   leo thang !important lẫn nhau. */
-
-/* Nền + viền + màu tiêu đề đổi theo CHIỀU hóa đơn (NT-11): VÀO = đỏ, RA = xanh.
-   Khai bằng biến để ba chỗ (nền form, viền, khung tiêu đề) chỉ sửa một nơi.
-   Giá trị mặc định ở đây là tông ĐỎ — đúng cho màn đầu vào; .huong-ra ghi đè
-   sang tông xanh. Xem mau-huong.css để biết quy ước chung. */
 .phieu-nhap {
   --hd-nen: #ffe8ef;                 /* nền hồng của form VFP gốc */
   --hd-vien: #d9a8b8;
@@ -23,6 +6,11 @@
   background: var(--hd-nen);
   border: 1px solid var(--hd-vien);
   padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 104px);
+  min-height: 0;
+
 }
 
 /* Màn ĐẦU RA: cùng bố cục, đổi sang tông xanh cho khỏi ngồi nhầm màn */
@@ -160,63 +148,20 @@
   outline: none;
 }
 
-
-.phieu-nhap.phieu-nhap .luoi-hang .ant-table-body {
-  height: 230px;
-  max-height: 230px !important;
-  overflow-x: auto !important;
-  overflow-y: auto !important;
+.phieu-nhap .khung-luoi-hang {
+  flex: 1 1 0;
+  min-height: 230px;
+  width: 100%;
 }
 
-.phieu-nhap.phieu-nhap .luoi-hang .ant-table-header > table,
-.phieu-nhap.phieu-nhap .luoi-hang .ant-table-body > table {
-  min-width: 1286px;
-}
-
-.phieu-nhap.phieu-nhap .luoi-hang .ant-table-placeholder > td {
-  border-bottom: none;
-}
-
-/* line-height nới theo cỡ chữ: 14px mà giữ 19px thì phần dưới chữ (g, y, ơ) bị
-   cắt cụt trong ô có overflow. */
-.phieu-nhap.phieu-nhap .luoi-hang .ant-table-thead > tr > th,
-.phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr > td {
-  padding: 1px 5px;
-  font-size: 14px;
-  line-height: 21px;
-}
-
-.phieu-nhap .luoi-hang .ant-table-thead > tr > th {
-  background: #d9d9d9;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-
-.phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon > td,
-.phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon:hover > td {
+/* Tô dòng đang chọn — AG Grid gắn class lên .ag-row, không phải <tr> như antd. */
+.phieu-nhap .khung-luoi-hang .ag-row.dong-dang-chon {
   background: #eaf3fc;
 }
 
-.phieu-nhap.phieu-nhap .luoi-hang .ant-table-tbody > tr.dong-dang-chon > td:first-child {
+/* Vạch xanh đầu dòng đang chọn — cùng dấu hiệu bản antd cũ, chuyển sang .ag-row. */
+.phieu-nhap .khung-luoi-hang .ag-row.dong-dang-chon .ag-cell:first-child {
   box-shadow: inset 3px 0 0 #4a90d9;
-}
-
-.phieu-nhap.phieu-nhap .luoi-hang .ant-input,
-.phieu-nhap.phieu-nhap .luoi-hang .ant-input-number .ant-input-number-input {
-  height: 21px;
-  min-height: 21px;
-  line-height: 19px;
-}
-
-.phieu-nhap.phieu-nhap .luoi-hang .ant-input-number-input {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.phieu-nhap.phieu-nhap .luoi-hang .o-giua .ant-input,
-.phieu-nhap.phieu-nhap .luoi-hang .o-giua .ant-input-number-input {
-  text-align: center;
 }
 
 .phieu-nhap.phieu-nhap .nut-vang  { background: #ffe08a; border-color: #d4b106; }
@@ -224,3 +169,151 @@
 .phieu-nhap.phieu-nhap .nut-xanh  { background: #b7e3c0; border-color: #389e0d; }
 .phieu-nhap.phieu-nhap .nut-hong  { background: #ffc0d9; border-color: #c41d7f; }
 .phieu-nhap .ant-btn[disabled] { opacity: 0.55; }
+
+.phieu-nhap > * {
+  flex: none;
+}
+
+.phieu-nhap > .khung-luoi-hang {
+  flex: 1 1 0;
+}
+
+/* ===== Khối audit (Người lập / Thời gian lập / NV Sửa / Thời gian sửa) =====
+   Thông tin TRA CỨU, không phải ô nhập — dồn sang mép phải như bản VFP để không chen
+   vào luồng mắt của phần đang gõ bên trái.
+
+   NẰM TRONG LUỒNG, dồn phải bằng margin-left:auto. Bản trước dùng position:absolute
+   + top cố định: phải đoán pixel, mà đổi số hàng ở đầu form là khối đè lên hàng khác
+   — lệch hai lần liền (21/08). Trong luồng thì trình duyệt tự xếp, không bao giờ đè.
+
+   margin-top âm để khối nhích lên ngang tầm hai hàng đầu như bản VFP, mà vẫn giữ
+   được tính chất "trong luồng": có đè thì đè vào khoảng trống bên phải, không đè
+   vào chữ. */
+/* Đầu phiếu chia HAI CỘT: trái là các hàng nhập, phải là khối audit.
+   Cột trái co giãn, cột phải rộng vừa nội dung — khối audit không bao giờ đè lên
+   hàng nào (khác position:absolute phải đoán pixel, đã lệch hai lần 21/08) và cũng
+   không chen vào giữa luồng dọc để lại mảng trắng. */
+.phieu-nhap .dau-phieu {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+
+  /* Cột phải cao 5 hàng, cột trái chỉ 2 — khối flex lấy chiều cao cột CAO NHẤT nên
+     hàng "MST KH" ngay dưới bị đẩy tụt xuống, chừa một mảng trắng to.
+     Chốt chiều cao theo CỘT TRÁI rồi cho cột phải tràn ra ngoài (nó nằm ở vùng bên
+     phải vốn trống, không đè lên gì). */
+  height: 52px;
+}
+
+.phieu-nhap .dau-phieu__trai {
+  /* 1 1 0 chứ không 1 1 auto: "auto" lấy chiều rộng nội dung làm mốc, mà nội dung
+     bên trái dài hơn chỗ có nên nó đẩy khối audit tràn khỏi mép phiếu (bị cắt cụt).
+     Lấy 0 làm mốc thì hai cột chia phần còn lại đúng phần. */
+  flex: 1 1 0;
+  min-width: 0;
+
+}
+
+.phieu-nhap .khoi-audit {
+  /* flex-shrink 0 để cột trái KHÔNG lấn sang: hai hàng đầu bên trái dài hơn chỗ có
+     nên nếu cho co thì khối audit bị bóp và ô ngày giờ cụt mất mấy chữ số cuối.
+     margin-left:auto dồn nó sát mép phải, chỗ thừa dồn vào giữa hai cột. */
+  flex: 0 0 auto;
+  width: max-content;
+  margin-left: auto;
+}
+
+/* Cột phải cao hơn khung .dau-phieu (đã chốt 52px) — cho nó tràn xuống thay vì bị
+   cắt. Vùng bên phải dưới đó vốn trống nên không đè lên hàng nào. */
+.phieu-nhap .dau-phieu,
+.phieu-nhap .khoi-audit {
+  overflow: visible;
+}
+
+/* Nhãn trong khối audit canh PHẢI, sát ô — nhãn dài ngắn khác nhau ("NV Sửa" vs
+   "Thời gian sửa") mà canh trái thì mép ô so le, đọc bị gãy nhịp. */
+.phieu-nhap .khoi-audit .nhan {
+  text-align: right;
+}
+
+/* Màn hẹp: xếp dọc lại, khối audit xuống dưới thay vì bóp nát cột trái. */
+@media (max-width: 1400px) {
+  .phieu-nhap .dau-phieu { flex-wrap: wrap; }
+}
+
+/* Nền xám = chỉ đọc, đúng quy ước đang dùng cho mọi ô readOnly khác trong màn. */
+.phieu-nhap .khoi-audit .ant-input[readonly] {
+  background: #f5f5f5;
+  color: #595959;
+}
+
+/* Bỏ VIỀN quanh ô đang focus trong lưới hàng hoá.
+   AG Grid vẽ viền này để báo ô nào đang chọn, nhưng lưới đã tô cả DÒNG đang chọn
+   (.dong-dang-chon) nên viền ô chỉ thêm đường kẻ lạc giữa bảng — bản VFP gốc cũng
+   chỉ tô dòng, không viền ô.
+   CHỈ bỏ phần vẽ; ô vẫn nhận focus và sửa được như thường.
+
+   PHẢI bám đúng selector của AG Grid 36, không chỉ đặt border-color:
+   bản 36 vẽ ô focus bằng
+     .ag-cell-focus:not(.ag-cell-range-selected):focus-within {
+        border: 1px solid; border-color: var(--ag-range-selection-border-color) }
+   và với cột GHIM còn đè thêm border-left/right: var(--ag-pinned-column-border).
+   Chỉ ghi border-color thì hai đường ghim kia vẫn còn — đúng hai vạch dọc nhìn
+   thấy hai bên dòng hàng hoá khi bấm vào (gặp thật trên màn Hoá đơn đầu vào).
+   Vì vậy phải tắt CẢ border lẫn box-shadow, và đủ cả biến của cột ghim. */
+.phieu-nhap .khung-luoi-hang .ag-cell-focus,
+.phieu-nhap .khung-luoi-hang .ag-cell.ag-cell-focus:not(.ag-cell-inline-editing),
+.phieu-nhap .khung-luoi-hang .ag-has-focus .ag-cell-focus:not(.ag-cell-inline-editing),
+.phieu-nhap .khung-luoi-hang
+  .ag-cell-focus:not(.ag-cell-range-selected):not(.ag-cell-inline-editing):focus-within,
+.phieu-nhap .khung-luoi-hang
+  .ag-cell-range-single-cell:not(.ag-cell-inline-editing) {
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Chốt hạ: vô hiệu luôn BIẾN màu mà AG Grid dùng để vẽ viền ô focus/range.
+   Selector ở trên bám theo cấu trúc nội bộ của bản 36 nên có thể lệch khi nâng cấp;
+   đặt biến về transparent thì mọi đường vẽ dùng biến này đều tắt, kể cả selector mới.
+   An toàn vì chỉ áp trong .khung-luoi-hang — lưới khác trên màn không ảnh hưởng. */
+.phieu-nhap .khung-luoi-hang {
+  --ag-range-selection-border-color: transparent;
+  --ag-range-selection-border-style: none;
+}
+
+/* Cột GHIM: hai dòng trên của AG Grid đặt riêng border-left / border-right bằng
+   biến --ag-pinned-column-border, không đi qua border-color ở trên. */
+.phieu-nhap .khung-luoi-hang
+  .ag-cell-focus:not(.ag-cell-range-selected):not(.ag-cell-inline-editing):focus-within {
+  border-left-color: transparent !important;
+  border-right-color: transparent !important;
+}
+
+/* Lúc ĐANG SỬA thì giữ viền: đó là lúc người dùng cần biết chính xác đang gõ vào ô
+   nào, khác hẳn lúc chỉ di chuyển qua lại. */
+.phieu-nhap .khung-luoi-hang .ag-cell-inline-editing {
+  /* border-STYLE phải ghi lại: khối trên đặt --ag-range-selection-border-style: none,
+     mà style:none thì border-color không vẽ ra gì cả. */
+  border: 1px solid #1677ff !important;
+}
+
+/* Dòng nhắc trên cụm định khoản CK khi hóa đơn chưa có tiền chiết khấu.
+   Nói rõ CÁCH MỞ ngay tại chỗ — bốn ô xám mà không giải thích thì người dùng tưởng
+   hỏng, đi tìm khắp form xem thiếu gì. */
+.phieu-nhap .nhac-ck {
+  font-size: 12px;
+  color: #8c8c8c;
+  line-height: 1.5;
+  padding: 2px 0 4px;
+}
+
+/* Hàng hai ô tích IN, đứng đầu cột phải. Dồn phải cho thẳng mép với bốn ô audit
+   bên dưới; nowrap để "Chỉ in một trang" không bị bẻ đôi khi cột hẹp. */
+.phieu-nhap .khoi-audit .hang-in {
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}

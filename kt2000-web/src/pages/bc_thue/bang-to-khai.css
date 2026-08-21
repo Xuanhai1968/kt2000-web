@@ -282,8 +282,6 @@
 }
 
 .o-gt.o-sua:focus-within {
-  /* Không viền, không gạch chân: ô bảng đã có lưới đen của tờ khai. Dấu hiệu
-     đang gõ chỉ là nền đậm hơn + con trỏ nháy + số bôi xanh khi bấm vào. */
   background: #e0efff;
 }
 
@@ -294,10 +292,6 @@
 .o-gt.o-sua .ant-input-number-focused {
   width: 100%;
   background: transparent;
-  /* Ô bảng đã có viền lưới của tờ khai — để AntD vẽ thêm viền/bo góc nữa thì
-     thành hai khung lồng nhau. Phải kê cả :hover/:focus/-focused vì AntD vẽ
-     lại viền + box-shadow ở từng trạng thái đó, bỏ mỗi trạng thái thường
-     thì bấm vào là viền xanh hiện lại. */
   border: none;
   border-radius: 0;
   box-shadow: none;
@@ -350,7 +344,6 @@
 .ntk-ten { color: #595959; font-weight: 400; }
 .ntk-ky { color: #8c8c8c; font-weight: 400; }
 
-/* In ra giấy: ô nhập trở lại như ô thường — không viền màu, không nền */
 @media print {
   .o-gt.o-sua,
   .o-gt.o-tinh {
@@ -443,8 +436,6 @@
   background: #fff1f0;
 }
 
-/* Cảnh báo khi đọc kho tờ khai hải quan: file trống, trùng số tờ khai, trùng kỳ trước.
-   Không phải lỗi chặn — kế toán đọc để biết vì sao tổng khác số file trong thư mục. */
 .hq-canhbao {
   margin: 6px 0 0;
   padding-left: 20px;
@@ -453,3 +444,30 @@
 }
 
 .hq-canhbao li { margin: 2px 0; }
+
+/* Số và mã hóa đơn trong câu cảnh báo — xem toSo() ở BangToKhai.tsx.
+   Câu cảnh báo dài hai ba dòng, thứ cần bắt bằng mắt chỉ là con số lệch và mã hóa
+   đơn thủ phạm; để chữ đều tăm tắp thì phải đọc lại cả câu mới nhặt ra được. */
+.cb-so {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: #fff1f0;
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+/* Mã hóa đơn tô khác màu số tiền: hai thứ đứng cạnh nhau trong cùng một câu
+   ("C26THD/0008262 lệch 414,979đ"), cùng màu thì lại dính thành một khối. */
+.cb-ma {
+  font-weight: 700;
+  color: #0958d9;
+  background: #e6f4ff;
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+/* Trong khối "Điểm cần lưu ý" (vàng) thì nền đỏ của .cb-so chọi với nền vàng —
+   đổi sang tông trung tính. */
+.ant-alert-warning .cb-so {
+  background: #fff7e6;
+}

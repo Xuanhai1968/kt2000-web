@@ -193,7 +193,12 @@ export default function DanhSachHoaDon({
         tthaiHd: g.tthaiGoc, vat: null, vatLine: null,
         tichChatHdLienquan: null, loaiHdLienquan: null, mauSoHdLienquan: null,
         khhdLienquan: null, sohdLienquan: null, ngayLienquan: null,
-        trangThaiHdLienQuan: null, lines: [],
+        trangThaiHdLienQuan: null,
+        // Dòng chỉ có ở cổng, chưa lên sổ — chưa có vết audit nào.
+        createdBy: null, createdAt: null, updatedBy: null, updatedAt: null,
+        // Dòng chỉ có ở cổng, chưa lên sổ -> chưa có giá vốn.
+        tongGiaVon: 0,
+        lines: [],
       }));
   }, [goc, dsHd, soSanh, laDauRa]);
 
@@ -477,7 +482,6 @@ export default function DanhSachHoaDon({
       onOk: async () => {
         setDangXuLy(true);
         try {
-          // Tháng KT là kỳ kê khai — đúng trục mà tờ khai dùng.
           const ky = thangKT !== "all" ? thangKT
                    : thang !== "all" ? thang : null;
           if (ky == null) {
@@ -501,8 +505,7 @@ export default function DanhSachHoaDon({
     setSttDangSua(theoLo ? null : d.sttLine);
     setODkMo(o);
     setDkTam({ ghiNo: d.ghiNo ?? "", ghiCo: d.ghiCo ?? "" });
-    // Chỉ nạp ô tìm của ô ĐƯỢC BẤM: ô kia vẫn hiện nhãn đầy đủ "156 — Hàng hoá",
-    // nạp cả hai thì ô không có con trỏ lại trơ ra mỗi con số cụt.
+
     setOTim({ ghiNo: o === "ghiNo" ? (d.ghiNo ?? "") : "",
               ghiCo: o === "ghiCo" ? (d.ghiCo ?? "") : "" });
     setDaGo({});
@@ -519,8 +522,6 @@ export default function DanhSachHoaDon({
     setSttDangSua(null);
     setODkMo("ghiNo");
     setDkTam({ ghiNo: dau?.ghiNo ?? "", ghiCo: dau?.ghiCo ?? "" });
-    // Áp cả lô thì để ô tìm trống: lô có thể đang nhiều TK khác nhau, đổ sẵn mã của
-    // dòng đầu vào ô tìm dễ khiến người dùng tưởng cả lô đang là mã đó.
     setOTim({ ghiNo: "", ghiCo: "" });
     setDaGo({});
     setMoSuaDk(true);
@@ -692,10 +693,14 @@ export default function DanhSachHoaDon({
         valueFormatter: (p) => (p.value == null ? "—" : soVn(p.value)) },
     ] as ColDef<HoaDonThue>[])),
     { colId: "maTv", headerName: "Thương vụ", field: "maTv", width: 90 },
-    { colId: "tongTien", headerName: "Tổng G.Vốn", field: "tongTien", width: 130,
-      type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
-    { colId: "loLai", headerName: "Lỗ - Lãi", width: 90, type: "numericColumn",
-      valueGetter: () => 0, valueFormatter: (p) => soVn(p.value ?? 0) },
+    // { colId: "tongGiaVon", headerName: "Tổng G.Vốn", field: "tongGiaVon", width: 130,
+    //   type: "numericColumn", valueFormatter: (p) => soVn(p.value ?? 0) },
+    { colId: "loLai", headerName: "Lỗ - Lãi", width: 110, type: "numericColumn",
+      valueGetter: (p) => (p.data && p.data.tongGiaVon > 0
+        ? p.data.tienHang - p.data.tongGiaVon : null),
+      valueFormatter: (p) => (p.value == null ? "—" : soVn(p.value)),
+      cellStyle: (p) => (typeof p.value === "number" && p.value < 0
+        ? { color: "#cf1322" } : undefined) },
           { colId: "ngayLienquan", headerName: "Ngày HĐLQ", width: 84,
       valueGetter: (p) => ngayNgan(p.data?.ngayLienquan ?? null) },
     { colId: "sohdLienquan", headerName: "Số HĐLQ", field: "sohdLienquan", width: 90 },

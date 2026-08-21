@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card, Table, Button, InputNumber, Space, Tag, message, Alert } from "antd";
-import { getAdminTenants, openFiscalYears, loiApi } from "../api";
+import { getAdminTenants, openFiscalYears, taoBangLuong, loiApi } from "../api";
 import type { AdminTenant, OpenYearResult } from "../api";
 import { useAuth } from "../AuthContext";
 import { mauDonVi, damDonVi } from "../theme/donViColors";
@@ -16,6 +16,7 @@ export default function MoNamLamViec() {
     const [selected, setSelected] = useState<React.Key[]>([]);
     const [year, setYear] = useState<number>(new Date().getFullYear());
     const [running, setRunning] = useState(false);
+    const [dangTaoBang, setDangTaoBang] = useState(false);
     const [results, setResults] = useState<OpenYearResult[]>([]);
 
     // QT-02: màn này là chỗ DUY NHẤT cần thấy MDN_NB — mở năm cho chính tenant quản lý
@@ -44,6 +45,33 @@ export default function MoNamLamViec() {
         }
     };
 
+    // Dựng bảng module Hợp đồng + Lương cho các đơn vị đang tích, ở ĐÚNG năm đang gõ
+    // trong ô bên trái. Việc riêng, không gộp vào nút Mở năm: phần lớn khách chỉ thuê
+    // làm kế toán thuế, dựng sẵn 4 bảng rỗng cho mọi đơn vị là rác.
+    const taoBang = async () => {
+        setDangTaoBang(true);
+        try {
+            const r = await taoBangLuong(year, selected as string[]);
+            setResults(r.data);
+            const ok = r.data.filter((x) => x.status === "ok").length;
+            const skip = r.data.filter((x) => x.status === "skip").length;
+            const err = r.data.filter((x) => x.status === "error").length;
+            if (err > 0)
+                message.error(
+                    `Xong: ${ok} tạo mới, ${skip} bỏ qua, ${err} LỖI, xem bảng dưới`);
+            else if (ok === 0)
+                message.warning(`Không tạo mới — cả ${skip} đơn vị đều đã có bảng`);
+            else
+                message.success(
+                    `Đã tạo bảng Hợp đồng + Lương cho ${ok} đơn vị năm ${year}`
+                    + (skip > 0 ? ` (${skip} đã có từ trước)` : ""));
+        } catch (e) {
+            message.error(loiApi(e, "Lỗi khi tạo bảng Hợp đồng + Lương"));
+        } finally {
+            setDangTaoBang(false);
+        }
+    };
+
   const colorOf = (s: string) => (s === "ok" ? "green" : s === "skip" ? "orange" : "red");
 
   return (
@@ -60,6 +88,17 @@ export default function MoNamLamViec() {
                 disabled={!laAdmin || selected.length === 0} onClick={run}
                 title={laAdmin ? undefined : "Chỉ quản trị viên được mở năm làm việc mới"}>
           Mở năm {year} cho {selected.length} đơn vị
+        </Button>
+
+        <Button loading={dangTaoBang}
+                disabled={!laAdmin || selected.length === 0} onClick={taoBang}
+                title={laAdmin
+                  ? "Dựng 4 bảng NHAN_SU / HOP_DONG / CHAM_CONG / BANG_LUONG vào"
+                    + ` database năm ${year} của các đơn vị đang tích.`
+                    + "\nPhải Mở năm trước. Đơn vị chưa tạo bảng sẽ không hiện ở màn"
+                    + " Hợp đồng lao động."
+                  : "Chỉ quản trị viên được tạo bảng"}>
+          Tạo bảng Hợp đồng + Lương
         </Button>
       </Space>
       <Table

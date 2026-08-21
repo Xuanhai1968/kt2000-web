@@ -117,6 +117,23 @@ namespace KT2000.Api.Controllers
                 return StatusCode(403, new { message = "Chỉ quản trị viên được mở năm làm việc mới" });
             return Ok(await _admin.OpenYears(req, CurrentLoginName()));
         }
+
+        // POST api/admin/tao-bang-luong — Dựng bảng module Hợp đồng + Lương (script
+        // 025 + 026) cho các đơn vị đã tích, ở đúng năm đang gõ trên màn Mở năm.
+        //
+        // Cùng hàng rào quyền với mở năm: đây cũng là lệnh DDL trên database khách.
+        [HttpPost("tao-bang-luong")]
+        public async Task<IActionResult> TaoBangLuong([FromBody] OpenYearsRequest req)
+        {
+            if (!IsInternal())
+                return StatusCode(403, new
+                { message = "Chức năng này chỉ dành cho phiên đăng nhập nội bộ" });
+            if (!IsAdminUser())
+                return StatusCode(403, new
+                { message = "Chỉ quản trị viên được tạo bảng Hợp đồng + Lương" });
+
+            return Ok(await _admin.TaoBangHopDongLuong(req, CurrentLoginName()));
+        }
         // POST api/admin/leftover-files — Mỗi đơn vị còn bao nhiêu file gốc nằm lại raw\
         // (HĐ lệch Σ line vs master, phải xử lý tay) — spec 1.3.3
         [HttpPost("leftover-files")]

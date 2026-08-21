@@ -39,9 +39,6 @@ export default function HdLienQuanKhacKy({ mo, onDong, nam, thang }: Props) {
   const [kq, setKq] = useState<KetQuaLienQuan | null>(null);
   const [dangChay, setDangChay] = useState(false);
 
-  // Đổi kỳ thì bỏ kết quả cũ: giữ lại là người dùng đọc số của kỳ trước mà tưởng
-  // của kỳ đang chọn. Chỉnh state ngay trong render (lối React khuyên khi state
-  // phải bám theo prop) thay vì useEffect — effect gây cascading render.
   const [kyTruoc, setKyTruoc] = useState(`${thang}/${nam}`);
   const kyHienTai = `${thang}/${nam}`;
   if (kyHienTai !== kyTruoc) {

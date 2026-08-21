@@ -249,9 +249,13 @@ export default function BaoCaoThue() {
     };
   }, [tab, bc, tai]);
 
-  const CAO_BANG = "calc(100vh - 300px)";
+  // Chiều cao thân bảng. Trừ đi: header ứng dụng + tiêu đề Card + thanh tab/lọc +
+  // dòng CỘNG ở đáy. Trừ 300px là quá tay — bảng dừng sớm, chừa gần 200px trắng dưới
+  // dòng CỘNG (gặp thật 21/08). Đo lại trên bố cục thật còn 210px.
+  const CAO_BANG = "calc(100vh - 210px)";
 
-  const CAO_BANG_TH = "calc(100vh - 260px)";
+  // Bảng tổng hợp không có dòng CỘNG riêng nên trừ ít hơn một nhịp.
+  const CAO_BANG_TH = "calc(100vh - 175px)";
 
   const thanhTong = (
     <div className="tong-bc-ngoai" ref={oTongRef}>
@@ -372,11 +376,6 @@ export default function BaoCaoThue() {
             columns={COT_RA_SOAT}
             loading={taiCheo}
             pagination={false}
-            // y phải có mặt để antd bật chế độ thân cuộn (không có thì header không
-            // dính khi cuộn), nhưng con số này chỉ là MỒI — CSS .bang-ra-soat-cheo
-            // ghi đè bằng flex để lưới lấp đầy phần thân Card còn lại. Chốt số cứng
-            // ở đây không bao giờ khớp: đổi bố cục phần trên một chút là hoặc thừa
-            // mảng trắng dưới đáy, hoặc cắt cụt giữa dòng.
             scroll={{ x: RONG_RA_SOAT, y: 1 }}
             rowSelection={{
               fixed: "left",

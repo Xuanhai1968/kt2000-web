@@ -31,6 +31,17 @@
         public bool Thue { get; set; }
     }
 
+    /// <summary>
+    /// Một dòng danh mục khách hàng (KT2000_Base.DM_KH) cho ô "Mã CT nợ / Mã CT có".
+    /// Chỉ ba cột cần để chọn và nhận mặt — không đổ cả bảng ra cho nhẹ đường truyền.
+    /// </summary>
+    public class DmKhDto
+    {
+        public string MaKh { get; set; } = "";
+        public string? TenKh { get; set; }
+        public string? Mst { get; set; }
+    }
+
     public class DoiChieuHdDto
     {
 
@@ -97,6 +108,22 @@
         public string? SohdLienquan { get; set; }
         public DateTime? NgayLienquan { get; set; }
         public string? TrangThaiHdLienQuan { get; set; }
+
+        // Bộ tứ audit — luật nhà: mọi bảng nghiệp vụ đều có. Bản VFP hiện chúng ở khối
+        // bên phải form (Người lập / Thời gian lập / NV Sửa / Thời gian sửa); web trước
+        // nay ghi xuống nhưng không đọc lên, nên nhìn màn không biết ai đã sửa hóa đơn.
+        public string? CreatedBy { get; set; }
+        public DateTime? CreatedAt { get; set; }
+        public string? UpdatedBy { get; set; }
+        public DateTime? UpdatedAt { get; set; }
+
+        /// <summary>
+        /// Σ gia_von của HOA_DON_LINE — tiền BỎ RA mua hàng, để tính lỗ lãi.
+        /// KHÁC TongTien (tiền thanh toán): cột "Tổng G.Vốn" trên lưới trước nay lấy
+        /// nhầm TongTien nên luôn bằng doanh thu, khiến cột Lỗ-Lãi vô nghĩa.
+        /// </summary>
+        public decimal TongGiaVon { get; set; }
+
         public List<HoaDonLineDto> Lines { get; set; } = new();
     }
 
@@ -501,5 +528,43 @@
         public bool LechTonDau => TonDau != null && TonDauXml != null
                                && TonDau != TonDauXml;
         public bool LechTonCuoi => Lech != null && Lech != 0;
+    }
+
+    /// <summary>
+    /// Một dòng của BẢNG KÊ gốc (IN_VALUE_LINE) — bản Excel cổng thuế đã chuyển vào DB.
+    /// </summary>
+    public class DongBangKeDto
+    {
+        public string Huong { get; set; } = "";   // VAO | RA
+        public string Khhd { get; set; } = "";
+        public string SoHd { get; set; } = "";
+        public string Mst { get; set; } = "";
+        public string TenKh { get; set; } = "";
+        public DateTime? Ngay { get; set; }
+        public decimal TienHang { get; set; }
+        public decimal TienVat { get; set; }
+
+        /// <summary>false = cổng có liệt kê mà HOA_DON chưa có dòng nào.</summary>
+        public bool CoTrongSo { get; set; }
+    }
+
+    /// <summary>
+    /// Đối chiếu BẢNG KÊ (IN_VALUE) với SỔ (HOA_DON) cho một kỳ, phục vụ màn lập tờ khai.
+    /// CHỈ ĐỂ XEM — không cộng vào chỉ tiêu nào (xem DoiChieuInValue).
+    /// </summary>
+    public class DoiChieuBangKeDto
+    {
+        public int Thang { get; set; }
+
+        /// <summary>Database chưa có IN_VALUE (đời đầu) — màn ẩn khối đối chiếu đi.</summary>
+        public bool ChuaCoBang { get; set; }
+
+        public decimal BangKeVao { get; set; }
+        public decimal BangKeVatVao { get; set; }
+        public decimal BangKeRa { get; set; }
+        public decimal BangKeVatRa { get; set; }
+
+        /// <summary>Hóa đơn có ở bảng kê mà CHƯA lên sổ — phần tờ khai đang thiếu.</summary>
+        public List<DongBangKeDto> ChuaLenSo { get; set; } = new();
     }
 }

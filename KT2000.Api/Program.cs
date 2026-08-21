@@ -34,13 +34,20 @@ builder.Services.AddSingleton<TenantDbResolver>();
 builder.Services.AddSingleton<VaCauTrucService>();
 builder.Services.AddScoped<AdminService>();
 builder.Services.AddScoped<DanhMucService>();  // DM_KH / DM_HANG trong KT2000_Base
-builder.Services.AddScoped<DoiChieuService>();  // bản gốc TCT: IN_VALUE / IN_VALUE_LINE
+builder.Services.AddScoped<DoiChieuService>();
+// Đối chiếu bảng kê gốc (IN_VALUE) với sổ khi lập tờ khai — CHỈ ĐỌC.
+builder.Services.AddScoped<DoiChieuInValue>();  // bản gốc TCT: IN_VALUE / IN_VALUE_LINE
 builder.Services.AddScoped<ImportService>();
 builder.Services.AddScoped<NoiBoService>();   // phần nội bộ: danh mục + phiếu xuất/nhập
 builder.Services.AddScoped<ThueService>();    // sổ thuế: đọc HOA_DON của đơn vị đang đăng nhập
+builder.Services.AddScoped<HopDongService>();  // nhân sự + HĐLĐ trong DB đơn vị-năm
+builder.Services.AddScoped<ChamCongService>();  // chấm công + bảng lương, cùng DB đơn vị-năm
+builder.Services.AddScoped<ExcelLuongService>();  // nhập chấm công/lương từ file Excel
 builder.Services.AddScoped<RaSoatService>();  // đối chiếu file vs sổ trước khi khai thuế — CHỈ ĐỌC
 builder.Services.AddScoped<ToKhaiService>();  // lập tờ khai 01/GTGT — CHỈ ĐỌC
-builder.Services.AddScoped<ToKhaiHaiQuanService>();  // đọc thuế GTGT hàng nhập khẩu ([23a]/[24a]) — CHỈ ĐỌC
+builder.Services.AddScoped<ToKhaiHaiQuanService>();
+// Ghi tổng tờ khai hải quan vào sổ — CÓ CỜ, mặc định TẮT (HaiQuan:GhiVaoSo).
+builder.Services.AddScoped<HaiQuanVaoSo>();  // đọc thuế GTGT hàng nhập khẩu ([23a]/[24a]) — CHỈ ĐỌC
 // Viên gạch tồn kho dùng chung (SPEC-BAO-CAO-TON-KHO mục 3) — CHỈ ĐỌC, BR-BC-01.
 // Mọi module cần số tồn kho gọi qua đây, không module nào tự viết lại công thức.
 builder.Services.AddScoped<TonKhoService>();

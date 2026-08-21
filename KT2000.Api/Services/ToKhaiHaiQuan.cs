@@ -49,6 +49,12 @@ namespace KT2000.Api.Services
             public decimal TongTienThue { get; set; } // gợi ý cho [24a]
             public List<DongThueHq> Dong { get; set; } = new();
             public List<string> CanhBao { get; set; } = new();
+
+            /// <summary>Mã hóa đơn dòng tổng nếu kỳ này được ghi vào sổ.</summary>
+            public string? MaHdTrongSo { get; set; }
+
+            /// <summary>Cờ HaiQuan:GhiVaoSo — frontend ẩn/hiện nút "Ghi vào sổ".</summary>
+            public bool ChoGhiVaoSo { get; set; }
         }
 
         public static string DuongDanHaiQuan(string goc, string code, int nam)

@@ -22,12 +22,18 @@ namespace KT2000.Api.Controllers
         private readonly ImportService _import;
         private readonly IMemoryCache _cache;
         private readonly ToKhaiHaiQuanService _hqan;
+        private readonly DanhMucService _danhMuc;
+        private readonly DoiChieuInValue _dcBangKe;
+        private readonly HaiQuanVaoSo _hqVaoSo;
         public ThueController(ThueService thue, RaSoatService raSoat, ToKhaiService toKhai,
                               IConfiguration config, AppDbContext db, ImportService import,
                               BangToKhaiService bangToKhai,
                               IMemoryCache cache,
                                GhiChuHdLienQuan ghiChuLq,
-                               ToKhaiHaiQuanService hqan
+                               ToKhaiHaiQuanService hqan,
+                               DanhMucService danhMuc,
+                               DoiChieuInValue dcBangKe,
+                               HaiQuanVaoSo hqVaoSo
                               )
         {
             _thue = thue;
@@ -40,6 +46,9 @@ namespace KT2000.Api.Controllers
             _import = import;
             _cache = cache;
             _hqan = hqan;
+            _danhMuc = danhMuc;
+            _dcBangKe = dcBangKe;
+            _hqVaoSo = hqVaoSo;
         }
 
         private async Task<string?> MstDonVi()
@@ -365,6 +374,36 @@ namespace KT2000.Api.Controllers
         /// bqTruoc=false để TẮT việc loại tờ khai đã tính ở kỳ trước — chỉ dùng khi cần
         /// nhìn nguyên trạng thư mục, không nên dùng để lấy số vào tờ khai.
         /// </remarks>
+        /// <summary>
+        /// Đối chiếu BẢNG KÊ gốc (IN_VALUE / IN_VALUE_LINE — file Excel của cổng đã
+        /// chuyển vào DB) với SỔ (HOA_DON) cho kỳ đang lập tờ khai.
+        /// </summary>
+        /// <remarks>
+        /// CHỈ ĐỌC, KHÔNG tự cộng vào chỉ tiêu — cùng luật với /tk-hai-quan: kế toán
+        /// nhìn phần chênh rồi tự quyết nạp nốt hóa đơn hay bỏ qua.
+        ///
+        /// Vì sao cần: tờ khai lập tự động chỉ tính từ HOA_DON, nên hóa đơn nào cổng có
+        /// mà sổ chưa có (XML tải hỏng, hoặc bị đá ra vì lệch Σ) thì tờ khai thiếu đúng
+        /// phần đó mà không có gì báo.
+        /// </remarks>
+        [HttpGet("doi-chieu-bang-ke")]
+        public async Task<IActionResult> DoiChieuBangKe(
+            [FromQuery] string? ma, [FromQuery] int thang, [FromQuery] int? nam)
+        {
+            var code = await DonViThaoTac(ma);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {ma}" });
+            if (thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
+
+            var year = nam ?? FiscalYear();
+            var khaiQuy = await _db.Tenants.AsNoTracking()
+                .Where(t => t.Code == code).Select(t => t.KhaiQuy).FirstOrDefaultAsync();
+
+            try { return Ok(await _dcBangKe.SoVoiSo(code, year, thang, khaiQuy)); }
+            catch (SoChuaMoException ex) { return Conflict(new { message = ex.Message }); }
+        }
+
         [HttpGet("tk-hai-quan")]
         public async Task<IActionResult> TkHaiQuan(
             [FromQuery] string? ma, [FromQuery] int thang, [FromQuery] int? nam,
@@ -383,7 +422,61 @@ namespace KT2000.Api.Controllers
             var daDung = bqTruoc ? _hqan.SoToKhaiTruocKy(code, year, thang) : null;
 
             var kq = _hqan.DocKy(code, year, thang, daDung);
+
+            // Cho frontend biết kỳ này đã vào sổ chưa, để đổi nhãn nút.
+            kq.MaHdTrongSo = HaiQuanVaoSo.MaHdCuaKy(code, year, thang);
+            kq.ChoGhiVaoSo = _hqVaoSo.DuocGhi;
             return Ok(kq);
+        }
+
+        /// <summary>
+        /// POST — GHI tổng tờ khai hải quan của kỳ vào sổ (HOA_DON + HOA_DON_LINE).
+        /// </summary>
+        /// <remarks>
+        /// Tách khỏi GET /tk-hai-quan có chủ ý: GET chỉ được đọc. Gộp vào thì mỗi lần
+        /// mở màn xem là ghi thêm một lần, mà trình duyệt còn tự gọi lại GET khi nạp
+        /// trang — đúng cách để số nhân đôi.
+        ///
+        /// CHỐNG TRÙNG: một kỳ MỘT ma_hd (VAO_HQ_{mã}_{tháng}_{năm}). Bấm lại lần hai
+        /// thì mã đã tồn tại, không ghi thêm — xem HaiQuanVaoSo.
+        ///
+        /// Có CỜ, mặc định TẮT: HaiQuan:GhiVaoSo trong appsettings.
+        /// </remarks>
+        [HttpPost("tk-hai-quan/vao-so")]
+        public async Task<IActionResult> TkHaiQuanVaoSo(
+            [FromQuery] string? ma, [FromQuery] int thang, [FromQuery] int? nam)
+        {
+            var code = await DonViThaoTac(ma);
+            if (code == null)
+                return NotFound(new { message = $"Không có đơn vị khai thuế mã {ma}" });
+            if (thang is < 1 or > 12)
+                return BadRequest(new { message = "Kỳ kê khai phải trong khoảng tháng 1..12" });
+
+            if (!_hqVaoSo.DuocGhi)
+                return BadRequest(new
+                {
+                    message = "Chức năng ghi tờ khai hải quan vào sổ đang TẮT. "
+                            + "Bật HaiQuan:GhiVaoSo trong appsettings rồi khởi động lại API.",
+                });
+
+            var year = nam is >= 2000 and <= 2100 ? nam.Value : FiscalYear();
+
+            // Đọc lại từ file rồi mới ghi — KHÔNG nhận số do frontend gửi lên:
+            // số tiền vào sổ phải là số đọc được từ file thật, không phải số ai đó
+            // sửa được trên đường truyền.
+            var daDung = _hqan.SoToKhaiTruocKy(code, year, thang);
+            var hq = _hqan.DocKy(code, year, thang, daDung);
+
+            try
+            {
+                var kq = await _hqVaoSo.Ghi(code, year, thang, hq, CurrentUser());
+                return Ok(kq);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new
+                { message = $"Không ghi được vào sổ: {ex.Message}" });
+            }
         }
 
         /// <summary>
@@ -1431,6 +1524,24 @@ namespace KT2000.Api.Controllers
                 return await _thue.LayDanhMucTaiKhoan();
             });
             return Ok(ds ?? new List<Models.DmTkDto>());
+        }
+
+        /// <summary>
+        /// Danh mục khách hàng (KT2000_Base.DM_KH) cho ô "Mã CT nợ / Mã CT có".
+        /// Cache 10 phút như tk-hd: danh mục dùng chung, đổi rất thưa.
+        /// </summary>
+        [HttpGet("kh-hd")]
+        public async Task<IActionResult> DanhMucKhachHang()
+        {
+            // MemoryCache của dự án khai SizeLimit nên MỌI entry BẮT BUỘC phải gán Size
+            // — thiếu là ném InvalidOperationException ngay lúc ghi cache.
+            var ds = await _cache.GetOrCreateAsync("dm_kh", async muc =>
+            {
+                muc.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10);
+                muc.Size = 1;
+                return await _danhMuc.LayDanhSachKhachHang();
+            });
+            return Ok(ds ?? new List<Models.DmKhDto>());
         }
 
         [HttpPost("xu-ly-tt-dc")]

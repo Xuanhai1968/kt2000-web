@@ -1,0 +1,471 @@
+/* Màn Hợp đồng lao động — bám theo lối bố cục của Báo cáo thuế (Card + Table cuộn
+   trong thân), để hai màn cùng một nhịp thao tác. */
+
+/* Trang chính KHÔNG ép flex/height: lưới đơn vị chỉ vài chục dòng, để Card tự cao
+   theo nội dung. Ép flex ở đây là thân bảng bị co về 0 — lưới trắng dù có dữ liệu. */
+.hop-dong .ant-card-body {
+  min-height: 200px;
+}
+
+.hop-dong .hd-nhan {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.hop-dong .hd-ten-dv,
+.hd-ten-dv {
+  font-weight: 400;
+  color: #595959;
+}
+
+.hop-dong .hd-dem {
+  font-weight: 400;
+  font-size: 13px;
+  color: #8c8c8c;
+}
+
+/* "không thời hạn" ở cột Đến ngày — chữ nhạt để không đọc nhầm thành một ngày cụ thể */
+.hd-mo {
+  color: #8c8c8c;
+  font-style: italic;
+  font-size: 12px;
+}
+
+/* ----- Lưới TRONG MODAL: header dính khi cuộn, thân lấp đầy phần còn lại -----
+   scroll.y trên Table chỉ là MỒI để antd bật chế độ thân cuộn; chốt số cứng thì
+   đổi bố cục phần trên một chút là hoặc thừa mảng trắng, hoặc cắt cụt giữa dòng.
+   Cùng cách .bang-ra-soat-cheo của Báo cáo thuế đang làm.
+
+   CHỈ áp trong .hd-modal — lưới đơn vị ở trang chính KHÔNG dùng chuỗi flex này (nó
+   để antd tự cao theo nội dung), ép flex vào đó là thân bảng co về 0 và lưới trắng
+   trơn dù dữ liệu đã về đủ. */
+.hd-modal .hd-bang {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* .ant-spin PHẢI có trong chuỗi (antd v6): Spin bản 6 bỏ vỏ .ant-spin-nested-loading,
+   giờ nó render thẳng .ant-spin > .ant-spin-container. Thiếu .ant-spin là ĐỨT một mắt
+   giữa .ant-table-wrapper và .ant-table-container — đúng cái bẫy ghi ở đầu file: thân
+   bảng co về 0, lưới TRẮNG TRƠN dù dữ liệu đã về đủ (đếm "24/24 người" vẫn đúng).
+   Giữ .ant-spin-nested-loading để còn chạy đúng nếu hạ lại antd v5. */
+.hd-modal .hd-bang .ant-spin-nested-loading,
+.hd-modal .hd-bang .ant-spin,
+.hd-modal .hd-bang .ant-spin-container,
+.hd-modal .hd-bang .ant-table-wrapper,
+.hd-modal .hd-bang .ant-table,
+.hd-modal .hd-bang .ant-table-container {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header PHẢI giữ nguyên chiều cao. Thiếu dòng này thì trong chuỗi flex ở trên nó bị
+   co lại cùng thân, và khi bảng có scroll.x (antd tách header/body thành hai khối
+   riêng) thì cả hai cùng về 0 — lưới trắng trơn dù dữ liệu đã về đủ. */
+.hd-modal .hd-bang .ant-table-header {
+  flex: none;
+}
+
+/* PHẢI có height:0 chứ không chỉ flex:1.
+   scroll={{ y: 1 }} khiến antd ghi thẳng `max-height:1px` vào style của thẻ này. Bỏ
+   max-height thôi thì chưa đủ: trong flex column, một khối KHÔNG khai height sẽ lấy
+   chiều cao nội dung làm mốc rồi mới co giãn, mà nội dung ở đây là <table> — nên nó
+   đứng nguyên cỡ vài dòng dù còn thừa cả màn hình (gặp thật 21/08: modal full màn
+   nhưng bảng chỉ cao 3 dòng).
+   Đặt height:0 rồi để flex-grow kéo lên là cách chuỗi flex tính đúng phần còn lại. */
+/* Chiều cao thân bảng do scroll.y của Table quyết định (xem CHIEU_CAO_BANG trong
+   từng màn), KHÔNG ép ở đây.
+   Đã thử hai lối và cả hai đều hỏng (21/08):
+     • nối chuỗi flex xuống .ant-table-body -> rc-table còn lớp bọc trung gian, đứt
+       một mắt là thân bảng về 0;
+     • ép height cứng bằng CSS -> hộp to ra nhưng antd vẫn ĐO theo scroll.y=1 nên nó
+       chỉ dựng đúng phần dòng vừa 1px, bảng trắng trơn dù dữ liệu đã về đủ.
+   Đưa số thật vào scroll.y là cách duy nhất antd hiểu, vì chính nó dùng số đó để
+   tính bao nhiêu dòng cần dựng. */
+.hd-bang .ant-table-thead > tr > th {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hd-bang .ant-table-tbody > tr {
+  cursor: default;
+}
+
+.hd-bang .ant-table-tbody > tr:hover {
+  cursor: pointer;
+}
+
+/* ----- Thân modal: thanh công cụ giữ nguyên, lưới nuốt phần còn lại ----- */
+.hd-modal {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.hd-modal > .hd-thanh {
+  flex: none;
+  width: 100%;
+}
+
+/* Space của antd bọc mỗi con trong một div, nên flex:1 phải đặt vào chính wrapper
+   đó thì dải nút bên phải mới bị đẩy sang mép — đặt trên <span> con không ăn. */
+.hd-modal > .hd-thanh > .ant-space-item:has(> span[style*="flex"]) {
+  flex: 1 1 auto;
+}
+
+.hd-vung-bang {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ----- Form nhập: hai cột đều nhau, nén sát kiểu VFP ----- */
+.hd-form .hd-luoi-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 12px;
+}
+
+@media (max-width: 1100px) {
+  .hd-form .hd-luoi-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .hd-form .hd-luoi-form { grid-template-columns: minmax(0, 1fr); }
+}
+
+.hd-form .ant-form-item {
+  margin-bottom: 10px;
+}
+
+.hd-form .ant-form-item-label {
+  padding-bottom: 2px;
+}
+
+.hd-form .ant-form-item-label > label {
+  font-size: 13px;
+  height: 20px;
+}
+
+/* ----- Nhóm điều khoản trong form tạo hợp đồng ----- */
+.hd-nhom {
+  border: 1px solid #d9e6f2;
+  border-radius: 3px;
+  padding: 8px 10px 2px;
+  margin-bottom: 10px;
+  background: #fafcff;
+}
+
+.hd-nhom > h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0958d9;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid #e6f0fa;
+  padding-bottom: 3px;
+}
+
+/* Ghi chú giải thích ngay dưới tiêu đề nhóm — tách khỏi lưới form một nhịp */
+.hd-nhom > .ant-typography {
+  display: block;
+  margin-bottom: 8px;
+}
+
+/* ===== BẢNG CHẤM CÔNG ===== */
+
+/* Tiêu đề cột ngày: số ngày trên, thứ dưới — như hàng 6/7 của khuôn Excel */
+.cc-dau-ngay {
+  line-height: 1.15;
+  font-size: 11px;
+}
+
+.cc-dau-ngay > div:last-child {
+  font-weight: 400;
+  color: #8c8c8c;
+  font-size: 10px;
+}
+
+/* Ô nhập ký hiệu: <input> trần thay vì Input của antd — ô lưới chỉ rộng 40px, mà
+   Input antd mang sẵn padding/viền riêng nên bị bóp méo. */
+.cc-o {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: center;
+  font-size: 12px;
+  padding: 0;
+  outline: none;
+}
+
+.cc-o:focus {
+  background: #e6f4ff;
+  outline: 1px solid #1677ff;
+}
+
+/* Cuối tuần tô nền để mắt bắt được nhịp 7 ngày mà không phải đếm */
+.cham-cong .cc-cuoi-tuan {
+  background: #fafafa;
+}
+
+.cham-cong .ant-table-tbody > tr:hover .cc-cuoi-tuan {
+  background: #f0f0f0;
+}
+
+/* Bản in chấm công: 31 cột nên phải nén hết mức */
+.cc-in th, .cc-in td {
+  padding: 2px 1px !important;
+  font-size: 10px;
+}
+
+/* ===== BẢNG THANH TOÁN LƯƠNG ===== */
+
+.bl-thuc-linh {
+  color: #0958d9;
+}
+
+/* Bản nháp chưa ghi vào sổ — nền vàng nhạt để không nhầm với bảng đã lưu */
+.bang-luong .bl-nhap > td {
+  background: #fffbe6;
+}
+
+.bang-luong .bl-cong > td {
+  background: #f0f5ff;
+  border-top: 2px solid #91caff;
+}
+
+/* Đơn vị chưa mở năm làm việc: mờ đi và bỏ con trỏ tay — không có database để vào,
+   khác hẳn đơn vị đã mở mà chưa nhập ai. */
+.hop-dong .hd-chua-mo > td {
+  color: #bfbfbf;
+  background: #fafafa;
+}
+
+.hop-dong .hd-chua-mo:hover > td {
+  cursor: not-allowed;
+}
+
+/* ===== Ô kéo thả file trong modal Nhập Excel =====
+   Cùng khuôn ô thả của màn Báo cáo thuế (to-khai-xml.css .tha-xml) để hai chỗ nhìn
+   giống nhau — kế toán đã quen thả file ở đó. */
+.hd-tha .ant-upload-drag {
+  background: #f7fbfe;
+  border: 1px dashed #91caff;
+  border-radius: 4px;
+  min-height: 260px;
+}
+
+.hd-tha .ant-upload-drag:hover {
+  border-color: #1677ff;
+  background: #eff8ff;
+}
+
+.hd-tha-icon {
+  margin: 0;
+  font-size: 46px;
+  color: #1677ff;
+  line-height: 1.2;
+}
+
+.hd-tha-chu {
+  margin: 10px 0 0;
+  font-size: 15px;
+  color: #262626;
+}
+
+.hd-tha-phu {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: #8c8c8c;
+  line-height: 1.7;
+}
+
+/* ===== Màn Tạo hợp đồng: trái nhập — phải là TỜ HỢP ĐỒNG thật =====
+   Cột phải dùng lại nguyên CSS_HD của bản in (mauInHopDong.ts), nên phần trình bày
+   tờ giấy không khai lại ở đây — chỉ khai cái KHUNG bọc nó. */
+.hd-tao {
+  display: grid;
+  grid-template-columns: minmax(0, 460px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  height: 100%;
+}
+
+/* Hai cột cuộn RIÊNG: form dài hơn tờ giấy (hoặc ngược lại), cuộn chung thì kéo bên
+   này là bên kia trôi mất — đang gõ ô lương mà tờ hợp đồng nhảy khỏi tầm mắt. */
+.hd-tao > .hd-form,
+.hd-tao > .hd-xem {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Trong cột trái hẹp, lưới 3 cột của form bị bóp nát — ép về 1 cột.
+   Đặt SAU khối media của .hd-luoi-form ở trên nên thắng theo thứ tự. */
+.hd-tao .hd-form .hd-luoi-form {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.hd-xem {
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #f5f5f5;
+  display: flex;
+  flex-direction: column;
+}
+
+.hd-xem-dau {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #8c8c8c;
+  background: #fafafa;
+  border-bottom: 1px solid #e5e7eb;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+/* Nền xám + tờ trắng ở giữa: nhìn ra ngay đây là TỜ GIẤY, không phải một khối chữ. */
+.hd-xem-giay {
+  flex: 1;
+  padding: 14px;
+  overflow-x: auto;
+}
+
+.hd-xem-giay > div:last-child {
+  background: #fff;
+  padding: 20px 24px;
+  margin: 0 auto;
+  /* 780px ≈ bề ngang phần chữ của khổ A4 sau khi trừ lề — hẹp hơn thì chữ xuống dòng
+     khác bản in, mà mục đích của khung này là thấy trước ĐÚNG bản in. */
+  max-width: 780px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
+}
+
+.hd-xem-trong {
+  padding: 40px 16px;
+  text-align: center;
+  color: #8c8c8c;
+  font-size: 13px;
+}
+
+/* Màn hẹp: xếp dọc, tờ hợp đồng xuống dưới form. */
+@media (max-width: 1200px) {
+  .hd-tao {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .hd-tao > .hd-form,
+  .hd-tao > .hd-xem { height: auto; overflow: visible; }
+  .hd-xem { min-height: 420px; }
+}
+
+/* ===== Modal bảng: giữ NGUYÊN cỡ, không co theo nội dung =====
+   Alert cảnh báo và thanh nút là con trực tiếp của .hd-modal (flex column). Con nào
+   không khai flex sẽ bị kéo giãn/ép co theo chỗ trống — một Alert hai dòng phình ra
+   chiếm chỗ, đẩy bảng xuống còn một mẩu. Khoá chúng lại, phần còn lại để bảng ăn. */
+.hd-modal > .ant-alert,
+.hd-modal > .ant-space {
+  flex: none;
+}
+
+
+/* ----- Bảng "Kết quả đọc N file" -----
+   Bảng TRẦN, không bọc Alert: Alert thêm viền + nền + icon + hai lớp padding quanh một
+   thứ vốn đã là bảng có viền, thành hai khung lồng nhau chiếm gần nửa màn cho 2 dòng.
+   Ở đây chỉ giữ một viền mảnh + một dòng tiêu đề, phần còn lại để bảng tự lo. */
+.hop-dong .hd-kq-doc {
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.hop-dong .hd-kq-dau {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 4px 10px;
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Nén hàng cho sát kiểu VFP: bảng này là chỗ liếc qua rồi bấm Lưu, không phải chỗ đọc lâu. */
+.hop-dong .hd-kq-doc .ant-table-thead > tr > th,
+.hop-dong .hd-kq-doc .ant-table-tbody > tr > td {
+  padding: 3px 8px;
+  font-size: 12.5px;
+}
+
+.hop-dong .hd-kq-doc .ant-table-thead > tr > th {
+  background: #fff;
+  white-space: nowrap;
+}
+
+/* Đầu bảng kết quả: viền xanh bên trái + nền xanh nhạt để khối này nổi khỏi nền
+   trắng của Card — đây là chỗ phải liếc vào trước khi bấm Lưu. */
+.hop-dong .hd-kq-doc {
+  border-color: #91caff;
+  box-shadow: 0 1px 3px rgba(22, 119, 255, 0.10);
+}
+
+.hop-dong .hd-kq-dau {
+  background: #e6f4ff;
+  border-bottom-color: #91caff;
+  color: #0958d9;
+}
+
+/* STT: chữ nhạt, cỡ nhỏ — chỉ để đếm dòng, không phải dữ liệu cần đọc. */
+.hop-dong .hd-kq-stt {
+  color: #8c8c8c;
+  font-size: 11.5px;
+}
+
+/* Tiêu đề cột đậm hơn mặc định cho tách hẳn khỏi vùng dữ liệu. */
+.hop-dong .hd-kq-doc .ant-table-thead > tr > th {
+  background: #fafcff;
+  font-weight: 700;
+  color: #262626;
+  border-bottom: 1px solid #d6e4ff;
+}
+
+/* Nền theo trạng thái. Dùng box-shadow inset thay vì border-left: border trên <td>
+   của antd bị viền bảng đè mất một phần, inset shadow thì luôn vẽ đủ. */
+.hop-dong .hd-kq-doc .hd-kq-ok > td { background: #f6ffed; }
+.hop-dong .hd-kq-doc .hd-kq-bo > td { background: #fffbe6; }
+.hop-dong .hd-kq-doc .hd-kq-loi > td { background: #fff2f0; }
+
+.hop-dong .hd-kq-doc .hd-kq-ok > td:first-child {
+  box-shadow: inset 3px 0 0 #52c41a;
+}
+.hop-dong .hd-kq-doc .hd-kq-bo > td:first-child {
+  box-shadow: inset 3px 0 0 #faad14;
+}
+.hop-dong .hd-kq-doc .hd-kq-loi > td:first-child {
+  box-shadow: inset 3px 0 0 #ff4d4f;
+}
+
+/* Hover phải ĐẬM HƠN nền trạng thái, nếu không rê chuột vào lại thấy nhạt đi.
+   Phải override cả .ant-table-cell-row-hover — antd v6 tô hover lên chính ô đó. */
+.hop-dong .hd-kq-doc .hd-kq-ok:hover > td,
+.hop-dong .hd-kq-doc .hd-kq-ok > td.ant-table-cell-row-hover { background: #d9f7be; }
+.hop-dong .hd-kq-doc .hd-kq-bo:hover > td,
+.hop-dong .hd-kq-doc .hd-kq-bo > td.ant-table-cell-row-hover { background: #fff1b8; }
+.hop-dong .hd-kq-doc .hd-kq-loi:hover > td,
+.hop-dong .hd-kq-doc .hd-kq-loi > td.ant-table-cell-row-hover { background: #ffccc7; }
+
+/* Số ở cột Dòng là con số chính của bảng — cho to và đậm hơn phần còn lại. */
+.hop-dong .hd-kq-doc .ant-table-tbody > tr > td b {
+  font-size: 13px;
+  color: #0958d9;
+}
