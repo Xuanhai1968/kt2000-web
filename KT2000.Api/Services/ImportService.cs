@@ -192,7 +192,7 @@ namespace KT2000.Api.Services
                         var ngayKy = NgayDaiDienKy(r, M, req.Nam);
                         if (ngayKy != null)
                             dsGoc.Add(DongGocTuExcel(r, M, huong, maHd, ngayKy.Value,
-                                                     TongTienHangTuLine(lines, L)));
+                                                     TongTienHangTuLine(lines, L, N2(r, M, "TIEN_CK", "TIEN_CK_G"), MasterTienHang(r, M))));
                         continue;
                     }
                     if (ngay.Value.Year != req.Nam) { skippedYear++; continue; }  // BR-IMP-01 lớp DÒNG
@@ -201,7 +201,7 @@ namespace KT2000.Api.Services
                     // TRƯỚC mọi phép kiểm. Hóa đơn bị đá ra vì lệch Σ vẫn phải nằm đây —
                     // "cổng có mà sổ chưa có" chính là thứ đối chiếu sinh ra để thấy.
                     dsGoc.Add(DongGocTuExcel(r, M, huong, maHd, ngay.Value,
-                                             TongTienHangTuLine(lines, L)));
+                                             TongTienHangTuLine(lines, L, N2(r, M, "TIEN_CK", "TIEN_CK_G"), MasterTienHang(r, M))));
 
                     // ---- Kiểm Σ line = master: ưu tiên cặp chuẩn hóa, trống thì cặp _G ----
                     // Sai số cho phép DƯỚI 10 đồng. Có lúc nới lên 1.000đ rồi trả về 10đ
@@ -239,9 +239,16 @@ namespace KT2000.Api.Services
                     // rồi chọn theo cặp nào khác 0 — giữ hai lối tính song song là tái lập
                     // đúng cái vênh vừa sửa. Bên master vẫn lùi từ cột chuẩn hóa sang cột _G
                     // vì đó chỉ là hai cách CHÉP cùng một số của cổng.
-                    decimal sumLine   = TongTienHangTuLine(lines, L);
-                    decimal masterVal = N(r, M, "TIEN_HANG");
-                    if (masterVal == 0) masterVal = N(r, M, "TT_HD_G");
+                    // Dựng vùng tạm MỘT LẦN ở đây rồi dùng cho cả phép kiểm Σ lẫn lúc ghi
+                    // (ReplaceLines bên dưới). Đây là toàn bộ lý do có DongHang: hai bên
+                    // đọc CÙNG một mảng đã chuẩn hoá, không thể lệch nhau nữa.
+                    decimal ckHoaDon  = N2(r, M, "TIEN_CK", "TIEN_CK_G");
+                    var dsDong        = DocDong(lines, L);
+                    ChuanHoa(dsDong, ckHoaDon);
+                    // masterVal đọc TRƯỚC sumLine: hoá đơn toàn chiết khấu cần biết dấu
+                    // người bán khai mới quyết được dấu của Σ (xem TongTienHangTuLine).
+                    decimal masterVal = MasterTienHang(r, M);
+                    decimal sumLine   = TongTienHangTuLine(dsDong, ckHoaDon, masterVal);
 
                     // Hóa đơn KHÔNG CHỊU THUẾ: cổng không khai tiền chưa thuế nên cả
                     // TIEN_HANG lẫn TT_HD_G đều rỗng → masterVal = 0, và hóa đơn bị đá ra
@@ -302,7 +309,7 @@ namespace KT2000.Api.Services
                         // lệch còn lại chỉ là sai số làm tròn của người bán. Lệch đúng 0
                         // thì không có gì để mài; lệch từ 10đ trở lên đã bị chặn bên trên
                         // và không bao giờ tới được dòng này.
-                        ReplaceLines(conn, tx, maHd, lines, L, userName,
+                        ReplaceLines(conn, tx, maHd, dsDong, userName,
                                      N2(r, M, "TIEN_VAT", "TVAT_HD_G"), tienHangChuaThue,
                                      coLoaiThue, maiChoKhop: chenh != 0);
                         tx.Commit();
@@ -874,24 +881,209 @@ namespace KT2000.Api.Services
         /// Hóa đơn TC hỗn hợp (vừa hàng vừa chiết khấu) vẫn đảo dấu như cũ — ca C26TMN_14134
         /// và _17159 cùng đơn vị đó chạy đúng, đừng đụng vào.
         /// </remarks>
-        internal static decimal TongTienHangTuLine(List<IXLRow> lines, Dictionary<string,int> L)
+        // ===================== VÙNG TẠM KIỂU CURSOR =====================
+        //
+        // Tương đương DbfHDLine của bản VFP: đọc Excel MỘT LẦN vào đây, chỉnh sửa tại
+        // chỗ, rồi mọi thứ sau đó — phép kiểm Σ lẫn lúc ghi xuống SQL — đều đọc BẢN ĐÃ
+        // CHỈNH. Trước đây hai bên cùng đọc lại IXLRow rồi tự tính lại, nên chỉ cần một
+        // bên quên một luật là "khớp lúc kiểm, sai lúc ghi" (xem ca C26TDM_3647 ở
+        // SoLuongDonGia). Chia sẻ DỮ LIỆU chặt hơn chia sẻ CÔNG THỨC.
+        //
+        // class chứ không record/struct: bốn phép chuẩn hoá dưới đây là UPDATE...SET tại
+        // chỗ. record thì mỗi lượt sửa đẻ một bản sao; struct trong List<T> thì foreach
+        // sửa vào bản sao — code chạy êm mà dữ liệu không đổi, đúng loại lỗi câm tệ nhất.
+        //
+        // ---------------------------------------------------------------------------
+        // GHI CHÚ CHO NGƯỜI RÀ SOÁT — đối chiếu với bản VFP (A13_2026_XML_PROCESS)
+        // ---------------------------------------------------------------------------
+        // Khối này thay cho tám lệnh UPDATE chạy trên cursor DbfHDLine bên VFP. Bảng đối
+        // chiếu từng lệnh, để soát xem có bỏ sót hay làm khác chỗ nào:
+        //
+        //   VFP                                              | Ở ĐÂY
+        //   -------------------------------------------------|---------------------------
+        //   SET CK_LINE=THANH_TIEN, SL=1, DG=0, TT=0,         | ChuanHoa() nhánh TinhChat==3
+        //       DINH_KHOAN="154"  WHERE TCHAT=3               |
+        //   SET CK_LINE=0  WHERE CK_LINE<>0 AND TCHAT=1       | ChuanHoa() nhánh TinhChat==1
+        //   SET TT=0,SL=1,DG=0,DINH_KHOAN="154"               | ChuanHoa() nhánh TinhChat==4
+        //       WHERE TCHAT=4 AND SL=0 AND DG=0               |
+        //   ...WHERE TCHAT=4 AND TEN_HANG_G=="Tổng Tiền Hàng" | cùng nhánh, vế OR thứ hai
+        //   SET DG=TT/SL     WHERE DG=0 AND TT<>0 AND SL<>0   | SoLuongDonGia()
+        //   SET DG=TT,SL=1   WHERE DG=0 AND SL=0 AND TT<>0    | SoLuongDonGia()
+        //   SUM(SO_LUONG*DON_GIA) AS TONG_CT                  | TongSlDg()
+        //   TIEN_CK = Σ CK_LINE nếu <>0 và <> TIEN_CK         | ChietKhauHieuLuc()
+        //   ABS(TONG_CT-TIEN_CK-TIEN_HANG) > 9  -> NOT_USE    | ImportJob, SAI_SO_CHO_PHEP = 10
+        //
+
+        //
+        // BỐN CA THẬT ĐỂ SOÁT LẠI (đã chạy đúng, dùng làm mốc nếu sửa tiếp):
+        //   HOA_SANG  1C26TMV/2392  chiết khấu rải trên dòng TC=1 + có chiết khấu tổng
+        //   NHAT_TUAN 1C26TBN/644   vừa rải trên TC=1 vừa có dòng TC=3 mang tiền
+        //   NHAT_TUAN 1C26TBN/611   rải trên TC=1, dòng TC=3 rỗng
+        //   NHAT_TUAN 1C26TBN/599   TOÀN chiết khấu, người bán khai tiền hàng ÂM
+        //   HOA_SANG  1C26TMN/14708 TOÀN chiết khấu, người bán khai tiền hàng DƯƠNG
+        //
+        // BẤT BIẾN phải giữ:
+        //   • Sau ChuanHoa, mọi dòng TC=3 có DonGia == 0 (nếu không, tiền chiết khấu lọt
+        //     vào Σ(SL×ĐG) và hoá đơn lệch đúng một lần chiết khấu).
+        //   • Phép kiểm Σ ở ImportJob và ReplaceLines phải đọc CÙNG một List<DongHang>.
+        //     Nếu ai đó cho ReplaceLines đọc lại Excel là mất toàn bộ tác dụng của khối này.
+        //   • sumLine ở kt2000-web/src/pages/HoaDonDauVao.tsx phải ra cùng con số với
+        //     TongTienHangTuLine. Đây là tầng thứ ba của cùng một luật và nó ĐÃ từng lệch.
+        // ---------------------------------------------------------------------------
+        internal sealed class DongHang
+        {
+            public int Stt;
+            public string TenHang = "", Dvt = "", MaNgan = "", Huong = "", ThueSuatTho = "";
+            public int TinhChat;                 // LOAI_HH: 1 hàng · 3 chiết khấu · 4 ghi chú
+            public decimal SoLuong, DonGia, ThanhTien, ChietKhau;
+            public bool KhongCoXml;
+            /// <summary>Khác null = ép định khoản (154 cho dòng chiết khấu / ghi chú).</summary>
+            public string? DinhKhoan;
+        }
+
+        // Tên hàng của dòng tổng mà một số cổng chèn vào giữa bảng kê. VFP bắt đúng chuỗi
+        // này (ca Vifon: TChat = 4 nhưng vẫn có SL, ĐG, thành tiền nên phải hủy).
+        private const string TEN_DONG_TONG = "Tổng Tiền Hàng";
+
+        /// <summary>Tài khoản trung tính cho dòng không phải hàng hoá — theo bản VFP.</summary>
+        internal const string TK_KHONG_PHAI_HANG = "154";
+
+        /// <summary>Đọc thô từ Excel vào vùng tạm. CHƯA chỉnh gì.</summary>
+        internal static List<DongHang> DocDong(List<IXLRow> lines, Dictionary<string,int> L)
+            => lines.Select(x => new DongHang
+            {
+                Stt         = I2(x, L, "LINE_NO", "STT_LINE_G"),
+                TenHang     = S2(x, L, "TEN_HANG", "TEN_HANG_G"),
+                Dvt         = S2(x, L, "DVT", "DVT_G"),
+                MaNgan      = S(x, L, "MA_NGAN_G"),
+                Huong       = S(x, L, "HUONG"),
+                ThueSuatTho = S2(x, L, "PT_VAT", "PT_VAT_L").Trim(),
+                TinhChat    = I(x, L, "LOAI_HH"),
+                SoLuong     = N2(x, L, "SO_LUONG", "SO_LUONG_G"),
+                DonGia      = N2(x, L, "DON_GIA",  "DON_GIA_G"),
+                ThanhTien   = N2(x, L, "THANH_TIEN", "TTIEN_LINE"),
+                ChietKhau   = N(x, L, "CK_LINE_G"),
+                KhongCoXml  = S(x, L, "NGUON_DL")
+                                .Equals("EXCEL_NO_XML", StringComparison.OrdinalIgnoreCase),
+            }).ToList();
+
+        /// <summary>
+        /// Bốn phép chuẩn hoá của bản VFP, chạy đúng thứ tự (chốt Trường 21/08).
+        /// </summary>
+        internal static void ChuanHoa(List<DongHang> ds, decimal ckHoaDon)
+        {
+            foreach (var d in ds)
+            {
+                // (1) DÒNG CHIẾT KHẤU — chuyển tiền sang cột chiết khấu rồi ĐẶT ĐƠN GIÁ 0.
+                //
+                // Đặt đơn giá 0 mới là mấu chốt: sau bước này dòng không còn cộng vào
+                // Σ(SL×ĐG) nữa. Bỏ sót đúng bước này nên 556 dòng chiết khấu (2,51 tỷ)
+                // đang nằm trong sổ như hàng hoá mang giá trị dương — đo 21/08.
+                //
+                // Lấy tiền theo BA nguồn thay vì chỉ THANH_TIEN như VFP: đo thật thì 257
+                // dòng ở NHAT_TUAN có tiền nằm ở SL×ĐG còn cột chiết khấu rỗng. Gán thẳng
+                // ChietKhau = ThanhTien ở những dòng đó là xoá trắng khoản chiết khấu.
+                if (d.TinhChat == 3)
+                {
+                    decimal tien = d.ThanhTien != 0 ? d.ThanhTien
+                                 : d.ChietKhau != 0 ? d.ChietKhau
+                                 : d.SoLuong * d.DonGia;
+                    d.ChietKhau = tien;
+                    d.SoLuong = 1m; d.DonGia = 0m; d.ThanhTien = 0m;
+                    d.DinhKhoan = TK_KHONG_PHAI_HANG;
+                }
+                // (2) DÒNG HÀNG HOÁ có chiết khấu riêng — bỏ, để khỏi trừ hai lần với
+                // khoản chiết khấu khai ở mức hoá đơn.
+                //
+                // VFP xoá vô điều kiện. Ở đây thêm điều kiện hoá đơn PHẢI có chiết khấu
+                // tổng: đo 21/08 thì 34/34 ca hiện có Σ chiết khấu dòng bằng đúng chiết
+                // khấu tổng nên kết quả không đổi một đồng, nhưng gặp hoá đơn rải chiết
+                // khấu xuống dòng mà header không khai tổng thì xoá đi là mất tiền thật.
+                else if (d.TinhChat == 1 && d.ChietKhau != 0 && ckHoaDon != 0)
+                {
+                    d.ChietKhau = 0m;
+                }
+                // (3) + (4) DÒNG GHI CHÚ — không phải hàng, hủy số và đóng vào tài khoản
+                // trung tính. Ca Vifon: TChat = 4 mà vẫn có SL/ĐG/thành tiền.
+                else if (d.TinhChat == 4
+                      && (d.SoLuong == 0 && d.DonGia == 0
+                       || d.TenHang.Trim().Equals(TEN_DONG_TONG,
+                                                  StringComparison.OrdinalIgnoreCase)))
+                {
+                    d.ThanhTien = 0m; d.SoLuong = 1m; d.DonGia = 0m;
+                    d.DinhKhoan = TK_KHONG_PHAI_HANG;
+                }
+
+                // Vá SL/ĐG khuyết — làm SAU chuẩn hoá để không hồi sinh dòng vừa hủy.
+                if (d.DinhKhoan == null)
+                    (d.SoLuong, d.DonGia) = SoLuongDonGia(d.SoLuong, d.DonGia, d.ThanhTien);
+            }
+        }
+
+        /// <summary>
+        /// Tiền hàng người bán khai ở mức HOÁ ĐƠN. Lùi từ cột chuẩn hoá sang cột _G —
+        /// hai cột chỉ là hai cách CHÉP cùng một số của cổng.
+        /// MỘT chỗ đọc duy nhất, để phép kiểm Σ và chỗ lấy dấu không bao giờ đọc lệch nhau.
+        /// </summary>
+        private static decimal MasterTienHang(IXLRow r, Dictionary<string,int> M)
+        {
+            decimal v = N(r, M, "TIEN_HANG");
+            return v != 0 ? v : N(r, M, "TT_HD_G");
+        }
+
+        /// <summary>Σ(SL×ĐG) sau chuẩn hoá — làm tròn về đồng ở TỪNG dòng rồi mới cộng.</summary>
+        internal static decimal TongSlDg(List<DongHang> ds)
+            => ds.Sum(d => Math.Round(d.SoLuong * d.DonGia, 0, MidpointRounding.AwayFromZero));
+
+        /// <summary>
+        /// Chiết khấu ĐANG CÓ HIỆU LỰC của hoá đơn. Mặc định lấy số khai ở mức hoá đơn;
+        /// Σ chiết khấu dòng chỉ giành quyền khi nó khác 0 VÀ khác số kia — đường cứu cho
+        /// hoá đơn cổng không khai chiết khấu ở header (bước bù của bản VFP).
+        /// </summary>
+        internal static decimal ChietKhauHieuLuc(List<DongHang> ds, decimal ckHoaDon)
+        {
+            decimal ckDong = ds.Sum(d => d.ChietKhau);
+            return ckDong != 0 && ckDong != ckHoaDon ? ckDong : ckHoaDon;
+        }
+
+        /// <summary>
+        /// Tiền hàng chưa thuế suy từ các dòng: Σ(SL×ĐG) − chiết khấu hiệu lực.
+        /// </summary>
+        /// <param name="masterTienHang">
+        /// Tiền hàng người bán khai. CHỈ dùng để lấy DẤU cho hoá đơn toàn chiết khấu —
+        /// không bao giờ dùng làm giá trị.
+        /// </param>
+        internal static decimal TongTienHangTuLine(List<DongHang> ds, decimal ckHoaDon,
+                                                   decimal masterTienHang = 0m)
+        {
+            decimal tong = TongSlDg(ds) - ChietKhauHieuLuc(ds, ckHoaDon);
+
+            // HOÁ ĐƠN TOÀN CHIẾT KHẤU — lấy dấu theo bản gốc (chốt Trường 21/08).
+            //
+            // Người bán phát hành để TRẢ LẠI khoản chiết khấu chứ không bán gì, và có HAI
+            // quy ước khai cùng tồn tại, đo 20/08 trên dữ liệu thật:
+            //   HOA_SANG  1C26TMN/14708  tiền hàng = +9.482.503   (khai DƯƠNG)
+            //   NHAT_TUAN 1C26TBN/599    tiền hàng = −16.093.646  (khai ÂM)
+            // Cùng bản chất, cùng |giá trị| = chiết khấu, chỉ khác dấu. Ép một dấu cứng
+            // là một trong hai nhóm lệch GẤP ĐÔI — con số gấp đôi luôn là dấu hiệu lỗi
+            // dấu, không phải lỗi số học.
+            //
+            // Chỉ đảo khi master DƯƠNG: khai âm thì công thức trên đã ra âm, đúng sẵn.
+            if (ds.Count > 0 && ds.All(d => d.TinhChat == 3)
+                             && masterTienHang > 0 && tong < 0)
+                tong = -tong;
+
+            return tong;
+        }
+
+        /// <summary>Đọc, chuẩn hoá và tính tiền hàng trong một nhịp — cho chỗ chỉ cần con số.</summary>
+        internal static decimal TongTienHangTuLine(List<IXLRow> lines, Dictionary<string,int> L,
+                                                   decimal ckHoaDon, decimal masterTienHang = 0m)
         {
             if (lines.Count == 0) return 0m;
-            bool toanChietKhau = lines.All(x => S(x, L, "LOAI_HH").Trim() == "3");
-
-            decimal TienHangDong(IXLRow x)
-            {
-                var (sl, dg) = SoLuongDonGia(
-                    N2(x, L, "SO_LUONG", "SO_LUONG_G"),
-                    N2(x, L, "DON_GIA",  "DON_GIA_G"),
-                    N2(x, L, "THANH_TIEN", "TTIEN_LINE"));
-                return Math.Round(sl * dg, 0, MidpointRounding.AwayFromZero)
-                     - N(x, L, "CK_LINE_G");
-            }
-
-            return lines.Sum(x =>
-                (!toanChietKhau && S(x, L, "LOAI_HH").Trim() == "3" ? -1m : 1m)
-                * TienHangDong(x));
+            var ds = DocDong(lines, L);
+            ChuanHoa(ds, ckHoaDon);
+            return TongTienHangTuLine(ds, ckHoaDon, masterTienHang);
         }
 
         internal const decimal PT_VAT_KHONG_KE_KHAI   = -1m;
@@ -1259,7 +1451,7 @@ namespace KT2000.Api.Services
                             string maHd = ChuanHoaMaHd(maHdTho, S2(r, M, "SO_HD", "SO_HD_G"));
                             var lines = linesByHd.GetValueOrDefault(maHdTho) ?? new List<IXLRow>();
                             var d = DongGocTuExcel(r, M, h, maHd, ngay.Value,
-                                                   TongTienHangTuLine(lines, L));
+                                                   TongTienHangTuLine(lines, L, N2(r, M, "TIEN_CK", "TIEN_CK_G"), MasterTienHang(r, M)));
                             // Nối theo giá trị, ghi lại đúng mã của sổ — xem ImportJob.
                             dsGoc.Add(maHdTrongSo.TryGetValue(KhoaGiaTriMaHd(maHd), out var mThat)
                                     ? d with { MaHd = mThat }
@@ -1573,34 +1765,61 @@ namespace KT2000.Api.Services
         // này, mà nó luôn đúng MỘT dòng nên cả tiền thuế lẫn thuế suất đều là của dòng
         // đó. Đo thật trên HOA_SANG T1: 27/27 hóa đơn thuộc nhóm này, không vá thì cả
         // tien_vat_l lẫn pt_vat đều trống.
+        // Nhận VÙNG TẠM đã chuẩn hoá, KHÔNG nhận dòng Excel thô. Nhờ vậy nó và phép kiểm
+        // Σ ở ImportJob đọc đúng cùng một mảng — hết cảnh "khớp lúc kiểm, sai lúc ghi".
         private void ReplaceLines(SqlConnection c, SqlTransaction tx, string maHd,
-                                  List<IXLRow> lines, Dictionary<string,int> L, string user,
+                                  List<DongHang> ds, string user,
                                   decimal masterTienVat = 0m, decimal masterTienHang = 0m,
                                   bool coLoaiThue = false, bool maiChoKhop = false)
         {
+            // GIỮ LẠI CÔNG CỦA KẾ TOÁN trước khi xoá trắng (luật #5, chốt Trường 21/08).
+            //
+            // ReplaceLines xoá rồi chèn lại toàn bộ dòng, nên nạp lại là mất sạch phần
+            // người dùng đã soi và xác nhận ở màn Định khoản. Lượt nạp NHAT_TUAN 21/08
+            // thổi bay 127 dòng good_pred = 1.
+            //
+            // Khớp lại theo TÊN HÀNG chứ không theo stt_line: nạp lại có thể đổi số thứ
+            // tự dòng (cổng sửa hoá đơn, thêm bớt dòng), mà tên hàng thì chính là thứ
+            // người dùng đã nhìn khi bấm xác nhận.
+            var daXacNhan = new List<(string Ten, string? GhiNo, string? GhiCo,
+                                      string? DkGoc, object Proba)>();
+            using (var doc = new SqlCommand(
+                @"SELECT LTRIM(RTRIM(ISNULL(ten_hang_goc,''))), ghi_no, ghi_co, dk_goc, proba
+                    FROM HOA_DON_LINE WHERE ma_hd = @id AND ISNULL(good_pred, 0) = 1", c, tx))
+            {
+                doc.Parameters.AddWithValue("@id", maHd);
+                using var rd = doc.ExecuteReader();
+                while (rd.Read())
+                    daXacNhan.Add((rd.GetString(0),
+                                   rd.IsDBNull(1) ? null : rd.GetString(1),
+                                   rd.IsDBNull(2) ? null : rd.GetString(2),
+                                   rd.IsDBNull(3) ? null : rd.GetString(3),
+                                   rd.IsDBNull(4) ? DBNull.Value : rd.GetDouble(4)));
+            }
+
             using (var del = new SqlCommand("DELETE FROM HOA_DON_LINE WHERE ma_hd=@id", c, tx))
             { del.Parameters.AddWithValue("@id", maHd); del.ExecuteNonQuery(); }
 
-            foreach (var r in lines)
+            foreach (var r in ds)
             {
                 using var cmd = new SqlCommand($@"
                     INSERT INTO HOA_DON_LINE (ma_hd, stt_line, ten_hang_goc, dvt, so_luong,
                         don_gia, pt_vat, tien_ck, tien_vat_l, ma_ngan, tinh_chat, created_by,
-                        ma_hang, ghi_no, ghi_co, ma_ct_no, ma_ct_co
+                        ma_hang, ghi_no, ghi_co, ma_ct_no, ma_ct_co, dg_tt, gia_von
                         {(coLoaiThue ? ", loai_thue" : "")})
                     VALUES (@id, @stt, @ten_goc, @dvt, @sl, @dg, @pt_vat, @ck,
                         @tien_vat_l, @ma_ngan, @tc, @user,
-                        @ma_hang, @l_ghi_no, @l_ghi_co, @l_ma_ct_no, @l_ma_ct_co
+                        @ma_hang, @l_ghi_no, @l_ghi_co, @l_ma_ct_no, @l_ma_ct_co, @dg_tt, @gia_von
                         {(coLoaiThue ? ", @loai_thue" : "")})", c, tx);
                 var p = cmd.Parameters;
                 p.AddWithValue("@id", maHd);
-                p.AddWithValue("@stt", I2(r, L, "LINE_NO", "STT_LINE_G"));
+                p.AddWithValue("@stt", r.Stt);
                 // Dự phòng sang cột CHUẨN HÓA, giống hệt so_luong/don_gia ngay dưới. Dòng
                 // hóa đơn KHÔNG CÓ XML (điện, nước, ngân hàng) chỉ điền TEN_HANG/DVT và
                 // để trống cặp _G — chỉ đọc _G thì số lượng, đơn giá vào được còn tên hàng
                 // với đơn vị tính mất trắng. Đo thật: 22/22 dòng thiếu tên đều là NOXML.
-                p.AddWithValue("@ten_goc", (object?)Nz(S2(r, L, "TEN_HANG", "TEN_HANG_G")) ?? DBNull.Value);
-                p.AddWithValue("@dvt",     (object?)Nz(S2(r, L, "DVT", "DVT_G")) ?? DBNull.Value);
+                p.AddWithValue("@ten_goc", (object?)Nz(r.TenHang) ?? DBNull.Value);
+                p.AddWithValue("@dvt",     (object?)Nz(r.Dvt) ?? DBNull.Value);
                 // @sl / @dg gán ở CUỐI hàm: phải biết khongCoXml và thanhTien mới quyết
                 // được — xem khối "SL × ĐG" bên dưới.
                 // Thuế suất trong Excel là CHUỖI có dấu phần trăm ("10%"), không phải số.
@@ -1609,7 +1828,7 @@ namespace KT2000.Api.Services
                 // DocPhanTram lọc bỏ mọi ký tự không phải chữ số trước khi đọc, đúng việc.
                 // Dùng S2 (lấy chuỗi) chứ không N2 (lấy số) để có giá trị thô mà lọc.
                 // (biến ptVat khai ngay dưới, dùng lại cho tien_vat_l)
-                string thueSuatTho = S2(r, L, "PT_VAT", "PT_VAT_L").Trim();
+                string thueSuatTho = r.ThueSuatTho;
                 if (coLoaiThue)
                 {
                     // Giữ NGUYÊN chuỗi cổng khai. pt_vat bên dưới biến "KCT" thành 0, y
@@ -1632,8 +1851,7 @@ namespace KT2000.Api.Services
                 //
                 // Làm tròn về số nguyên cho khớp cột `vat` ở HOA_DON (kiểu INT) — hai chỗ
                 // ra hai số khác nhau thì người đọc không biết tin cái nào.
-                bool khongCoXml = S(r, L, "NGUON_DL")
-                    .Equals("EXCEL_NO_XML", StringComparison.OrdinalIgnoreCase);
+                bool khongCoXml = r.KhongCoXml;
 
                 if (ptVat == 0 && khongCoXml && masterTienVat != 0 && masterTienHang > 0)
                     ptVat = Math.Round(masterTienVat * 100m / masterTienHang, 0,
@@ -1657,7 +1875,7 @@ namespace KT2000.Api.Services
                     ptVat = SuyThueSuatTuTong(masterTienHang, masterTienVat);
 
                 p.AddWithValue("@pt_vat", ptVat);
-                decimal tienCk = N(r, L, "CK_LINE_G");
+                decimal tienCk = r.ChietKhau;
                 p.AddWithValue("@ck", tienCk);
 
                 // pt_ck và tien_vat_l trước KHÔNG nằm trong câu INSERT — chưa bao giờ được
@@ -1665,7 +1883,7 @@ namespace KT2000.Api.Services
                 // (XML_MAP chỉ map 10 trường, không có TLCKhau lẫn tiền thuế của dòng), nên
                 // SUY RA từ những gì có. Suy được thì ghi, không thì để NULL — đừng ghi 0,
                 // vì 0 đọc như "chiết khấu 0%" trong khi sự thật là "không biết".
-                decimal thanhTien = N2(r, L, "THANH_TIEN", "TTIEN_LINE");
+                decimal thanhTien = r.ThanhTien;
                 object tienVatL;
                 if (khongCoXml)
                 {
@@ -1698,8 +1916,8 @@ namespace KT2000.Api.Services
                 // HOA_DON_LINE KHÔNG có cột thành tiền — tiền hàng của dòng là SL × ĐG.
                 // Dòng nào thiếu một trong hai thì coi như dòng đó trị giá 0, và tiền hàng
                 // của cả hóa đơn hụt theo.
-                decimal sl = N2(r, L, "SO_LUONG", "SO_LUONG_G");
-                decimal dg = N2(r, L, "DON_GIA",  "DON_GIA_G");
+                decimal sl = r.SoLuong;
+                decimal dg = r.DonGia;
 
                 if (khongCoXml)
                 {
@@ -1746,17 +1964,53 @@ namespace KT2000.Api.Services
                 // toán định khoản mới lưu. Tên hàng gốc vẫn nằm ở ten_hang_goc.
                 // Hướng lấy từ chính dòng hàng (sheet line có sẵn cột HUONG) chứ không
                 // truyền thêm tham số — ít chỗ sai hơn, và dòng nào cũng tự mang hướng của nó.
-                bool laRa = S(r, L, "HUONG").Equals("RA", StringComparison.OrdinalIgnoreCase);
+                bool laRa = r.Huong.Equals("RA", StringComparison.OrdinalIgnoreCase);
+                // Dòng chiết khấu và dòng ghi chú KHÔNG phải hàng hoá, nên vế hàng hoá
+                // của bút toán đi vào tài khoản trung tính thay vì 156 (chốt Trường
+                // 21/08, theo bản VFP). Vế đối ứng giữ nguyên — 331 với hàng vào, 632
+                // với hàng ra. Đây là luật CỨNG, không phải chỗ cho model đoán: soi 262
+                // dòng chiết khấu ở NHAT_TUAN thì 204 dòng đang mang 641 hoặc 156.
+                string tkHang = r.DinhKhoan ?? "156";
                 p.AddWithValue("@ma_hang", DanhMucService.MA_HANG_TAM);
-                p.AddWithValue("@l_ghi_no", laRa ? "632" : "156");
-                p.AddWithValue("@l_ghi_co", laRa ? "156" : "331");
+                p.AddWithValue("@l_ghi_no", laRa ? "632" : tkHang);
+                p.AddWithValue("@l_ghi_co", laRa ? tkHang : "331");
                 p.AddWithValue("@l_ma_ct_no", laRa ? "" : DanhMucService.MA_HANG_TAM);
                 p.AddWithValue("@l_ma_ct_co", laRa ? DanhMucService.MA_HANG_TAM : "");
 
-                p.AddWithValue("@ma_ngan", (object?)Nz(S(r, L, "MA_NGAN_G")) ?? DBNull.Value);
-                p.AddWithValue("@tc", I(r, L, "LOAI_HH"));
+                p.AddWithValue("@ma_ngan", (object?)Nz(r.MaNgan) ?? DBNull.Value);
+                p.AddWithValue("@tc", r.TinhChat);
                 p.AddWithValue("@user", user);
+
+                // dg_tt = true cho MỌI dòng (chốt Trường 21/08). Trước đây cột này bỏ
+                // trống hoàn toàn — 7.337/7.337 dòng đều NULL.
+                p.AddWithValue("@dg_tt", true);
+
+                // gia_von chỉ đặt cho hàng VÀO: hàng mua vào thì đơn giá mua CHÍNH LÀ giá
+                // vốn. Hàng bán ra thì giá vốn phải tính từ tồn kho, không phải giá bán —
+                // gán giá bán vào đây là thổi phồng giá vốn đúng bằng lãi gộp.
+                p.AddWithValue("@gia_von", laRa ? DBNull.Value : dg);
                 cmd.ExecuteNonQuery();
+            }
+
+            // Trả lại phần kế toán đã xác nhận. Đặt SAU vòng chèn vì lúc này dòng mới đã
+            // có mặt để mà khớp tên. is_predict = 1 đi kèm: dòng đã được người soi thì
+            // đương nhiên đã qua tay máy, mà cột này quyết định lưới Định khoản hiện gì.
+            foreach (var (ten, ghiNo, ghiCo, dkGoc, proba) in daXacNhan)
+            {
+                using var kh = new SqlCommand(@"
+                    UPDATE HOA_DON_LINE
+                       SET good_pred = 1, is_predict = 1,
+                           ghi_no = ISNULL(@no, ghi_no), ghi_co = ISNULL(@co, ghi_co),
+                           dk_goc = ISNULL(@goc, dk_goc), proba = @proba
+                     WHERE ma_hd = @id
+                       AND LTRIM(RTRIM(ISNULL(ten_hang_goc, ''))) = @ten", c, tx);
+                kh.Parameters.AddWithValue("@id", maHd);
+                kh.Parameters.AddWithValue("@ten", ten);
+                kh.Parameters.AddWithValue("@no", (object?)ghiNo ?? DBNull.Value);
+                kh.Parameters.AddWithValue("@co", (object?)ghiCo ?? DBNull.Value);
+                kh.Parameters.AddWithValue("@goc", (object?)dkGoc ?? DBNull.Value);
+                kh.Parameters.AddWithValue("@proba", proba);
+                kh.ExecuteNonQuery();
             }
         }
 
