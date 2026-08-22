@@ -24,12 +24,13 @@ namespace KT2000.Api.Controllers
         private readonly DkPubService _pub;
         private readonly DkPredictService _predict;
         private readonly DkTrainService _train;
+        private readonly ChotDinhKhoanService _chot;
         private readonly AppDbContext _db;
 
         public DinhKhoanController(DinhKhoanService dk, DkPubService pub,
                                    DkPredictService predict, DkTrainService train,
-                                   AppDbContext db)
-        { _dk = dk; _pub = pub; _predict = predict; _train = train; _db = db; }
+                                   ChotDinhKhoanService chot, AppDbContext db)
+        { _dk = dk; _pub = pub; _predict = predict; _train = train; _chot = chot; _db = db; }
 
         // PHẢI khớp CO_DINH_KHOAN ở AppShell.tsx và DinhKhoan.tsx.
         private static readonly string[] CO_DINH_KHOAN = { "MDN_NB" };
@@ -220,6 +221,101 @@ namespace KT2000.Api.Controllers
                 moi, trung, xungDot, loai,
                 chiTiet = kq,
             });
+        }
+
+        // ============ HAI ĐƯỜNG CHỐT CHÍNH (BR-CDK-04 / BR-CDK-05) ============
+        //
+        // Đây mới là hai endpoint màn chốt dùng. `cap-nhat` và `day-train` ở trên là API
+        // THÔ — mỗi cái chỉ chạm MỘT database, và để màn hình tự xâu chuỗi chúng là để
+        // ngỏ khả năng gọi thiếu một nửa (dạy máy mà quên sửa sổ, hoặc ngược lại).
+        // Hai endpoint dưới đây gọi vào ChotDinhKhoanService — nơi thứ tự "sửa sổ trước,
+        // đọc lại, rồi mới dạy máy" được giữ ở MỘT chỗ duy nhất (luật 14, BR-CDK-08).
+
+        /// <summary>
+        /// POST api/dinh-khoan/chot-dung — nút "Mark Is Predict OK" (cột Exp).
+        /// good_pred = 1; mặt hàng nào máy còn yếu (pred_conf &lt; 0,85) thì audit-insert
+        /// luôn vào Data Training (BR-CDK-04).
+        /// </summary>
+        [HttpPost("chot-dung")]
+        public async Task<IActionResult> ChotDung(
+            [FromBody] List<DinhKhoanService.ThayDoiDto>? ds)
+        {
+            var chan = ChanNeuKhongDuocPhep();
+            if (chan != null) return chan;
+
+            var list = ds ?? new List<DinhKhoanService.ThayDoiDto>();
+            if (list.Count == 0)
+                return BadRequest(new { message = "Chưa tích mặt hàng nào ở cột Exp" });
+            if (list.Count > 2000)
+                return BadRequest(new { message = "Quá 2.000 mặt hàng một lượt — chia nhỏ ra" });
+
+            var kq = await _chot.ChotDungAsync(list, FiscalYear(), NguoiDung(),
+                                               HttpContext.RequestAborted);
+            await GhiNhatKy("DK_CHOT_DUNG", MoTaKetQua(kq));
+            return Ok(new { message = TinNhan(kq, "Đã xác nhận"), kq.SoDong, kq.SoMatHang,
+                            kq.SoDayTrain, kq.SoMoi, kq.SoTrung, kq.SoXungDot, kq.SoBiLoai,
+                            kq.CanhBao, chiTiet = kq.ChiTiet });
+        }
+
+        /// <summary>
+        /// POST api/dinh-khoan/sua-nhan — nút "Update về Data Training" (cột Sửa).
+        /// Sửa vế máy đoán theo tài khoản người dùng chọn, good_pred = 1, rồi audit-insert
+        /// (BR-CDK-05). Mọi mặt hàng đã sửa đều vào kho học, không xét ngưỡng.
+        /// </summary>
+        [HttpPost("sua-nhan")]
+        public async Task<IActionResult> SuaNhan(
+            [FromBody] List<DinhKhoanService.ThayDoiDto>? ds)
+        {
+            var chan = ChanNeuKhongDuocPhep();
+            if (chan != null) return chan;
+
+            var list = ds ?? new List<DinhKhoanService.ThayDoiDto>();
+            if (list.Count == 0)
+                return BadRequest(new { message = "Chưa tích mặt hàng nào ở cột Sửa" });
+            if (list.Count > 2000)
+                return BadRequest(new { message = "Quá 2.000 mặt hàng một lượt — chia nhỏ ra" });
+
+            // Chặn tài khoản rác NGAY Ở CỬA — cùng luật với `cap-nhat`. Ở đây còn nặng
+            // hơn: tài khoản rác lọt xuống là nó vào luôn kho học DÙNG CHUNG, và mọi đơn
+            // vị khác sẽ học phải cái rác đó ở lần huấn luyện sau.
+            var xau = list.Select(x => (x.TkMoi ?? "").Trim())
+                          .Where(t => t.Length > 0 && (!t.All(char.IsAsciiDigit)
+                                                    || t.Length is < 3 or > 10))
+                          .Distinct().ToList();
+            if (xau.Count > 0)
+                return BadRequest(new
+                { message = $"Tài khoản không hợp lệ: {string.Join(", ", xau.Take(5))}" });
+
+            var kq = await _chot.SuaNhanAsync(list, FiscalYear(), NguoiDung(),
+                                              HttpContext.RequestAborted);
+            if (kq.SoMatHang == 0)
+                return BadRequest(new
+                { message = "Chưa chọn tài khoản đúng cho mặt hàng nào" });
+
+            await GhiNhatKy("DK_SUA_NHAN", MoTaKetQua(kq));
+            return Ok(new { message = TinNhan(kq, "Đã sửa"), kq.SoDong, kq.SoMatHang,
+                            kq.SoDayTrain, kq.SoMoi, kq.SoTrung, kq.SoXungDot, kq.SoBiLoai,
+                            kq.CanhBao, chiTiet = kq.ChiTiet });
+        }
+
+        // Luật #7: ghi cả số MẶT HÀNG lẫn số DÒNG. Một mặt hàng chốt một lần có thể chạm
+        // hàng trăm dòng hoá đơn — sáu tháng sau nhìn lại chỉ thấy "812 dòng" thì không
+        // ai đoán ra người dùng đã bấm những gì.
+        private static string MoTaKetQua(ChotDinhKhoanService.KetQuaChot k)
+            => $"{k.SoMatHang} mặt hàng → {k.SoDong} dòng hàng · "
+             + $"vào Data Training {k.SoDayTrain} ({k.SoMoi} mới · {k.SoTrung} đã có · "
+             + $"{k.SoXungDot} xung đột · {k.SoBiLoai} bị loại)";
+
+        private static string TinNhan(ChotDinhKhoanService.KetQuaChot k, string viec)
+        {
+            string s = $"{viec} {k.SoMatHang} mặt hàng — {k.SoDong} dòng hàng";
+            if (k.SoMoi > 0) s += $" · dạy máy {k.SoMoi} cái mới";
+            if (k.SoTrung > 0) s += $" · {k.SoTrung} đã biết rồi";
+            // Xung đột phải nói ra ngay: nó KHÔNG vào model cho tới khi có lý do
+            // (BR-CDK-06), mà im lặng thì người dùng tưởng đã dạy xong.
+            if (k.SoXungDot > 0) s += $" · {k.SoXungDot} XUNG ĐỘT chờ giải thích";
+            if (k.SoBiLoai > 0) s += $" · {k.SoBiLoai} bị loại";
+            return s;
         }
 
         /// <summary>

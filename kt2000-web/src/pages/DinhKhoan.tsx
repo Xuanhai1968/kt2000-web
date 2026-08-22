@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { Navigate } from "react-router-dom";
 import { Button, Select, Input, Modal, Tag, Tooltip, Typography, message } from "antd";
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef, CellStyle } from "ag-grid-community";
 import {
-  getAdminTenants, dkLayTenHang, dkLayDongHoaDon, dkCapNhat, dkLayDanhMucTk,
-  dkAutoNew, dkDayTrain, dkHuanLuyen, dkLayChoGiaiThich, dkGiaiThich, loiApi,
+  getAdminTenants, dkLayTenHang, dkLayDongHoaDon, dkLayDanhMucTk,
+  dkAutoNew, dkChotDung, dkSuaNhan, dkHuanLuyen, dkLayChoGiaiThich, dkGiaiThich, loiApi,
 } from "../api";
 import type { DkTenHang, DkDongHoaDon, DkChoGiaiThich, DkTaiKhoan } from "../api";
 import { useAuth } from "../AuthContext";
@@ -28,11 +29,12 @@ const CO_DINH_KHOAN = ["MDN_NB"];
 //   2. Auto Accounting New → máy tự định khoản TOÀN BỘ. Sau bước này lưới TRẮNG vì mọi
 //      mặt hàng đều đã có is_predict = 1; muốn soi lại thì chọn cặp ở bước 7.
 //   3. Soi hai cột ĐK gốc và Định khoản để xem máy đoán có đúng không
-//   4. Mark record by prefix — mỗi lần bấm đánh dấu một cụm tên rồi nhảy sang cụm kế
-//      tiếp, kéo nó lên giữa màn hình và mở luôn dòng hoá đơn của nó
+//   4. Mark Record By Prefix — mỗi lần bấm đánh dấu một cụm tên vào cột EXP rồi nhảy
+//      sang cụm kế tiếp, kéo nó lên giữa màn hình và mở luôn dòng hoá đơn của nó
 //   5. Mark Is Predict OK → good_pred = 1, mặt hàng BIẾN MẤT khỏi lưới
-//   6. Cái nào sai thì gõ tài khoản đúng vào ô "Định khoản đúng" rồi Update về Data
-//      Training (nó sửa sổ TRƯỚC, đẩy Data Training SAU)
+//   6. Cái nào sai thì tích cột SỬA (hoặc Mark Record By Prefix For Update), gõ tài
+//      khoản đúng vào ô "Định khoản đúng" rồi Update về Data Training (nó sửa sổ
+//      TRƯỚC, đẩy Data Training SAU)
 //   6.1 Mặt hàng từng xác nhận đúng mà lần này sửa khác → giữ lại bắt giải thích
 //   7. Chọn cặp ĐK gốc × Máy đoán rồi bấm Lọc dữ liệu — đây CŨNG là cách duy nhất gọi
 //      lại những mặt hàng máy đã đoán để soi theo từng cặp
@@ -98,6 +100,11 @@ const GIAI_THICH = (
       <code>dk_goc</code> trước khi đè. Mặt hàng đã xác nhận đúng thì không đụng tới.
     </div>
     <div style={{ marginTop: 6 }}>
+      <b>Hai cột tích tách bạch:</b> tích cột <b>Exp</b> nghĩa là máy đoán đúng — chỉ{" "}
+      <b>Mark Is Predict OK</b> ăn cột đó. Tích cột <b>Sửa</b> nghĩa là sai và sẽ đổi —
+      chỉ <b>Update về Data Training</b> ăn cột đó. Nút không bao giờ ăn chéo cột.
+    </div>
+    <div style={{ marginTop: 6 }}>
       <b>Mark Is Predict OK</b> đặt <code>good_pred = 1</code>, không đẩy về Data Training.
     </div>
     <div style={{ marginTop: 6 }}>
@@ -114,6 +121,51 @@ const GIAI_THICH = (
   </div>
 );
 
+// ===================== GIỮ TRẠNG THÁI QUA LƯỢT RỜI MÀN HÌNH =====================
+//
+// Soi định khoản là việc dài: tích vài chục mặt hàng rồi phải sang màn khác tra một
+// hoá đơn, quay lại thì React đã huỷ component và mọi dấu tích biến sạch (Trường
+// 22/08). Mất công tích lại từ đầu, mà tích lại thì dễ bỏ sót hơn lần trước.
+//
+// sessionStorage chứ KHÔNG localStorage: giữ trong lượt làm việc của tab này thôi.
+// localStorage thì dấu của hôm qua còn nguyên tới hôm nay — mà hôm nay dữ liệu đã
+// khác, người dùng lại tưởng mình vừa tích.
+//
+// KHÔNG lưu dsTenHang: nó là bản chụp của SỔ, phải đọc lại cho tươi mỗi lần vào —
+// giữa hai lượt có thể đã có người chốt hoặc nạp lại dữ liệu. Chỉ giữ thứ do NGƯỜI
+// DÙNG tạo ra: dấu, ô ghi chú, đơn vị đang chọn, cặp lọc đang xem.
+const KHOA_LUU = "dk_trang_thai_v1";
+
+interface TrangThaiLuu {
+  daDanhDau: Record<string, boolean>;
+  daDanhDauSua: Record<string, boolean>;
+  daSua: Record<string, string>;
+  tkDung: string;
+  dsChon: string[];
+  locDangDung: { goc?: string; doan?: string };
+}
+
+// PHẢI đọc lúc MOUNT, không phải lúc module nạp. Bản đầu 22/08 tôi để nó là hằng
+// module — sai, và sai theo kiểu tự xoá dữ liệu:
+//
+//   Đây là SPA, module chỉ nạp MỘT LẦN cho cả phiên. Rời màn hình rồi quay lại thì
+//   component mount lại nhưng module thì không, nên hằng đó vẫn giữ giá trị đọc được
+//   lúc mở trang lần đầu — tức rỗng. State khởi tạo rỗng, rồi effect lưu chạy ngay sau
+//   mount và GHI ĐÈ sessionStorage bằng chính cái rỗng đó. Dấu tích mất sạch.
+//
+// Gọi hàm này trong lazy initializer của useState thì nó chạy lại mỗi lần mount. Sáu
+// lần parse một chuỗi nhỏ trong một lần mount là cái giá không đáng bàn.
+function docLuu(): Partial<TrangThaiLuu> {
+  try {
+    const s = sessionStorage.getItem(KHOA_LUU);
+    return s ? (JSON.parse(s) as Partial<TrangThaiLuu>) : {};
+  } catch {
+    // Hỏng JSON, hết chỗ, trình duyệt chặn storage — mất dấu tích thì phiền, nhưng
+    // ném ở đây là màn hình trắng. Coi như chưa có gì lưu.
+    return {};
+  }
+}
+
 export default function DinhKhoan() {
   const { session } = useAuth();
   const [dsDonVi, setDsDonVi] = useState<DonVi[]>([]);
@@ -126,11 +178,23 @@ export default function DinhKhoan() {
   // Đơn vị đang tick Run. Giữ ở state riêng thay vì đọc ngược từ lưới: AG Grid
   // Community không có API chọn dòng kiểu checkbox, mà đọc ngược thì lúc nào cũng
   // phải nhớ đồng bộ hai chiều.
-  const [dsChon, setDsChon] = useState<string[]>([]);
+  const [dsChon, setDsChon] = useState<string[]>(() => docLuu().dsChon ?? []);
   // Mặt hàng đang ĐÁNH DẤU, và tài khoản người dùng gõ đè. Khoá là maDonVi|huong|tenHang
   // — cùng khoá với getRowId của lưới, để hai bên không bao giờ lệch cách nhận dạng.
-  const [daDanhDau, setDaDanhDau] = useState<Record<string, boolean>>({});
-  const [daSua, setDaSua] = useState<Record<string, string>>({});
+  //
+  // HAI CỘT TÍCH, KHÔNG PHẢI MỘT (BR-CDK-02, Trường chốt 22/08 — quay lại đúng kiểu VFP):
+  //   daDanhDau     → cột "Exp" → chỉ nút "Mark Is Predict OK" ăn (chốt máy đoán ĐÚNG)
+  //   daDanhDauSua  → cột "Sửa" → chỉ nút "Update về Data Training" ăn (ĐỔI định khoản)
+  //
+  // Vì sao phải tách: lúc chạy thử người dùng nhầm khu vực giữa chốt-đúng và đổi-định-
+  // khoản. Một cột tích dùng chung cho hai việc trái ngược thì bấm nhầm là ghi sai sổ —
+  // mà ghi xong mặt hàng biến khỏi lưới (good_pred = 1), không còn thấy để sửa lại.
+  // Mỗi nút chỉ ăn đúng cột của trục mình thì nhầm chéo không xảy ra được.
+  const [daDanhDau, setDaDanhDau] =
+    useState<Record<string, boolean>>(() => docLuu().daDanhDau ?? {});
+  const [daDanhDauSua, setDaDanhDauSua] =
+    useState<Record<string, boolean>>(() => docLuu().daDanhDauSua ?? {});
+  const [daSua, setDaSua] = useState<Record<string, string>>(() => docLuu().daSua ?? {});
   // Danh mục tài khoản (KT2000_Base.DM_TK) — để ô chọn hiện được TÊN, không chỉ con số.
   const [dsTaiKhoan, setDsTaiKhoan] = useState<DkTaiKhoan[]>([]);
   const [dkGocLoc, setDkGocLoc] = useState<string | undefined>();
@@ -142,11 +206,11 @@ export default function DinhKhoan() {
   const [dangHuanLuyen, setDangHuanLuyen] = useState(false);
   // (6) Ô nhập định khoản đúng, dùng CHUNG cho mọi mặt hàng đang đánh dấu. Gõ một lần
   // ăn cho cả loạt — đó là lý do nó nằm ngoài lưới chứ không phải trong từng dòng.
-  const [tkDung, setTkDung] = useState("");
+  const [tkDung, setTkDung] = useState(() => docLuu().tkDung ?? "");
   // (7) Bộ lọc chỉ ăn khi BẤM, không ăn theo từng phím gõ: lọc trên vài nghìn dòng mà
   // vẽ lại sau mỗi lần đổi ô chọn là đúng thứ làm màn hình giật.
   const [locDangDung, setLocDangDung] =
-    useState<{ goc?: string; doan?: string }>({});
+    useState<{ goc?: string; doan?: string }>(() => docLuu().locDangDung ?? {});
   const [dsXungDot, setDsXungDot] = useState<DkChoGiaiThich[]>([]);
   const [moGiaiThich, setMoGiaiThich] = useState(false);
   const [loiGiaiThich, setLoiGiaiThich] = useState<Record<number, string>>({});
@@ -162,6 +226,29 @@ export default function DinhKhoan() {
     dsChonRef.current = dsChon;
     luoiDonViRef.current?.api?.refreshCells({ columns: ["run"], force: true });
   }, [dsChon]);
+
+  // Quay lại màn hình thì tự đọc lại sổ cho các đơn vị đang chọn, KHÔNG đụng bộ lọc.
+  // Không có bước này thì việc giữ trạng thái thành nửa vời: dấu tích còn đó nhưng lưới
+  // trống, mà bấm "Nạp dữ liệu" để lưới hiện ra thì chính nút đó xoá bộ lọc vừa khôi
+  // phục (xem napDuLieu) — người dùng vẫn phải chọn lại cặp ĐK gốc × Máy đoán.
+  //
+  // Đọc thẳng từ sessionStorage chứ không đọc state dsChon: deps [duocVao] khiến effect
+  // này chạy đúng một lần lúc vào màn. Nếu bám vào dsChon thì mỗi lần người dùng tick
+  // thêm một đơn vị nó lại tự nạp một lượt.
+  useEffect(() => {
+    const cu = docLuu().dsChon ?? [];
+    if (!duocVao || cu.length === 0) return;
+    void (async () => {
+      try {
+        const r = await dkLayTenHang(cu);
+        setDsTenHang(r.data);
+      } catch {
+        // Im lặng CÓ CHỦ ĐÍCH, và chỉ ở đây: người dùng không hề bấm gì, họ chỉ vừa
+        // quay lại màn hình. Ném một hộp lỗi đỏ vào mặt cho việc họ không yêu cầu thì
+        // khó hiểu hơn là lưới trống — mà lưới trống đã có sẵn dòng chữ hướng dẫn.
+      }
+    })();
+  }, [duocVao]);
 
   const bapChonDonVi = (maDonVi: string) =>
     setDsChon((cu) => cu.includes(maDonVi)
@@ -215,22 +302,65 @@ export default function DinhKhoan() {
     `${x.maDonVi}|${x.huong}|${x.tenHang}`;
 
   const danhDauRef = useRef<Record<string, boolean>>({});
+  const danhDauSuaRef = useRef<Record<string, boolean>>({});
   const suaRef = useRef<Record<string, string>>({});
 
   const luoiTenHangRef = useRef<AgGridReact<DkTenHang> | null>(null);
   useEffect(() => {
     danhDauRef.current = daDanhDau;
+    danhDauSuaRef.current = daDanhDauSua;
     suaRef.current = daSua;
     // redrawRows chứ không refreshCells: rowClassRules chỉ được đánh giá lại khi DÒNG
     // được vẽ lại. refreshCells cập nhật được ô ☑ nhưng màu nền dòng thì đứng im.
     luoiTenHangRef.current?.api?.redrawRows();
-  }, [daDanhDau, daSua]);
+  }, [daDanhDau, daDanhDauSua, daSua]);
+
+  // Ghi lại mỗi khi có gì đổi. Ghi ở effect chứ không ghi trong từng hàm bấm nút: có
+  // sáu chỗ đụng vào các state này, nhớ gọi lưu ở cả sáu là kiểu sớm muộn cũng sót một.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(KHOA_LUU, JSON.stringify({
+        daDanhDau, daDanhDauSua, daSua, tkDung, dsChon, locDangDung,
+      } satisfies TrangThaiLuu));
+    } catch {
+      // Hết chỗ hoặc trình duyệt chặn. Không lưu được thì thôi — mất dấu khi rời màn
+      // hình là phiền, còn ném lỗi ở đây thì hỏng cả lượt soi đang làm dở.
+    }
+  }, [daDanhDau, daDanhDauSua, daSua, tkDung, dsChon, locDangDung]);
 
   const bapDanhDau = (k: string) =>
     setDaDanhDau((cu) => ({ ...cu, [k]: !cu[k] }));
+  const bapDanhDauSua = (k: string) =>
+    setDaDanhDauSua((cu) => ({ ...cu, [k]: !cu[k] }));
+
+  // Dọn SẠCH cả ba (chốt Trường 22/08). Đúng ra "Bỏ đánh dấu" nằm ở trục 1 thì chỉ nên
+  // ăn cột Exp, nhưng khi đó cột Sửa không còn nút nào dọn được. Nó là nút DỌN chứ không
+  // phải nút thao tác, nên cho ăn hết — và tooltip nói thẳng ra như vậy.
+  const boHetDanhDau = () => { setDaDanhDau({}); setDaDanhDauSua({}); setDaSua({}); };
+
+  // ĐỔI PHẠM VI SOI THÌ DẤU TÍCH CŨ PHẢI ĐI THEO (Trường 22/08).
+  //
+  // Ca hỏng thật: đang soi cặp 156→156, tích một loạt, rồi chuyển sang cặp 156→154.
+  // Dấu của cặp trước vẫn nằm trong daDanhDau nhưng KHÔNG hiện trên lưới nữa vì lưới
+  // chỉ vẽ dsHienThi. Người dùng nhìn thấy lưới sạch mà con số bên nút vẫn đếm cả dấu
+  // ẩn — không hiểu mình đang chốt cái gì.
+  //
+  // Nút chỉ ăn mặt hàng ĐANG HIỆN (dsDanhDauExp lọc trên dsHienThi) nên chưa từng ghi
+  // nhầm xuống sổ. Nhưng quay lại đúng cặp cũ là dấu hiện lại nguyên vẹn, và lúc đó
+  // người dùng không còn nhớ mình đã tích những gì. Dọn sạch là cách duy nhất khiến
+  // "thấy gì chốt nấy" luôn đúng.
+  const doiPhamVi = (moi: { goc?: string; doan?: string }) => {
+    const con = Object.values(danhDauRef.current).filter(Boolean).length
+              + Object.values(danhDauSuaRef.current).filter(Boolean).length;
+    if (con > 0) message.info(`Bỏ ${con} dấu tích của phạm vi trước`);
+    setDaDanhDau({}); setDaDanhDauSua({}); setDaSua({});
+    setLocDangDung(moi);
+  };
 
   const soDanhDau = useMemo(
     () => Object.values(daDanhDau).filter(Boolean).length, [daDanhDau]);
+  const soDanhDauSua = useMemo(
+    () => Object.values(daDanhDauSua).filter(Boolean).length, [daDanhDauSua]);
   const soSua = useMemo(
     () => Object.values(daSua).filter((v) => v.trim().length > 0).length, [daSua]);
 
@@ -245,25 +375,42 @@ export default function DinhKhoan() {
   const cumTen = (ten: string) =>
     ten.trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0, CUM_SO_TU).join(" ");
 
-  const markRecordByPrefix = () => {
-    const conLai = dsHienThi.filter((x) => !daDanhDau[khoa(x)]);
+  // MỘT thân hàm cho HAI nút (chốt Trường 22/08): "Mark Record By Prefix" đánh cột Exp,
+  // "Mark Record By Prefix For Update" đánh cột Sửa. Cách quét cụm, cách nhảy sang cụm
+  // kế tiếp, cách kéo dòng lên giữa màn hình — cả ba y hệt nhau, chỉ khác nó ghi vào ô
+  // tích nào. Chép thành hai bản 25 dòng thì sửa một bên quên bên kia là chuyện sớm muộn.
+  const markByPrefix = (
+    dangCo: Record<string, boolean>,
+    dat: Dispatch<SetStateAction<Record<string, boolean>>>,
+    tenCot: string,
+  ) => {
+    const conLai = dsHienThi.filter((x) => !dangCo[khoa(x)]);
     if (conLai.length === 0) {
-      message.info("Đã đánh dấu hết mặt hàng đang hiện");
+      message.info(`Đã đánh dấu hết mặt hàng đang hiện ở cột ${tenCot}`);
       return;
     }
     const cum = cumTen(conLai[0].tenHang);
+    // CÙNG CHIỀU mới gom (Trường phát hiện 22/08). Trước đây chỉ so cụm tên, nên
+    // "Tiền chiết khấu mua hàng…" ở khối V bị gom chung với cái cùng tên ở khối R —
+    // kết quả vẫn ĐÚNG, nhưng lưới xếp hết đầu vào rồi mới tới đầu ra, nên đang soi
+    // từ trên xuống lại gặp một loạt dòng dưới đã tích sẵn, không hiểu ai tích.
+    //
+    // Về nghiệp vụ thì tách chiều cũng đúng hơn: V sửa ghi_no, R sửa ghi_co, và kho
+    // học lưu hai dòng riêng theo vao_ra. Gom một lượt là chốt hai thứ khác nhau bằng
+    // một lần nhìn.
+    const chieu = conLai[0].huong;
     const them: Record<string, boolean> = {};
     let n = 0;
     for (const x of dsHienThi)
-      if (cumTen(x.tenHang) === cum) { them[khoa(x)] = true; n++; }
-    setDaDanhDau((cu) => ({ ...cu, ...them }));
+      if (x.huong === chieu && cumTen(x.tenHang) === cum) { them[khoa(x)] = true; n++; }
+    dat((cu) => ({ ...cu, ...them }));
 
     // Trỏ sang cụm KẾ TIẾP và mở nó ra như vừa bấm chuột vào (chốt Trường 20/08).
     // Không có bước này thì đánh dấu xong một loạt là mất dấu vị trí, phải tự dò lại
     // xem mình đang ở đâu — mà cụm càng dài thì càng trôi xa.
-    const tiep = dsHienThi.find((x) => !them[khoa(x)] && !daDanhDau[khoa(x)]);
+    const tiep = dsHienThi.find((x) => !them[khoa(x)] && !dangCo[khoa(x)]);
     if (!tiep) {
-      message.success(`Đánh dấu ${n} mặt hàng “${cum}…” — hết danh sách`);
+      message.success(`Đánh dấu ${n} mặt hàng “${cum}…” [${chieu}] vào cột ${tenCot} — hết danh sách`);
       return;
     }
     setHangChon(tiep);
@@ -272,15 +419,16 @@ export default function DinhKhoan() {
     // phát nữa là nó lại trôi mất.
     const i = dsHienThi.indexOf(tiep);
     if (i >= 0) luoiTenHangRef.current?.api?.ensureIndexVisible(i, "middle");
-    message.success(`Đánh dấu ${n} mặt hàng “${cum}…”`);
+    message.success(`Đánh dấu ${n} mặt hàng “${cum}…” [${chieu}] vào cột ${tenCot}`);
   };
 
-  const danhDauTatCa = () => {
-    const them: Record<string, boolean> = {};
-    for (const x of dsHienThi) them[khoa(x)] = true;
-    setDaDanhDau(them);
-    message.success(`Đã đánh dấu ${dsHienThi.length} mặt hàng`);
-  };
+  const markRecordByPrefix = () => markByPrefix(daDanhDau, setDaDanhDau, "Exp");
+  const markRecordByPrefixForUpdate = () =>
+    markByPrefix(daDanhDauSua, setDaDanhDauSua, "Sửa");
+
+  // Bỏ hẳn "Đánh dấu tất cả" (chốt Trường 22/08). Với hai cột tích thì một nút quét sạch
+  // cả lưới là đúng thứ gây ra nhầm chéo mà mục 5 sinh ra để chặn: bấm một phát rồi bấm
+  // tiếp nút của trục kia là ghi nhầm hàng loạt, không kịp thấy gì.
 
   // ===================== NHÓM C — Data Training CHUNG =====================
 
@@ -320,23 +468,38 @@ export default function DinhKhoan() {
   const nhanDung = (x: DkTenHang) =>
     (daSua[khoa(x)] ?? "").trim() || tkDung.trim() || (x.dinhKhoan ?? "").trim();
 
-  const dsDangDanhDau = () => dsHienThi.filter((x) => daDanhDau[khoa(x)]);
+  // Hai nguồn dấu RIÊNG BIỆT, không nhập một. Ai đổi hàm nào ăn nguồn nào thì đọc lại
+  // khối comment ở state daDanhDauSua trước — đó chính là chỗ mục 5 sinh ra để chặn.
+  const dsDanhDauExp = () => dsHienThi.filter((x) => daDanhDau[khoa(x)]);
+  const dsDanhDauSua = () => dsHienThi.filter((x) => daDanhDauSua[khoa(x)]);
 
   // (5) Xác nhận: "mấy cái đang đánh dấu là ĐÚNG rồi". Chỉ đặt good_pred = 1, KHÔNG sửa
   // định khoản — tách hẳn khỏi nút sửa vì đây là hai việc khác nhau, gộp lại thì có ngày
   // bấm xác nhận mà lại đổi mất số.
+  //
+  // CHỈ ăn cột Exp (mục 5). Dấu ở cột Sửa nghĩa là "định khoản này SAI, tôi sẽ đổi" —
+  // đem xác nhận đúng là ghi ngược hẳn ý người dùng.
   const xacNhanDung = async () => {
-    const ds = dsDangDanhDau();
-    if (ds.length === 0) { message.warning("Chưa đánh dấu mặt hàng nào"); return; }
+    const ds = dsDanhDauExp();
+    if (ds.length === 0) {
+      message.warning("Chưa tích mặt hàng nào ở cột Exp");
+      return;
+    }
     setDangXacNhan(true);
     try {
-      const r = await dkCapNhat(ds.map((x) => ({
+      // BR-CDK-04: backend đặt good_pred = 1, VÀ tự đẩy sang Data Training những mặt
+      // hàng máy còn yếu (pred_conf < 0,85). Màn hình không quyết định gì về ngưỡng —
+      // để nó ở đây thì mỗi lần đổi số lại phải sửa hai chỗ và nhớ đúng cả hai.
+      const r = await dkChotDung(ds.map((x) => ({
         maDonVi: x.maDonVi, huong: x.huong, tenHang: x.tenHang,
         tkMoi: null, xacNhanDung: true,
       })));
-      message.success(`Đã xác nhận ${ds.length} mặt hàng — ${r.data.soDong} dòng hàng`);
+      message.success(r.data.message, 5);
+      for (const c of r.data.canhBao) message.warning(c, 8);
       setDaDanhDau({});
       await napLai();
+      // Xung đột thì mở luôn ô giải thích — nằm đó = không bao giờ vào model (BR-CDK-06).
+      if (r.data.soXungDot > 0) await moManGiaiThich();
     } catch (e) {
       message.error(loiApi(e, "Không xác nhận được"));
     } finally {
@@ -345,39 +508,47 @@ export default function DinhKhoan() {
   };
 
   // (6) Update về Data Training. Hai việc trong một lần bấm, và phải theo ĐÚNG thứ tự:
-  //   1. Nhãn nào khác cái đang nằm trong sổ thì SỬA SỔ trước
+  //   1. SỬA SỔ trước
   //   2. Rồi mới đẩy vào Data Training
   // Ngược thứ tự là model học một đằng còn sổ ghi một nẻo.
+  //
+  // Từ 22/08 cả hai bước nằm TRONG MỘT lượt gọi backend (BR-CDK-05). Trước đây màn hình
+  // tự gọi cap-nhat rồi day-train: đúng thứ tự, nhưng nếu lượt thứ hai hỏng thì sổ đã
+  // sửa mà kho học chưa học, và mặt hàng biến khỏi lưới (good_pred = 1) nên không ai
+  // gặp lại để dạy. Backend còn đọc LẠI nhãn từ sổ trước khi dạy, nên cái vào kho học
+  // luôn đúng bằng cái vừa ghi xuống — không phải cái màn hình tưởng là đã ghi.
+  //
+  // CHỈ ăn cột Sửa (mục 5). Trước 22/08 nút này dùng chung cột dấu với "Mark Is Predict
+  // OK" — đó đúng là chỗ người dùng bấm nhầm lúc chạy thử: tích để chốt-đúng rồi lỡ tay
+  // bấm nút này là sổ bị SỬA theo ô "Định khoản đúng" đang treo sẵn từ loạt trước.
   const dayVeTrain = async () => {
-    const ds = dsDangDanhDau()
+    const ds = dsDanhDauSua()
       .map((x) => ({ x, nhan: nhanDung(x) }))
       .filter((r) => r.nhan.length > 0);
 
     if (ds.length === 0) {
-      message.warning("Chưa đánh dấu mặt hàng nào có định khoản để đẩy về huấn luyện");
+      message.warning("Chưa tích mặt hàng nào ở cột Sửa có định khoản để đẩy về huấn luyện");
       return;
     }
     setDangDayTrain(true);
     try {
-      const canSua = ds.filter((r) => r.nhan !== (r.x.dinhKhoan ?? "").trim());
-      if (canSua.length > 0)
-        await dkCapNhat(canSua.map((r) => ({
-          maDonVi: r.x.maDonVi, huong: r.x.huong, tenHang: r.x.tenHang,
-          tkMoi: r.nhan, xacNhanDung: true,
-        })));
+      // Gửi TẤT CẢ, kể cả mặt hàng có nhãn trùng cái đang nằm trong sổ. Trước đây màn
+      // hình tự lọc "cái nào khác thì mới sửa" — nhưng người dùng đã chủ động tích cột
+      // Sửa thì đó là ý chốt, và backend cần biết để dạy máy dù sổ không đổi giá trị.
+      const r = await dkSuaNhan(ds.map((r) => ({
+        maDonVi: r.x.maDonVi, huong: r.x.huong, tenHang: r.x.tenHang,
+        tkMoi: r.nhan, xacNhanDung: true,
+      })));
+      message.success(r.data.message, 5);
+      for (const c of r.data.canhBao) message.warning(c, 8);
 
-      const r = await dkDayTrain(ds.map((r) => ({
-        maDonVi: r.x.maDonVi, huong: r.x.huong, tenHang: r.x.tenHang, label: r.nhan })));
-      message.success(
-        canSua.length > 0
-          ? `Sửa ${canSua.length} mặt hàng trong sổ · ${r.data.message}`
-          : r.data.message, 5);
-
-      setDaDanhDau({}); setDaSua({}); setTkDung("");
+      // Dọn ĐÚNG cột của trục này. Đụng vào daDanhDau ở đây là xoá mất dấu Exp mà người
+      // dùng đang tích dở cho loạt xác nhận kế tiếp.
+      setDaDanhDauSua({}); setDaSua({}); setTkDung("");
       await napLai();
       // (6.1) Có xung đột thì mở luôn ô giải thích: để người dùng tự đi tìm thì nó nằm
       // đó mãi, mà nằm đó = không bao giờ vào model.
-      if (r.data.xungDot > 0) await moManGiaiThich();
+      if (r.data.soXungDot > 0) await moManGiaiThich();
     } catch (e) {
       message.error(loiApi(e, "Không đẩy được về dữ liệu huấn luyện"));
     } finally {
@@ -593,15 +764,25 @@ export default function DinhKhoan() {
     // Bỏ cột "Đúng" (good_pred): mặt hàng đã xác nhận thì ẩn bằng ô "Chỉ hiện mặt hàng
     // mới", không cần thêm một cột chỉ để nhắc lại điều đó.
     //
-    // Cột Dấu: ô tích, cùng kiểu với cột Run bên lưới đơn vị — hai chỗ cùng là "bấm để
-    // chọn" thì phải nhìn giống nhau, không thì mỗi chỗ lại phải học lại một lần.
-    { colId: "dau", headerName: "Dấu", width: 58,
+    // HAI CỘT TÍCH ĐỨNG CẠNH NHAU (mục 5 — Trường chốt 22/08 cho phép, cái phải tách là
+    // NHÓM NÚT chứ không phải ô tích). Cùng kiểu vẽ với cột Run bên lưới đơn vị: ba chỗ
+    // cùng là "bấm để chọn" thì phải nhìn giống nhau, không thì mỗi chỗ học lại một lần.
+    //
+    // Exp = máy đoán ĐÚNG rồi, chỉ cần gật.   Sửa = SAI, tôi sẽ đổi định khoản.
+    // Hai ý nghĩa trái ngược nên phải là hai cột, và mỗi cột chỉ một nút được đụng vào.
+    { colId: "dau", headerName: "Exp", width: 58,
       valueGetter: (p) => (p.data && danhDauRef.current[khoa(p.data)] ? O_TICH : O_TRONG),
       cellStyle: STYLE_O_TICH,
-      headerTooltip: "Bấm để đánh dấu. Rồi bấm “Mark Is Predict OK” hoặc “Update về Data Training”." },
-    // Cột Sửa: gõ tài khoản ĐÚNG. Ghi vào ghi_no (hàng vào) hay ghi_co (hàng ra) là do
-    // cột V/R quyết định — backend tự chọn vế, màn hình không phải biết.
-    { colId: "sua", headerName: "Sửa", width: 80, editable: true,
+      headerTooltip: "Máy đoán ĐÚNG. Chỉ nút “Mark Is Predict OK” ăn cột này." },
+    { colId: "dauSua", headerName: "Sửa", width: 58,
+      valueGetter: (p) => (p.data && danhDauSuaRef.current[khoa(p.data)] ? O_TICH : O_TRONG),
+      cellStyle: STYLE_O_TICH,
+      headerTooltip: "Định khoản SAI, sẽ đổi. Chỉ nút “Update về Data Training” ăn cột này." },
+    // Cột Ghi chú: gõ tài khoản ĐÚNG cho RIÊNG dòng này. Ghi vào ghi_no (hàng vào) hay
+    // ghi_co (hàng ra) là do cột V/R quyết định — backend tự chọn vế, màn hình không
+    // phải biết. Trước 22/08 cột này tên "Sửa"; đổi tên vì "Sửa" nay là ô TÍCH nằm ngay
+    // bên trái, hai cột cùng tên đứng cạnh nhau thì không ai biết nút ăn cái nào.
+    { colId: "sua", headerName: "Ghi chú", width: 80, editable: true,
       valueGetter: (p) => (p.data ? suaRef.current[khoa(p.data)] ?? "" : ""),
       valueSetter: (p) => {
         if (!p.data) return false;
@@ -616,7 +797,7 @@ export default function DinhKhoan() {
         return true;
       },
       cellStyle: { backgroundColor: "#fffbe6" } as CellStyle,
-      headerTooltip: "Gõ tài khoản ĐÚNG cho RIÊNG dòng này. Bỏ trống thì dùng ô nhập chung bên dưới." },
+      headerTooltip: "Gõ tài khoản ĐÚNG cho RIÊNG dòng này. Bỏ trống thì dùng ô “Định khoản đúng” bên dưới." },
   ], []);
 
   const cotHoaDon = useMemo<ColDef<DkDongHoaDon>[]>(() => [
@@ -653,9 +834,12 @@ export default function DinhKhoan() {
       // để dòng của đơn vị khác nằm dưới tên đơn vị mới.
       setHangChon(null);
       setDsHoaDon([]);
-      // Bỏ luôn bộ lọc cũ: nó thuộc phạm vi vừa rời đi, giữ lại thì lưới hiện ra một
-      // tập chẳng ai chủ ý chọn.
-      setLocDangDung({});
+      // Bỏ bộ lọc VÀ dấu tích cũ: cả hai thuộc phạm vi vừa rời đi. Giữ lọc thì lưới
+      // hiện ra một tập chẳng ai chủ ý chọn; giữ dấu thì tệ hơn — dấu của đơn vị cũ
+      // nằm im không nhìn thấy, mà khoá có kèm mã đơn vị nên nó sống lại đúng lúc
+      // người dùng quay về đơn vị đó và không còn nhớ gì.
+      doiPhamVi({});
+      setDkGocLoc(undefined); setDkPredictLoc(undefined);
 
       // Nạp xong thì NÓI người dùng phải làm gì, không đổ mặt hàng ra bắt họ tự đoán.
       const chuaDoan  = r.data.filter((x) => !x.daDoan).length;
@@ -749,8 +933,11 @@ export default function DinhKhoan() {
               }}
               onCellClicked={(e) => {
                 if (!e.data) return;
-                // Bấm cột Dấu = đánh dấu. Bấm cột khác = mở lưới dòng hoá đơn bên dưới.
+                // Bấm một trong HAI cột tích = bật/tắt đúng cột đó. Bấm cột Ghi chú =
+                // để AG Grid vào chế độ gõ, không làm gì thêm. Bấm cột khác = mở lưới
+                // dòng hoá đơn bên dưới.
                 if (e.colDef.colId === "dau") bapDanhDau(khoa(e.data));
+                else if (e.colDef.colId === "dauSua") bapDanhDauSua(khoa(e.data));
                 else if (e.colDef.colId !== "sua") void hamRef.current.xemDongHoaDon(e.data);
               }}
               // Lưới trống mang HAI nghĩa trái ngược — chưa nạp, hay đã xong sạch. Phải
@@ -771,52 +958,53 @@ export default function DinhKhoan() {
                         : "Chọn cặp ĐK gốc × Máy đoán rồi bấm “Lọc dữ liệu” để bắt đầu soi"} />
           </div>
 
+          {/* BA TRỤC THAO TÁC (mục 5 docs/THUE/QUYET-DINH-DINH-KHOAN-22-08.md, Trường
+              chốt 22/08). Nguyên tắc: nút chỉ ăn ĐÚNG cột tích của trục mình.
+
+                Trục 1 — cột Exp: đánh dấu · chốt đúng · dọn
+                Trục 2 — cột Sửa: đánh dấu · gõ tài khoản đúng · đẩy về Data Training
+                Trục 3 — xung đột, không thuộc cột tích nào
+
+              Vì sao xếp lại: lúc chạy thử người dùng nhầm khu vực giữa chốt-đúng và
+              đổi-định-khoản, vì "Mark Is Predict OK" và "Update về Data Training" đứng
+              hai nhóm khác nhau nhưng cùng ăn MỘT cột dấu. Giờ mỗi trục tự đủ: đánh dấu
+              ở đâu thì bấm nút ngay bên dưới, không phải nhìn sang nhóm khác. */}
           <div className="dk-nut">
+            {/* ===== TRỤC 1 — cột Exp: máy đoán đúng, chỉ cần gật ===== */}
             <div className="dk-nhom">
-              <Button size="small" onClick={danhDauTatCa}
-                      title="Đánh dấu mọi mặt hàng đang hiện">
-                Đánh dấu tất cả
+              {/* (4) Quét lần lượt từ trên xuống, mỗi lần một cụm tên. */}
+              <Button size="small" onClick={markRecordByPrefix}
+                      title="Đánh dấu cả cụm tên giống nhau vào cột Exp, rồi nhảy sang cụm kế tiếp và mở nó ra">
+                Mark Record By Prefix
               </Button>
-              <Button size="small" onClick={() => { setDaDanhDau({}); setDaSua({}); }}
-                      title="Bỏ hết dấu và ô sửa chưa ghi">
+              {/* (5) Xác nhận — việc thường xuyên nhất, nên để nổi nhất. */}
+              <div className="dk-hang">
+                <Button size="small" type="primary" loading={dangXacNhan}
+                        onClick={xacNhanDung}
+                        title="Mặt hàng tích ở cột Exp là ĐÚNG rồi — ghi good_pred = 1, không đẩy Data Training">
+                  Mark Is Predict OK
+                </Button>
+                <span className="dk-ghichu">
+                  {soDanhDau > 0 ? `Exp: ${soDanhDau} mặt hàng` : "Exp: chưa tích gì"}
+                </span>
+              </div>
+              {/* Nút DỌN, không phải nút thao tác — nên nó ăn cả hai cột tích lẫn ô gõ
+                  (Trường chốt 22/08). Đứng ở trục 1 vì phải nằm đâu đó, và đây là trục
+                  dùng nhiều nhất. */}
+              <Button size="small" onClick={boHetDanhDau}
+                      title="Bỏ HẾT: cả cột Exp, cột Sửa và ô Ghi chú chưa ghi">
                 Bỏ đánh dấu
               </Button>
-              {/* (4) Quét lần lượt từ trên xuống, mỗi lần một cụm tên. Đứng cùng nhóm
-                  với hai nút đánh dấu kia vì cả ba cùng làm một việc: chọn cái để ghi. */}
-              <Button size="small" onClick={markRecordByPrefix}
-                      title="Đánh dấu cả cụm tên giống nhau, rồi nhảy sang cụm kế tiếp và mở nó ra">
-                Mark record by prefix
-              </Button>
             </div>
 
+            {/* ===== TRỤC 2 — cột Sửa: định khoản sai, đổi rồi dạy lại cho máy ===== */}
             <div className="dk-nhom">
-              <Button size="small" className="dk-cam" loading={dangDayTrain}
-                      onClick={dayVeTrain}
-                      title="Đẩy mặt hàng ĐANG ĐÁNH DẤU vào Data Training chung, để lần sau máy đoán đúng">
-                Update về Data Training
+              <Button size="small" onClick={markRecordByPrefixForUpdate}
+                      title="Đánh dấu cả cụm tên giống nhau vào cột SỬA, rồi nhảy sang cụm kế tiếp và mở nó ra">
+                Mark Record By Prefix For Update
               </Button>
-              <Button size="small" onClick={moManGiaiThich}
-                      title="Xung đột đang chờ lý do — chưa có lý do thì không vào model">
-                Xung đột chờ giải thích
-              </Button>
-            </div>
-
-            {/* (5) Xác nhận — việc thường xuyên nhất, nên để nổi nhất. */}
-            <div className="dk-nhom">
-              <Button size="small" type="primary" loading={dangXacNhan}
-                      onClick={xacNhanDung}
-                      title="Các mặt hàng đang đánh dấu là ĐÚNG rồi — ghi good_pred = 1">
-                Mark Is Predict OK 
-              </Button>
-              <span className="dk-ghichu">
-                {soDanhDau > 0 ? `Đang đánh dấu ${soDanhDau} mặt hàng`
-                               : "Chưa đánh dấu gì"}
-              </span>
-            </div>
-
-            {/* (6) Sai thì gõ tài khoản đúng vào đây rồi đẩy về huấn luyện. Một ô cho
-                cả loạt đang đánh dấu — dòng nào cần khác thì gõ riêng ở cột Sửa. */}
-            <div className="dk-nhom">
+              {/* (6) Sai thì gõ tài khoản đúng vào đây rồi đẩy về huấn luyện. Một ô cho
+                  cả loạt tích ở cột Sửa — dòng nào cần khác thì gõ riêng ở cột Ghi chú. */}
               <div className="dk-hang">
                 <span className="dk-nhan">Định khoản đúng</span>
                 {/* Rộng hẳn ra và kèm tên tài khoản: gõ trần "156" thì người mới vào
@@ -828,10 +1016,25 @@ export default function DinhKhoan() {
                         value={tkDung || undefined}
                         onChange={(v) => setTkDung(v ?? "")} options={optTkDayDu} />
               </div>
-              <span className="dk-ghichu">
-                {soSua > 0 ? `${soSua} dòng gõ riêng ở cột Sửa`
-                           : "Áp cho mọi mặt hàng đang đánh dấu"}
-              </span>
+              <div className="dk-hang">
+                <Button size="small" className="dk-cam" loading={dangDayTrain}
+                        onClick={dayVeTrain}
+                        title="Đẩy mặt hàng tích ở cột SỬA vào Data Training chung, để lần sau máy đoán đúng">
+                  Update về Data Training
+                </Button>
+                <span className="dk-ghichu">
+                  {soDanhDauSua > 0 ? `Sửa: ${soDanhDauSua} mặt hàng` : "Sửa: chưa tích gì"}
+                  {soSua > 0 ? ` · ${soSua} dòng gõ riêng` : ""}
+                </span>
+              </div>
+            </div>
+
+            {/* ===== TRỤC 3 — xung đột, không ăn cột tích nào ===== */}
+            <div className="dk-nhom">
+              <Button size="small" onClick={moManGiaiThich}
+                      title="Xung đột đang chờ lý do — chưa có lý do thì không vào model">
+                Xung đột chờ giải thích
+              </Button>
             </div>
 
             <div className="dk-nhom">
@@ -888,14 +1091,17 @@ export default function DinhKhoan() {
         <Select size="small" style={{ width: 250 }} allowClear showSearch
                 optionFilterProp="label" placeholder="(tất cả)"
                 value={dkPredictLoc} onChange={setDkPredictLoc} options={optDoan} />
+        {/* Cả hai nút đi qua doiPhamVi: đổi cặp lọc là đổi tập mặt hàng đang soi, nên
+            dấu tích của cặp cũ bị dọn sạch. Xem khối comment ở doiPhamVi. */}
         <Button size="small"
-                onClick={() => setLocDangDung({ goc: dkGocLoc, doan: dkPredictLoc })}
-                title="Chỉ hiện mặt hàng khớp cặp đã chọn — nhẹ máy và dễ nhìn hơn">
+                onClick={() => doiPhamVi({ goc: dkGocLoc, doan: dkPredictLoc })}
+                title="Chỉ hiện mặt hàng khớp cặp đã chọn — nhẹ máy và dễ nhìn hơn. Dấu tích của cặp trước sẽ bị bỏ.">
           Lọc dữ liệu
         </Button>
         <Button size="small"
                 onClick={() => { setDkGocLoc(undefined); setDkPredictLoc(undefined);
-                                 setLocDangDung({}); }}>
+                                 doiPhamVi({}); }}
+                title="Về lại trạng thái chưa lọc. Dấu tích đang có sẽ bị bỏ.">
           Bỏ lọc
         </Button>
         <span className="dk-ghichu">

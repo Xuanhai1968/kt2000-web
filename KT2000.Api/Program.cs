@@ -57,6 +57,10 @@ builder.Services.AddScoped<DinhKhoanService>();
 builder.Services.AddScoped<DkPubService>();
 // Máy đoán định khoản: gọi predict.py rồi ghi nhãn xuống sổ đơn vị.
 builder.Services.AddScoped<DkPredictService>();
+// Viên gạch CHỐT (BR-CDK-08). Điều phối hai service trên theo thứ tự bắt buộc: sửa sổ
+// TRƯỚC, đọc lại sổ, rồi mới đẩy vào kho học. Mọi đường chốt phải đi qua đây — controller
+// không được tự xâu chuỗi ba bước đó (luật 14).
+builder.Services.AddScoped<ChotDinhKhoanService>();
 // Huấn luyện lại model. Tách khỏi DkPredictService vì là việc hằng TUẦN, nặng, và ghi
 // đè model dùng chung cho MỌI đơn vị — không phải việc gọi nhầm được.
 builder.Services.AddScoped<DkTrainService>();

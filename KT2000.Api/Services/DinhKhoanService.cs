@@ -242,6 +242,61 @@ namespace KT2000.Api.Services
             return tong;
         }
 
+        /// <summary>Nhãn ĐANG NẰM TRONG SỔ của một mặt hàng, kèm độ chắc của máy.</summary>
+        public sealed class NhanTrongSoDto
+        {
+            public string Huong { get; set; } = "";     // V | R
+            public string TenHang { get; set; } = "";
+            /// <summary>ghi_no (hàng vào) hoặc ghi_co (hàng ra) — vế máy đoán.</summary>
+            public string? Nhan { get; set; }
+            /// <summary>proba NHỎ NHẤT trong nhóm (sẽ đổi tên pred_conf).</summary>
+            public decimal? TinCay { get; set; }
+        }
+
+        // Đọc lại nhãn SAU KHI đã ghi, để ChotDinhKhoanService biết chính xác cái gì
+        // đang nằm trong sổ trước khi đem dạy cho máy (yêu cầu Trường 22/08 — xem khối
+        // comment đầu ChotDinhKhoanService.cs).
+        //
+        // Lấy MIN(proba) chứ không phải MAX hay AVG: một mặt hàng gồm nhiều dòng hoá
+        // đơn, và chốt ở mức TÊN thì hành động ăn xuống mọi dòng mang tên đó. Nhóm nào
+        // còn một dòng máy không chắc thì cả nhóm đáng được học lại — cùng cách chọn
+        // với BR-CDK-07 ("nhóm có pred_conf nhỏ nhất < 0.70 tô màu cảnh báo").
+        //
+        // Đọc CẢ ĐƠN VỊ một lượt rồi tra trong RAM, thay vì hỏi database một câu cho
+        // mỗi mặt hàng. Đơn vị lớn nhất đang có (NHAT_TUAN_2026, đo 22/08) là 8.593
+        // dòng gom lại còn 721 mặt hàng — một câu lệnh so với bảy trăm lượt đi về mạng.
+        private const string SqlNhanTrongSo = @"
+            SELECT h.huong,
+                   LTRIM(RTRIM(ISNULL(l.ten_hang_goc, ''))) AS ten_hang,
+                   MAX(CASE WHEN h.huong = 'VAO' THEN l.ghi_no ELSE l.ghi_co END) AS nhan,
+                   MIN(CAST(l.proba AS DECIMAL(9,4)))        AS tin_cay
+              FROM HOA_DON_LINE l
+              JOIN HOA_DON h ON h.ma_hd = l.ma_hd
+             WHERE LTRIM(RTRIM(ISNULL(l.ten_hang_goc, ''))) <> ''
+             GROUP BY h.huong, LTRIM(RTRIM(ISNULL(l.ten_hang_goc, '')))";
+
+        public async Task<List<NhanTrongSoDto>> LayNhanTrongSoAsync(
+            string maDonVi, int nam, CancellationToken ct)
+        {
+            var ra = new List<NhanTrongSoDto>();
+            using var conn = new SqlConnection(_resolver.GetTenantConnection(maDonVi, nam));
+            await conn.OpenAsync(ct);
+            using var cmd = new SqlCommand(SqlNhanTrongSo, conn) { CommandTimeout = 120 };
+            using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                ra.Add(new NhanTrongSoDto
+                {
+                    // 'VAO' -> 'V', 'RA' -> 'R' — cùng quy ước với LayTenHangAsync và với
+                    // cột vao_ra của DK_DATA_TRAIN. Ba chỗ lệch nhau một chữ là kho học
+                    // nhận sai chiều mà không có gì báo.
+                    Huong = r.IsDBNull(0) ? "" : (r.GetString(0) == "VAO" ? "V" : "R"),
+                    TenHang = r.GetString(1),
+                    Nhan = r.IsDBNull(2) ? null : r.GetString(2).Trim(),
+                    TinCay = r.IsDBNull(3) ? null : r.GetDecimal(3),
+                });
+            return ra;
+        }
+
         // Các dòng hoá đơn THẬT của một mặt hàng. So tên đã TRIM ở cả hai vế cho khớp
         // đúng cái đã gom ở trên — lệch một dấu cách là lưới dưới trống trơn.
         public async Task<List<DongHoaDonDto>> LayDongHoaDonAsync(

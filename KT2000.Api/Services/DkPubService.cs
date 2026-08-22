@@ -257,6 +257,43 @@ namespace KT2000.Api.Services
                     ra.Add(kq); continue;
                 }
 
+                // ===== ĐÂY LÀ CÁI VAN CHỐNG "LOÃNG" MODEL =====
+                //
+                // Câu hỏi Trường đặt ra 22/08: thêm dữ liệu vào thì mặt hàng đang đúng ở
+                // 90% có tụt xuống dưới 80% không? Ba việc phải tách bạch:
+                //
+                // 1. THÊM VÍ DỤ ĐÚNG KHÔNG LÀM LOÃNG. Model học bằng cách đếm bằng chứng
+                //    — mỗi ví dụ đúng là một phiếu bầu cho ranh giới đúng. Loãng chỉ xảy
+                //    ra khi thêm ví dụ MÂU THUẪN: cùng tên, cùng chiều, cùng đơn vị mà
+                //    hai nhãn khác nhau. Đó chính xác là thứ đoạn dưới đây chặn — nhánh
+                //    CONFLICT đẩy dòng vào CHO_GIAI_THICH, và export train chỉ lấy
+                //    ACTIVE. Chưa ai viết lý do thì nó KHÔNG BAO GIỜ vào model.
+                //
+                //    Nói cách khác: van chống loãng không nằm ở chỗ hạn chế lượng dữ
+                //    liệu, mà nằm ở mấy dòng so nhãn ngay bên dưới.
+                //
+                // 2. ĐỘ TIN CẬY TỤT VẪN CÓ THỂ LÀ CHUYỆN LÀNH. Khi dạy máy rằng
+                //    "Chiết khấu…" là 154 trong khi một tên gần giống lại là 641, model
+                //    trở nên THÀNH THẬT về vùng nó không chắc. Tin cậy giảm ở đó là hiểu
+                //    biết TĂNG. Đừng thấy pred_conf tụt mà vội kết luận đã làm hỏng.
+                //
+                // 3. THƯỚC ĐO PHẢI LÀ ĐỘ CHÍNH XÁC, KHÔNG PHẢI ĐỘ TIN CẬY. Hai thứ khác
+                //    nhau và có thể đi ngược chiều nhau.
+                //
+                // CẢNH BÁO KHI ĐỌC SỐ ACCURACY SAU KHI TRAIN LẠI: train.py có cố định
+                // random_state = 42, nhưng train_test_split cắt theo TỈ LỆ trên tập đang
+                // có — kho học đổi kích thước là tập kiểm đổi thành phần. Đo 22/08:
+                // 52.435 -> 52.458 dòng sau hai lượt chốt đầu tiên, nên con số mới KHÔNG
+                // so sánh được với 0,9633 của lượt trước; cao hơn hay thấp hơn đều không
+                // kết luận được gì. Muốn so được phải có BỘ KIỂM CỐ ĐỊNH (giữ riêng một
+                // danh sách id, loại khỏi tập huấn luyện). Chưa cài: train.py thuộc vùng
+                // lõi chung (luật #10), chờ Leader duyệt.
+                //
+                // Một quan sát nữa từ số đo, để người sau khỏi giật mình: kho học đang
+                // LỆCH NẶNG — nhãn 156 chiếm 35.001/52.435 = 66,8%. Model vì thế có xu
+                // hướng kéo mọi thứ về 156, và những ca CONFLICT kiểu "kho học 152 ->
+                // máy đoán 156" ở đơn vị sản xuất nhiều khả năng là MÁY sai chứ không
+                // phải kho học sai. Đừng giải thích cho qua để thả chúng thành ACTIVE.
                 string? nhanCu = await LayNhanMoiNhatAsync(conn, loc.Ten, vr, dv, ct);
 
                 if (nhanCu == nhan)

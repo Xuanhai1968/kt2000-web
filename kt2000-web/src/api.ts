@@ -1955,6 +1955,38 @@ export const dkDayTrain = (ds: DkChot[]) =>
     chiTiet: DkKetQuaChot[];
   }>("/dinh-khoan/day-train", ds);
 
+// ===== HAI ĐƯỜNG CHỐT CHÍNH (BR-CDK-04 / BR-CDK-05) =====
+//
+// Dùng hai cái này, KHÔNG tự ghép dkCapNhat + dkDayTrain. Hai hàm kia mỗi cái chỉ chạm
+// MỘT database, nên ghép ở màn hình là để ngỏ khả năng gọi thiếu một nửa: sửa sổ xong
+// mà lệnh dạy máy hỏng thì mặt hàng biến khỏi lưới (good_pred = 1) và không ai gặp lại
+// để dạy. Backend gộp cả hai vào một lượt, theo đúng thứ tự sửa-sổ-trước.
+
+/** Kết quả một lượt chốt — dùng chung cho cả hai đường. */
+export interface DkKetQuaChotLuot {
+  message: string;
+  soDong: number;         // dòng HOA_DON_LINE đã ghi
+  soMatHang: number;
+  soDayTrain: number;     // số mặt hàng đủ điều kiện sang kho học
+  soMoi: number;
+  soTrung: number;
+  soXungDot: number;      // vào CHO_GIAI_THICH — chưa có lý do thì KHÔNG vào model
+  soBiLoai: number;
+  canhBao: string[];
+  chiTiet: DkKetQuaChot[];
+}
+
+// Mark Is Predict OK (cột Exp): good_pred = 1, không đổi định khoản. Mặt hàng nào máy
+// còn yếu (pred_conf < 0,85) thì backend TỰ đẩy sang Data Training — người dùng không
+// phải làm gì thêm, và cũng không có nút nào để bấm nhầm.
+export const dkChotDung = (ds: DkThayDoi[]) =>
+  api.post<DkKetQuaChotLuot>("/dinh-khoan/chot-dung", ds);
+
+// Update về Data Training (cột Sửa): sửa vế máy đoán theo tài khoản đã chọn rồi dạy lại
+// cho máy. Mọi mặt hàng đã sửa đều vào kho học, không xét ngưỡng.
+export const dkSuaNhan = (ds: DkThayDoi[]) =>
+  api.post<DkKetQuaChotLuot>("/dinh-khoan/sua-nhan", ds);
+
 /** Một xung đột đang chờ người dùng viết lý do. Chưa có lý do = không vào model. */
 export interface DkChoGiaiThich {
   id: number;
