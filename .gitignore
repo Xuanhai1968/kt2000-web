@@ -22,7 +22,8 @@ tools/logs/
 __pycache__/
 *.pyc
 *.joblib
-*.json
+last_train_stats.json
+model_v3_meta.json
 # Linh tinh
 *.user
 .vscode/
