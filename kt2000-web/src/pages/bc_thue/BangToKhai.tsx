@@ -797,6 +797,7 @@ export function NhapToKhaiTay(
             <table className="dc-bang">
               <thead>
                 <tr>
+                  <th style={{ width: 44 }}>STT</th>
                   <th>Số tờ khai</th>
                   <th>Ngày đăng ký</th>
                   <th>Trị giá tính thuế</th>
@@ -807,6 +808,7 @@ export function NhapToKhaiTay(
               <tbody>
                 {hq.dong.map((d, i) => (
                   <tr key={`${d.soToKhai}-${i}`}>
+                    <td className="giua">{i + 1}</td>
                     <td>{d.soToKhai}</td>
                     <td>{d.ngayDangKy ?? ""}</td>
                     <td className="phai">{so(d.triGia)}</td>
@@ -815,7 +817,7 @@ export function NhapToKhaiTay(
                   </tr>
                 ))}
                 <tr className="d-dam">
-                  <td colSpan={2}>Tổng — vào [23a] / [24a]</td>
+                  <td colSpan={3}>Tổng — vào [23a] / [24a]</td>
                   <td className="phai">{so(hq.tongTriGia)}</td>
                   <td />
                   <td className="phai">{so(hq.tongTienThue)}</td>

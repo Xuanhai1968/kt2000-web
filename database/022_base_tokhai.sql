@@ -1,15 +1,19 @@
--- 022_base_tokhai.sql — bảng TOKHAI ở KT2000_Base + index (thang, huong) cho HOA_DON
+﻿-- 022_base_tokhai.sql — bảng TOKHAI ở KT2000_PUB + index (thang, huong) cho HOA_DON
+--
+-- ĐỔI CHỖ 22/08: TOKHAI dời từ KT2000_Base sang KT2000_PUB. Máy đang chạy đã được
+-- chuyển bảng + dữ liệu sang PUB (bằng SELECT * INTO, dựng lại PK và IX_TOKHAI_KY);
+-- file này tạo thẳng ở PUB cho máy CÀI MỚI.
 --
 -- ============================================================================
 -- SCRIPT NÀY CHẠY TRÊN HAI LOẠI DATABASE KHÁC NHAU — ĐỌC KỸ TRƯỚC KHI CHẠY:
 --
---   PHẦN 1 (bảng TOKHAI) ....... chỉ KT2000_Base
+--   PHẦN 1 (bảng TOKHAI) ....... chỉ KT2000_PUB
 --   PHẦN 2 (index HOA_DON) ..... MỌI database ĐƠN VỊ-NĂM <MÃ>_<NĂM>
---   PHẦN 3 (cột ct*_xml) ....... chỉ KT2000_Base
+--   PHẦN 3 (cột ct*_xml) ....... chỉ KT2000_PUB
 --
 -- Vì vậy KHÔNG chạy được cả file trong một lượt bằng một connection. Cách chạy:
 --   1. Chạy nguyên file này một lần (bất kỳ database nào) → phần 1 xong, phần 2
---      tự bỏ qua vì KT2000_Base không có bảng HOA_DON.
+--      tự bỏ qua vì KT2000_PUB không có bảng HOA_DON.
 --   2. Chạy LẠI file này cho TỪNG database đơn vị-năm (-d <MÃ>_<NĂM>) → phần 1 tự
 --      bỏ qua vì đã có bảng, phần 2 tạo index.
 -- Cả hai phần đều có rào IF nên chạy lại nhiều lần vô hại, chạy nhầm chỗ cũng không
@@ -27,16 +31,19 @@
 --
 -- ############################ PHẦN 1 — BẢNG TOKHAI ##########################
 --
--- VÌ SAO NẰM Ở BASE CHỨ KHÔNG PHẢI DATABASE ĐƠN VỊ-NĂM:
+-- VÌ SAO MỘT BẢNG DÙNG CHUNG, KHÔNG PHẢI DATABASE ĐƠN VỊ-NĂM:
 -- màn "Báo cáo thuế & rà soát" của MDN_NB liệt kê MỌI đơn vị trên MỘT lưới (một dòng
 -- một đơn vị, xem BaoCaoThue.tsx). Nếu tờ khai nằm rải trong <MÃ>_<NĂM> thì mỗi lần
 -- mở màn phải mở ~30 connection sang 30 database rồi gộp lại — vừa chậm vừa vỡ ngay
--- khi một đơn vị chưa mở năm (SqlException 4060). Để chung một bảng ở Base thì chỉ
--- một câu SELECT, và đơn vị chưa có sổ vẫn hiện dòng trống bình thường.
+-- khi một đơn vị chưa mở năm (SqlException 4060). Để chung một bảng thì chỉ một câu
+-- SELECT, và đơn vị chưa có sổ vẫn hiện dòng trống bình thường.
 --
--- Base là database DÙNG CHUNG của khối khai thuế (xem TenantDbResolver.GetBaseConnection)
--- nên đây đúng chỗ: tờ khai là dữ liệu của kế toán DỊCH VỤ theo dõi chéo các đơn vị,
--- không phải sổ riêng của một đơn vị.
+-- VÌ SAO PUB CHỨ KHÔNG PHẢI BASE (đổi 22/08):
+-- Base giữ DANH MỤC tra cứu — DM_TK, DM_HANG, DM_KH, DM_DVT, DM_KHO, DM_IN,
+-- KET_CHUYEN — thứ mọi đơn vị cùng đọc và hiếm khi đổi. TOKHAI thì khác hẳn: là DỮ
+-- LIỆU NGHIỆP VỤ tích lũy theo kỳ, mỗi tháng dày thêm, cần sao lưu theo nhịp riêng.
+-- KT2000_PUB đang giữ đúng loại đó (DK_DATA_TRAIN, DK_BLACKLIST, DK_AUDIT_LOG) nên
+-- TOKHAI về PUB là đúng nhóm. Đọc/ghi qua TenantDbResolver.GetPubConnection().
 --
 -- CẤU TRÚC lấy nguyên từ khuôn Excel kế toán đang dùng:
 --   docs/THUE/TOKHAI/tkhai_2026_mau_xls.xls — 55 cột, mỗi dòng MỘT tờ khai của
@@ -47,17 +54,17 @@
 -- AN TOÀN: chỉ TẠO MỚI một bảng chưa từng có. Không sửa, không xóa bảng nào đang chạy.
 -- Chạy lại nhiều lần vô hại (có IF NOT EXISTS).
 
--- PHẦN 1 chỉ chạy khi phiên ĐANG ĐỨNG Ở KT2000_Base.
+-- PHẦN 1 chỉ chạy khi phiên ĐANG ĐỨNG Ở KT2000_PUB.
 --
--- KHÔNG dùng `USE KT2000_Base` ở đây: `USE` không thể đảo ngược trong cùng một file
+-- KHÔNG dùng `USE KT2000_PUB` ở đây: `USE` không thể đảo ngược trong cùng một file
 -- (biến DECLARE không sống qua GO nên không nhớ được database ban đầu để quay về).
 -- Chạy file với -d <MÃ>_<NĂM> mà có USE thì phiên kẹt lại ở Base, và PHẦN 2 bên dưới
 -- đi tạo index trên Base thay vì trên database đơn vị — sai hoàn toàn mà im lặng.
 --
 -- Rào bằng DB_NAME() thì mỗi lượt chạy tự làm đúng phần của nó:
---   sqlcmd -d KT2000_Base    → phần 1 chạy, phần 2 tự bỏ qua (Base không có HOA_DON)
+--   sqlcmd -d KT2000_PUB     → phần 1 chạy, phần 2 tự bỏ qua (PUB không có HOA_DON)
 --   sqlcmd -d THAI_TUAN_2026 → phần 1 tự bỏ qua, phần 2 tạo index
-IF DB_NAME() = 'KT2000_Base' AND OBJECT_ID('TOKHAI') IS NULL
+IF DB_NAME() = 'KT2000_PUB' AND OBJECT_ID('TOKHAI') IS NULL
 BEGIN
     CREATE TABLE TOKHAI (
         -- ----- Khóa nghiệp vụ -----
@@ -159,7 +166,7 @@ GO
 -- Màn báo cáo luôn lọc theo KỲ rồi mới trải các đơn vị (mỗi lần mở là một kỳ), nên
 -- index dẫn đầu bằng (nam, thang). Đặt ma_donvi ở cuối để cùng lúc phục vụ cả câu
 -- "một đơn vị xem nhiều kỳ" khi bấm vào một dòng.
-IF DB_NAME() = 'KT2000_Base' AND OBJECT_ID('TOKHAI') IS NOT NULL
+IF DB_NAME() = 'KT2000_PUB' AND OBJECT_ID('TOKHAI') IS NOT NULL
    AND NOT EXISTS (SELECT 1 FROM sys.indexes
                     WHERE name = 'IX_TOKHAI_KY' AND object_id = OBJECT_ID('TOKHAI'))
     CREATE INDEX IX_TOKHAI_KY ON TOKHAI (nam, thang, ma_donvi);
@@ -169,7 +176,7 @@ GO
 -- ################ PHẦN 2 — INDEX (thang, huong) CHO HOA_DON #################
 --
 -- CHẠY CHO: MỌI database ĐƠN VỊ-NĂM (<MÃ>_<NĂM>), cả thuế lẫn nội bộ — HOA_DON là
--- bảng dùng chung. Chạy nhầm trên KT2000_Base thì tự bỏ qua (Base không có HOA_DON).
+-- bảng dùng chung. Chạy nhầm trên KT2000_PUB thì tự bỏ qua (PUB không có HOA_DON).
 --
 -- VÌ SAO CẦN: mọi màn lọc theo KỲ đều lọc bằng cột thang (tháng kê khai), mà HOA_DON
 -- chưa có index nào dẫn đầu bằng cột đó — đo thật 14/08 trên THAI_TUAN_2026: chỉ có
@@ -223,7 +230,7 @@ GO
 
 -- Đóng dấu phiên bản 12. Bọc trong EXEC vì SQL Server dịch CẢ LÔ trước khi chạy: câu
 -- INSERT viết thẳng sẽ nổ "Invalid object name 'SCHEMA_VERSION'" ngay lúc dịch khi
--- chạy trên KT2000_Base (Base không có bảng đó), dù rào IF bên ngoài đã chặn rồi —
+-- chạy trên KT2000_PUB (PUB không có bảng đó), dù rào IF bên ngoài đã chặn rồi —
 -- rào chỉ chặn lúc CHẠY, không cứu được lúc DỊCH. EXEC hoãn việc dịch tới lúc thật sự
 -- gọi, nên chạy nhầm trên Base chỉ đơn giản là không làm gì. (Gặp thật 14/08.)
 IF OBJECT_ID('HOA_DON') IS NOT NULL
@@ -235,7 +242,7 @@ IF OBJECT_ID('HOA_DON') IS NOT NULL
         IF NOT EXISTS (SELECT 1 FROM SCHEMA_VERSION WHERE Ver = 12)
             INSERT INTO SCHEMA_VERSION (Ver) VALUES (12);';
 GO
--- 021_tokhai_ct43_xml.sql — cột ct43_xml cho TOKHAI (KT2000_Base)
+-- 021_tokhai_ct43_xml.sql — cột ct43_xml cho TOKHAI (KT2000_PUB)
 --
 -- VÌ SAO CẦN: cột "Tồn XML" trên lưới rà soát chéo là ct43 đọc từ FILE CỔNG TRẢ VỀ
 -- SAU KHI NỘP — số ĐÃ NỘP THẬT, khác với ct43_nnt là số mình TỰ LẬP. Hai số đó lệch
@@ -245,12 +252,12 @@ GO
 -- Bảng 019 đã khai sẵn xml_name/xml_path cho file cổng trả về, nhưng thiếu chỗ chứa
 -- CON SỐ đọc ra từ file đó — script này bù nốt.
 --
--- CHẠY CHO: chỉ KT2000_Base (nơi có bảng TOKHAI).
+-- CHẠY CHO: chỉ KT2000_PUB (nơi có bảng TOKHAI).
 --
 -- AN TOÀN: chỉ THÊM một cột NULL. Không sửa, không xóa dữ liệu đang có. Chạy lại
 -- nhiều lần vô hại. Chạy nhầm trên database khác thì tự bỏ qua (không có TOKHAI).
 
-IF OBJECT_ID('TOKHAI') IS NOT NULL
+IF DB_NAME() = 'KT2000_PUB' AND OBJECT_ID('TOKHAI') IS NOT NULL
    AND COL_LENGTH('TOKHAI', 'ct43_xml') IS NULL
     ALTER TABLE TOKHAI ADD ct43_xml DECIMAL(18,0) NULL;
 GO
@@ -258,7 +265,7 @@ GO
 
 -- ############ PHẦN 3 — CỘT ct*_xml: BẢN TCT TRẢ VỀ (gộp từ 022) ############
 --
--- CHẠY CHO: chỉ KT2000_Base. Chạy nhầm chỗ khác thì tự bỏ qua (không có TOKHAI).
+-- CHẠY CHO: chỉ KT2000_PUB. Chạy nhầm chỗ khác thì tự bỏ qua (không có TOKHAI).
 --
 -- VÌ SAO CẦN: bảng đang lưu bản MÌNH TỰ LẬP (ct*_nnt). Muốn tìm ra "lệch ở CHỈ TIÊU
 -- NÀO" so với bản TCT trả về thì phải giữ CẢ 26 chỉ tiêu của bản đó — chỉ có ct43
@@ -277,7 +284,11 @@ GO
 --
 -- AN TOÀN: chỉ THÊM cột NULL. Chạy lại nhiều lần vô hại.
 
-IF OBJECT_ID('TOKHAI') IS NOT NULL
+-- Rào thêm DB_NAME() = 'KT2000_PUB': từ 22/08 bảng TOKHAI sống ở PUB, nhưng máy đã
+-- chạy bản cũ vẫn còn bảng TOKHAI bên KT2000_Base (giữ làm đường lùi, xem script 028).
+-- Không rào thì chạy nhầm -d KT2000_Base sẽ đi bồi cột cho BẢNG CŨ — bảng không ai
+-- đọc nữa — mà vẫn báo thành công, còn bảng thật bên PUB thì thiếu cột.
+IF DB_NAME() = 'KT2000_PUB' AND OBJECT_ID('TOKHAI') IS NOT NULL
 BEGIN
     -- ct43_xml đã có từ script 021 nên không khai lại ở đây.
     IF COL_LENGTH('TOKHAI','ct21_xml')  IS NULL ALTER TABLE TOKHAI ADD ct21_xml  DECIMAL(18,0) NULL;
@@ -331,7 +342,7 @@ GO
 -- AN TOÀN: chỉ THÊM cột NULL. Dòng cũ để NULL, code đọc bằng ISNULL(...,0) nên tờ khai
 -- đã lưu giữ nguyên số. Chạy lại nhiều lần vô hại.
 
-IF OBJECT_ID('TOKHAI') IS NOT NULL
+IF DB_NAME() = 'KT2000_PUB' AND OBJECT_ID('TOKHAI') IS NOT NULL
 BEGIN
     IF COL_LENGTH('TOKHAI','ct23a_nnt') IS NULL
         ALTER TABLE TOKHAI ADD ct23a_nnt DECIMAL(18,0) NULL;

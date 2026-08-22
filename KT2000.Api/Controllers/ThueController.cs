@@ -421,7 +421,10 @@ namespace KT2000.Api.Controllers
             // 7 tháng). Không lọc thì kỳ sau cộng lại số của kỳ trước.
             var daDung = bqTruoc ? _hqan.SoToKhaiTruocKy(code, year, thang) : null;
 
-            var kq = _hqan.DocKy(code, year, thang, daDung);
+            // Truyền MST để loại file của đơn vị KHÁC lạc vào thư mục (chốt chặn bản VFP
+            // có: "Tờ khai HQ không phải của đơn vị ...").
+            var (mstDv, _, _) = await HoSoDonVi(code);
+            var kq = _hqan.DocKy(code, year, thang, daDung, mstDv);
 
             // Cho frontend biết kỳ này đã vào sổ chưa, để đổi nhãn nút.
             kq.MaHdTrongSo = HaiQuanVaoSo.MaHdCuaKy(code, year, thang);
@@ -465,7 +468,8 @@ namespace KT2000.Api.Controllers
             // số tiền vào sổ phải là số đọc được từ file thật, không phải số ai đó
             // sửa được trên đường truyền.
             var daDung = _hqan.SoToKhaiTruocKy(code, year, thang);
-            var hq = _hqan.DocKy(code, year, thang, daDung);
+            var (mstDv, _, _) = await HoSoDonVi(code);
+            var hq = _hqan.DocKy(code, year, thang, daDung, mstDv);
 
             try
             {

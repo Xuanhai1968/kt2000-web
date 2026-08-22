@@ -1063,6 +1063,34 @@ export default function ToKhaiXml(
     huong: "VAO" | "RA",
   ) => {
     if (!tx) {
+      // Chưa chọn/đọc được file Excel thì lùi về BẢNG KÊ GỐC trong sổ
+      // (IN_VALUE / IN_VALUE_LINE) — cùng một nguồn số: bảng kê đó chính là bản
+      // chép nguyên si file Excel của cổng đã nạp vào DB. Nhờ vậy màn có số đối
+      // chiếu ngay, không phải đi tìm file.
+      const layBk = nhan.includes("VAT")
+        ? (huong === "RA" ? dcBangKe?.bangKeVatRa : dcBangKe?.bangKeVatVao)
+        : (huong === "RA" ? dcBangKe?.bangKeRa : dcBangKe?.bangKeVao);
+
+      if (dcBangKe && !dcBangKe.chuaCoBang && layBk != null && !tong.locTheoChon) {
+        const lechBk = tongSo - layBk;
+        return (
+          <>
+            <div className="o-so"
+                 title={"Số của BẢNG KÊ gốc cổng thuế đã nạp vào sổ (IN_VALUE_LINE)"
+                        + " — không cần chọn file Excel"}>
+              <span className="o-nhan">{nhan} từ bảng kê</span>
+              <span className="o-gia">{tien(layBk)}</span>
+            </div>
+            <div className="o-so">
+              <span className="o-nhan">Lệch</span>
+              <span className={`o-gia ${Math.abs(lechBk) < 1 ? "o-khop" : "o-lech"}`}>
+                {tien(lechBk)}
+              </span>
+            </div>
+          </>
+        );
+      }
+
       return (
         <>
           <div className="o-so"
@@ -1715,6 +1743,7 @@ export default function ToKhaiXml(
               <table className="dc-bang">
                 <thead>
                   <tr>
+                    <th style={{ width: 44 }}>STT</th>
                     <th>Số tờ khai</th>
                     <th>Ngày đăng ký</th>
                     <th>Trị giá tính thuế</th>
@@ -1725,6 +1754,7 @@ export default function ToKhaiXml(
                 <tbody>
                   {hq.dong.map((d, i) => (
                     <tr key={`${d.soToKhai}-${i}`}>
+                      <td className="giua">{i + 1}</td>
                       <td>{d.soToKhai}</td>
                       <td>{d.ngayDangKy ?? ""}</td>
                       <td className="phai">{tien(d.triGia)}</td>
@@ -1733,7 +1763,7 @@ export default function ToKhaiXml(
                     </tr>
                   ))}
                   <tr className="d-dam">
-                    <td colSpan={2}>Tổng — vào [23a] / [24a]</td>
+                    <td colSpan={3}>Tổng — vào [23a] / [24a]</td>
                     <td className="phai">{tien(hq.tongTriGia)}</td>
                     <td />
                     <td className="phai">{tien(hq.tongTienThue)}</td>

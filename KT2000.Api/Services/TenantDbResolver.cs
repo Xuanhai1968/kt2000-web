@@ -47,6 +47,12 @@ namespace KT2000.Api.Services
         // hệ thống — mã đơn vị chỉ là MỘT ĐẶC TRƯNG của nó. Chia dữ liệu huấn luyện về
         // từng đơn vị là chặt đứt cái đang làm nó đoán được: đơn vị mới tinh vẫn đoán
         // đúng nhờ học từ tên hàng của mọi đơn vị khác.
+        //
+        // TỪ 22/08 CÒN GIỮ BẢNG TOKHAI (dời từ KT2000_Base, xem script 028).
+        // Base ở lại đúng vai DANH MỤC tra cứu (DM_TK, DM_HANG, DM_KH…) — thứ mọi đơn
+        // vị cùng đọc và hiếm khi đổi. TOKHAI là dữ liệu nghiệp vụ tích lũy theo kỳ,
+        // vòng đời và nhịp sao lưu khác hẳn, nên về PUB cùng nhóm dữ liệu tích lũy.
+        // ĐỌC/GHI TOKHAI phải qua hàm này, KHÔNG phải GetBaseConnection.
         public string GetPubConnection()
         {
             var b = new SqlConnectionStringBuilder(GetMasterConnection())

@@ -78,27 +78,46 @@ namespace KT2000.Api.Services
             // DoiChieuService), nên phải lấy đúng tháng CUỐI QUÝ làm mã kỳ.
             int kyKeKhai = khaiQuy ? (thang + 2) / 3 * 3 : thang;
 
+            // GOM THEO (khhd, so_hd) — KHÔNG kèm mst, và mỗi hóa đơn chỉ lấy MỘT bản.
+            //
+            // VÌ SAO: bảng kê có thể chứa CÙNG một hóa đơn hai lần do nạp hai lượt, bản
+            // sau thiếu mst. USA_MEVA kỳ 7 bán ra: 4.054 dòng cho đúng 2.300 hóa đơn —
+            // ví dụ 1C26TUA/0013141 có L6 (mst NULL) và L2306 (mst 0107130530), cùng
+            // value1/tax, cùng trỏ về một ma_hd. Gộp mst vào khóa thì hai bản thành hai
+            // nhóm và tổng bán ra phồng gần gấp đôi (3,29 tỷ VAT thay vì 2,02 tỷ).
+            //
+            // Dedup bằng ROW_NUMBER thay vì SUM: hai bản là BẢN SAO của nhau, cộng lại
+            // là sai. Ưu tiên bản có ma_hd rồi tới bản có mst.
             const string SQL = @"
-                WITH bk AS (
+                WITH thom AS (
                     SELECT v.loai_ct,
                            ISNULL(l.khhd, '')  AS khhd,
                            ISNULL(l.so_hd, '') AS so_hd,
                            ISNULL(l.mst, '')   AS mst,
-                           MAX(ISNULL(l.ten_kh, '')) AS ten_kh,
-                           MAX(l.ngay)               AS ngay,
-                           SUM(ISNULL(l.value1, 0))  AS tien_hang,
-                           SUM(ISNULL(l.tax, 0))     AS tien_vat
+                           ISNULL(l.ten_kh, '') AS ten_kh,
+                           l.ngay,
+                           ISNULL(l.value1, 0) AS tien_hang,
+                           ISNULL(l.tax, 0)    AS tien_vat,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY v.loai_ct, ISNULL(l.khhd,''), ISNULL(l.so_hd,'')
+                               ORDER BY CASE WHEN ISNULL(l.ma_hd,'') <> '' THEN 0 ELSE 1 END,
+                                        CASE WHEN ISNULL(l.mst,'')   <> '' THEN 0 ELSE 1 END,
+                                        l.line_num
+                           ) AS rn
                       FROM IN_VALUE v
                       JOIN IN_VALUE_LINE l ON l.ma_input = v.ma_input
                      WHERE v.thang = @ky
-                     GROUP BY v.loai_ct, ISNULL(l.khhd,''), ISNULL(l.so_hd,''),
-                              ISNULL(l.mst,'')
+                ),
+                bk AS (
+                    SELECT loai_ct, khhd, so_hd, mst, ten_kh, ngay, tien_hang, tien_vat
+                      FROM thom WHERE rn = 1
                 ),
                 so AS (
-                    SELECT h.huong,
+                    -- DISTINCT: bỏ mst khỏi khóa nên sổ có thể có nhiều dòng cùng
+                    -- (khhd, so_hd); không DISTINCT thì LEFT JOIN nhân bản dòng bảng kê.
+                    SELECT DISTINCT h.huong,
                            ISNULL(h.khhd, '')  AS khhd,
-                           ISNULL(h.so_hd, '') AS so_hd,
-                           ISNULL(h.mst, '')   AS mst
+                           ISNULL(h.so_hd, '') AS so_hd
                       FROM HOA_DON h
                      WHERE h.thang = @thang
                 )
@@ -107,7 +126,7 @@ namespace KT2000.Api.Services
                        CASE WHEN so.khhd IS NULL THEN 0 ELSE 1 END AS co_trong_so
                   FROM bk
                   LEFT JOIN so
-                    ON so.khhd = bk.khhd AND so.so_hd = bk.so_hd AND so.mst = bk.mst
+                    ON so.khhd = bk.khhd AND so.so_hd = bk.so_hd
                    AND so.huong = CASE WHEN bk.loai_ct = 'V' THEN 'VAO' ELSE 'RA' END
                  ORDER BY bk.loai_ct, bk.ngay, bk.so_hd";
 
