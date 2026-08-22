@@ -21,6 +21,11 @@ tools/.wdm/
 tools/logs/
 __pycache__/
 *.pyc
+*.joblib
+# Model/dataset cua bo dinh khoan ML — chi trong tools/, KHONG chan *.json toan repo:
+# chan rong tay se nuot package.json, tsconfig*.json, appsettings.template.json,
+# launchSettings.json (8 file da bi xoa oan trong lan merge 21/08).
+tools/**/*.json
 
 # Linh tinh
 *.user
@@ -31,3 +36,7 @@ __pycache__/
 *.xls
 # ...NHUNG XML_MAP.xlsx la file cau hinh cua bo tai HD, BAT BUOC di theo repo
 !tools/XML_MAP.xlsx
+
+# Log của lần di trú DATA_TRAIN.xlsx -> KT2000_PUB.DK_DATA_TRAIN. Sinh ra mỗi lần chạy,
+# mang tên khách hàng thật trong nội dung — không lên repo.
+tools/dinh_khoan/MIGRATE_LOG_*.txt

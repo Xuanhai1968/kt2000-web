@@ -40,6 +40,20 @@ namespace KT2000.Api.Services
             return b.ConnectionString;
         }
 
+        // Database CHUNG của máy học định khoản: DK_DATA_TRAIN, DK_BLACKLIST,
+        // DK_AUDIT_LOG (schema của Leader, commit 127f9408).
+        //
+        // Vì sao KHÔNG nằm trong database đơn vị: model định khoản là model CHUNG toàn
+        // hệ thống — mã đơn vị chỉ là MỘT ĐẶC TRƯNG của nó. Chia dữ liệu huấn luyện về
+        // từng đơn vị là chặt đứt cái đang làm nó đoán được: đơn vị mới tinh vẫn đoán
+        // đúng nhờ học từ tên hàng của mọi đơn vị khác.
+        public string GetPubConnection()
+        {
+            var b = new SqlConnectionStringBuilder(GetMasterConnection())
+            { InitialCatalog = "KT2000_PUB" };
+            return b.ConnectionString;
+        }
+
         // Connection đến database của (đơn vị, năm) — dựng từ connection Master,
         // chỉ thay tên database
         public string GetTenantConnection(string code, int year)

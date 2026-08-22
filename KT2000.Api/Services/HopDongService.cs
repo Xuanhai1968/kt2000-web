@@ -4,7 +4,7 @@ using KT2000.Api.Models;
 namespace KT2000.Api.Services
 {
     // Nhân sự + hợp đồng lao động. Hai bảng nằm trong database ĐƠN VỊ-NĂM
-    // (xem database/025_tenant_nhansu_hopdong.sql), KHÔNG ở KT2000_Base: nhân sự là dữ
+    // (xem database/026_tenant_nhansu_hopdong.sql), KHÔNG ở KT2000_Base: nhân sự là dữ
     // liệu CỦA đơn vị, không phải danh mục tham khảo dùng chung như DM_TK.
     //
     // BR-HD-01 — cả database đã là của một đơn vị nên bảng KHÔNG có cột ma_donvi.

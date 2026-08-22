@@ -42,34 +42,17 @@ namespace KT2000.Api.Services
             // vẫn 3 và 2, nên màn hình cho gõ thứ mà sổ không giữ nổi: 22,9885 vào DB hóa
             // 22,989, nhân lại lệch 10,75 và hóa đơn bị đá ra trong khi màn hình vẫn xanh.
             (17, "KT2000.Api.va_024_4_so_le.sql"),
+            // gia_von lên 4 số lẻ cho khớp don_gia. Từ 21/08 trình nạp đặt
+            // gia_von = don_gia với hàng VÀO, mà cột chỉ (18,2) nên SQL cắt bớt ngay lúc
+            // gán: 22.249,4159 vào sổ hóa 22.249,42, hai cột cùng một số mà khác giá trị.
+            (18, "KT2000.Api.va_025_gia_von.sql"),
 
-            // 18 (025 nhân sự + hợp đồng) và 19 (026 chấm công + lương) ĐÃ RÚT KHỎI ĐÂY
-            // — chốt 21/08. Chúng KHÔNG phải bản vá cấu trúc:
-            //
-            // Bản vá ở danh sách này sửa thứ MỌI database đều phải có (thêm cột vào
-            // HOA_DON, nới số lẻ đơn giá) — thiếu là nạp hóa đơn chết. Còn nhân sự,
-            // hợp đồng, chấm công, lương là một MODULE RIÊNG mà phần lớn đơn vị không
-            // dùng: khách chỉ thuê làm kế toán thuế thì lương họ tự làm.
-            //
-            // Để ở đây thì mọi database của mọi đơn vị, mọi năm đều bị dựng thêm 4 bảng
-            // rỗng ngay lần đầu ai đó mở sổ — không ai yêu cầu, không ai dùng, mà lại
-            // gánh rủi ro: BaoDam() chạy ngầm ở mọi lối vào và nuốt lỗi có chủ đích, nên
-            // bảng dựng dở sẽ không ai biết.
-            //
-            // Nay dựng bảng là việc CÓ CHỦ Ý: Quản trị -> Mở năm làm việc, tích đơn vị
-            // rồi bấm "Tạo bảng Hợp đồng + Lương" (AdminService.TaoBangHopDongLuong).
-            // Màn Lương đơn vị chỉ liệt kê đơn vị đã được tạo bảng.
         };
-
-        /// <summary>
-        /// Hai script của module Hợp đồng + Lương. KHÔNG nằm trong CAC_BAN_VA (xem giải
-        /// thích ngay trên) — chỉ chạy khi người dùng bấm nút.
-        /// Thứ tự QUAN TRỌNG: 026 có khóa ngoại trỏ về NHAN_SU do 025 tạo.
-        /// </summary>
         public static readonly (int Ver, string TaiNguyen)[] MODULE_HOP_DONG_LUONG =
         {
-            (18, "KT2000.Api.va_025_nhansu_hopdong.sql"),
-            (19, "KT2000.Api.va_026_chamcong_bangluong.sql"),
+            (19, "KT2000.Api.va_026_nhansu_hopdong.sql"),
+            (20, "KT2000.Api.va_027_chamcong_bangluong.sql"),
+
         };
 
         // KHÔNG có khái niệm "phiên bản mới nhất" — xem giải thích ở DocCacPhienBan.

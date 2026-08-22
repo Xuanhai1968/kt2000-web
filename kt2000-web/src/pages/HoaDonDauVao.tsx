@@ -102,10 +102,19 @@ const tienHangDong = (m: MatHang) => {
   return Math.round(sl * dg) - (m.chietKhau || 0);
 };
 
-const sumLine = (hd: HoaDonConLai) =>
-  toanChietKhau(hd.matHangs)
-    ? hd.matHangs.reduce((s, m) => s + (m.chietKhau || 0), 0)
-    : hd.matHangs.reduce((s, m) => s + tienHangDong(m), 0);
+// PHẢI khớp ImportService.TongTienHangTuLine — hai bên tính hai kiểu là màn hình báo
+// khớp còn backend đá hóa đơn ra, mà người dùng không có đường nào biết trước.
+//   Ca thật HOA_SANG 21/08: bốn hóa đơn MORINAGA hiện thẻ xanh "Σ line khớp tiền hàng"
+//   ngay cạnh dòng đỏ "chênh 18.965.006" của backend. Hai cột cạnh nhau trong cùng một
+//   lưới, do hai bộ máy khác nhau tính.
+//
+// Hóa đơn TOÀN chiết khấu thì lấy DẤU theo số người bán khai — có hai quy ước cùng tồn
+// tại: HOA_SANG khai dương, NHAT_TUAN khai âm. Cùng bản chất, cùng |giá trị|, khác dấu.
+// Ép một dấu cứng là một trong hai nhóm lệch gấp đôi.
+const sumLine = (hd: HoaDonConLai) => {
+  const tong = hd.matHangs.reduce((s, m) => s + tienHangDong(m), 0);
+  return toanChietKhau(hd.matHangs) && hd.tienHang > 0 && tong < 0 ? -tong : tong;
+};
 
 // Dời số tiền của dòng TC=3 sang cột Chiết khấu ngay lúc nhận dữ liệu, KHÔNG làm ở tầng
 // hiển thị: lưới sửa thẳng vào mảng này, có hai cách đọc song song là chỗ nào cũng phải
@@ -507,18 +516,25 @@ function ConsoleLayHoaDon({ huongMacDinh }: Props) {
       // Dòng chiết khấu không có cặp SL × ĐG để cân — tiền của nó nằm ở cột Chiết khấu.
       if (laDongChietKhau(m) || m.thanhTien === 0) { boQua++; continue; }
 
-      // Dòng đã khớp thì KHÔNG đụng vào. Sửa một con số đang đúng chỉ để nó "đúng hơn"
-      // là tự tay làm sai lệch chứng từ.
-      if (Math.abs(m.soLuong * m.donGia - m.thanhTien) < NGUONG_LECH) { boQua++; continue; }
+      // Chỉ bỏ qua dòng khớp TUYỆT ĐỐI (chốt Trường 21/08).
+      //
+      // Trước đây bỏ qua mọi dòng lệch dưới 10đ, nên hoá đơn lệch 9,72 bấm nút không ra
+      // gì — mà màn hình lại hiện "10" do làm tròn, người dùng tưởng nút hỏng. Hoá đơn
+      // loại đó vốn đã qua cửa nạp; nút này chỉ làm cho số đẹp hơn nên không có lý do
+      // từ chối mài chúng.
+      const saiHienTai = Math.abs(m.soLuong * m.donGia - m.thanhTien);
+      if (saiHienTai === 0) { boQua++; continue; }
 
       const slMoi = m.donGia  !== 0 ? lamTron(m.thanhTien / m.donGia,  SO_LE_SL) : null;
       const dgMoi = m.soLuong !== 0 ? lamTron(m.thanhTien / m.soLuong, SO_LE_DG) : null;
       const saiSl = slMoi === null ? Infinity : Math.abs(slMoi * m.donGia  - m.thanhTien);
       const saiDg = dgMoi === null ? Infinity : Math.abs(m.soLuong * dgMoi - m.thanhTien);
 
-      // Không kéo nổi xuống dưới ngưỡng thì để NGUYÊN. Ghi đè bằng một con số vẫn sai mà
-      // lại mất số gốc là đánh đổi tồi — số gốc còn thì kế toán còn đối chiếu được.
-      if (Math.min(saiSl, saiDg) >= NGUONG_LECH) { khongCuuDuoc++; continue; }
+      // So với sai số ĐANG CÓ, không so với ngưỡng cố định: mài mà không khá hơn thì để
+      // NGUYÊN. Ghi đè bằng một con số vẫn sai mà lại mất số gốc là đánh đổi tồi — số gốc
+      // còn thì kế toán còn đối chiếu được. Cùng luật với MaiChoKhopThanhTien bên
+      // ImportService, để bấm tay và mài tự động không bao giờ ra hai kết quả khác nhau.
+      if (Math.min(saiSl, saiDg) >= saiHienTai) { khongCuuDuoc++; continue; }
 
       // Hòa thì giữ đơn giá và sửa số lượng: đơn giá là giá niêm yết của người bán,
       // sửa số lượng dễ giải thích hơn khi thanh tra hỏi.

@@ -4,6 +4,7 @@
 |---|---|---|
 | v0.1 | 18/08/2026 | Bản đầu — dịch từ form VFP "Training vụ Prediction" (screenshot + giải thích của Hiu 18/08) |
 | v0.2 | 18/08/2026 | Hiu chốt cả 4 câu §4: dk_goc giữ như VFP (cần script đánh số), prefix = từ đầu tiên, kỳ chốt linh động không lịch cứng, quyền mở như VFP + đường nâng cấp tầng duyệt chuyên gia (BR-CDK-12 mới) |
+| v0.3 | 19/08/2026 | Hiu chốt sau chạy test (user nhầm khu vực làm việc với selection chung): QUAY LẠI mô hình 2 cột đánh dấu Exp2/Check + GIỮ NGUYÊN tên nút VFP; đổi tên sau nếu nghĩ ra tên ưng (chỉ đổi nhãn, không đổi cơ chế) — sửa BR-CDK-02/03/04/05/11 + acceptance |
 
 ## 1. Bối cảnh & mục tiêu
 
@@ -56,31 +57,39 @@ không có lịch cứng, xem §4.3), V/R, cặp (Định khoản gốc → Đ�
 hiện tại — hai combo, "gốc" đọc từ dk_goc, EMPTY là một giá trị lọc
 được), ô tìm theo tên. Mỗi tổ hợp lọc hiện tổng số nhóm + tổng số dòng.
 
-**BR-CDK-02 — Chọn rồi hành động (thay mô hình 2 cột Exp2/Check).**
-Bên VFP phải có 2 cột đánh dấu vì 2 hành động; bên web dùng MỘT
-selection (checkbox từng nhóm) + 2 nút hành động áp cho selection.
-Không còn trạng thái đánh-dấu-chờ nằm lại trong DB — chọn nhầm thì bỏ
-chọn, chưa bấm hành động thì chưa có gì xảy ra.
+**BR-CDK-02 — Hai cột đánh dấu Exp2/Check, GIỮ NHƯ VFP (Hiu chốt
+19/08).** Bản v0.1-v0.2 định dùng một selection chung + 2 nút, nhưng khi
+chạy test chính user đã nhầm khu vực làm việc giữa chốt-đúng và
+thay-đổi-ĐK. Hai cột là hai "hàng đợi" tách bạch — dấu ở cột nào thì
+CHỈ nút của cột đó ăn, nhầm chéo khó xảy ra, và user đã quen nhiều năm:
+- Cột **Exp2**: hàng đợi "máy làm đúng" — nút "Mark Is Predict OK" xử lý.
+- Cột **Check**: hàng đợi "phải đổi ĐK" — nút "Update về Data Training"
+  xử lý theo TK chọn ở combo.
+Dấu chỉ là trạng thái trên UI (chưa bấm nút = chưa có gì ghi xuống DB);
+bấm nút xong thì xóa dấu của các dòng đã xử lý.
 
-**BR-CDK-03 — Ba nút chọn nhanh.**
-- "Chọn tất cả" (theo bộ lọc hiện tại)
-- "Chọn cùng nhóm tên": từ dòng đang đứng, chọn mọi nhóm có cùng prefix,
-  rồi TỰ ĐỘNG cuộn đến nhóm prefix kế tiếp và dừng — tái hiện đúng nhịp
-  "thẩm định mẫu → quét cụm → máy dắt sang trạm kế" của VFP.
-  ĐÃ CHỐT định nghĩa prefix v1: TỪ ĐẦU TIÊN của tên (tách theo khoảng
-  trắng), so trên ten_norm — không phân biệt hoa thường; danh sách sort
-  theo tên để các nhóm cùng prefix nằm liền nhau như VFP.
-  Mở rộng SAU, ngoài phạm vi v1 (Hiu đã định hướng): chọn theo NCC,
-  chọn theo nhóm mặt hàng có nghĩa (vd "các loại bánh").
-- "Bỏ chọn"
+**BR-CDK-03 — Các nút đánh dấu nhanh (tên giữ như VFP).**
+- "Mark All Line": đánh dấu Exp2 toàn bộ theo bộ lọc hiện tại.
+- "Mark Record By Prefix": từ dòng đang đứng, đánh dấu **Exp2** mọi nhóm
+  cùng prefix, rồi TỰ ĐỘNG cuộn đến nhóm prefix kế tiếp và dừng — đúng
+  nhịp "thẩm định mẫu → quét cụm → máy dắt sang trạm kế" của VFP.
+- "Mark Record By Prefix For Update": như trên nhưng đánh dấu **Check**
+  (cho các nhóm máy sai, sẽ đổi theo combo TK).
+- "Bỏ đánh dấu" (xóa dấu cả 2 cột trong phạm vi lọc).
+ĐÃ CHỐT định nghĩa prefix v1: TỪ ĐẦU TIÊN của tên (tách theo khoảng
+trắng), so trên ten_norm — không phân biệt hoa thường; danh sách sort
+theo tên để các nhóm cùng prefix nằm liền nhau như VFP.
+Mở rộng SAU, ngoài phạm vi v1 (Hiu đã định hướng): chọn theo NCC,
+chọn theo nhóm mặt hàng có nghĩa (vd "các loại bánh").
 
-**BR-CDK-04 — Hành động "Chốt đúng".** Với mọi dòng HOA_DON_LINE thuộc
-các nhóm đã chọn: good_pred = 1 (không định khoản lại nữa). Dòng có
+**BR-CDK-04 — Nút "Mark Is Predict OK" (chốt máy làm đúng).** Với mọi
+dòng HOA_DON_LINE thuộc các nhóm đang đánh dấu Exp2: good_pred = 1 (không định khoản lại nữa). Dòng có
 pred_conf < 0.85: audit-insert vào DK_DATA_TRAIN (củng cố vùng máy còn
 yếu) theo trình tự a-b-c-d trong README_DK_WEB.md.
 
-**BR-CDK-05 — Hành động "Sửa thành [TK]".** Combo TK ngay cạnh nút
-(danh sách TK hợp lệ + cho gõ tay). Với các nhóm đã chọn: cập nhật vế
+**BR-CDK-05 — Nút "Update về Data Training" (đổi ĐK theo combo).** Combo
+TK ngay cạnh nút (danh sách TK hợp lệ + cho gõ tay). Với các nhóm đang
+đánh dấu Check: cập nhật vế
 máy đoán = TK mới, good_pred = 1, audit-insert. Phát hiện "sửa" so với
 giá trị hiện tại trong DB ngay trong transaction (không cần snapshot).
 
@@ -135,17 +144,21 @@ thật sự sạch. Khi bật (config `"ExpertReview": true`):
   + 1 role (DataExpert). Giai đoạn 1 chạy ai-cũng-chốt-được như VFP
   (thực tế chỉ 1-2 user quen việc làm định khoản).
 
-**BR-CDK-11 — Bảng đổi tên nút (VFP cũ → web mới).**
+**BR-CDK-11 — Tên nút: GIỮ NGUYÊN như VFP (Hiu chốt 19/08).**
+Lý do: chạy nhanh ổn định, user quen tay nhiều năm; nếu sau này Hiu
+nghĩ ra tên ưng hơn thì CHỈ đổi nhãn hiển thị, không đổi cơ chế.
 
-| VFP (cũ) | Web (mới) |
+| VFP | Web v1 |
 |---|---|
-| Mark All Line | Chọn tất cả |
-| Mark Record By Prefix / ...For Update | Chọn cùng nhóm tên (một nút — hành động sau đó mới quyết Chốt hay Sửa) |
-| Mark Is Predict OK | Chốt đúng |
-| (combo TK + Mark...For Update + Update về Data Training) | Sửa thành [TK] |
-| Mark Number Record N | (bỏ) |
-| Chỉ lấy dữ liệu MF Predict | (bỏ — tự load) |
-| AUDIT DATA TRAIN | Chờ giải thích (N) |
+| Mark All Line | Giữ nguyên |
+| Mark Record By Prefix | Giữ nguyên (đánh Exp2) |
+| Mark Record By Prefix For Update | Giữ nguyên (đánh Check) |
+| Mark Is Predict OK | Giữ nguyên |
+| Update về Data Training | Giữ nguyên |
+| Mark Number Record N | (bỏ — Hiu xác nhận không dùng) |
+| Chỉ lấy dữ liệu MF Predict | (bỏ — màn tự load theo bộ lọc) |
+| AUDIT DATA TRAIN | Chờ giải thích (N) — badge, không còn là nút |
+| Training MF / Training New | Chuyển về console admin |
 
 ## 4. Quyết định đã chốt (Hiu, 18/08 — nâng từ §4 "câu hỏi as-built" của v0.1)
 
@@ -175,13 +188,16 @@ thật sự sạch. Khi bật (config `"ExpertReview": true`):
 
 - A1. Lọc 641→156 của một đơn vị: danh sách chỉ còn các nhóm đúng cặp
   đó; đổi combo gốc sang EMPTY thấy bộ dữ liệu mới chưa từng định khoản.
-- A2. Đứng ở nhóm "Bánh Danisa...", bấm "Chọn cùng nhóm tên": mọi nhóm
-  bắt đầu bằng prefix đó được chọn, con trỏ tự nhảy tới nhóm prefix kế.
-- A3. "Chốt đúng" N nhóm: mọi dòng HOA_DON_LINE tương ứng good_pred=1;
+- A2. Đứng ở nhóm "Bánh Danisa...", bấm "Mark Record By Prefix": mọi
+  nhóm bắt đầu bằng prefix đó được đánh dấu Exp2, con trỏ tự nhảy tới
+  nhóm prefix kế.
+- A3. "Mark Is Predict OK" khi đang có N nhóm đánh dấu Exp2: mọi dòng
+  HOA_DON_LINE tương ứng good_pred=1;
   chạy lại BƯỚC PREDICT: các dòng này KHÔNG bị định khoản lại.
 - A4. Nhóm chốt đúng có pred_conf 0.80 (< 0.85): xuất hiện trong
   DK_DATA_TRAIN status ACTIVE; nhóm 0.95 thì không.
-- A5. "Sửa thành 641" một nhóm đang 156: GHI_NO/GHI_CO đổi đúng vế,
+- A5. Đánh dấu Check một nhóm đang 156, chọn 641 ở combo, bấm "Update
+  về Data Training": GHI_NO/GHI_CO đổi đúng vế,
   DK_DATA_TRAIN thêm dòng; nếu bản cũ trong DK_DATA_TRAIN là label khác
   → dòng mới status CHO_GIAI_THICH + badge "Chờ giải thích" tăng 1.
 - A6. Điền giải thích trong màn "Chờ giải thích" → status ACTIVE; export

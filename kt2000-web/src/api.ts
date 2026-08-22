@@ -1,4 +1,4 @@
-import axios from "axios";
+﻿import axios from "axios";
 
 // Đường dẫn tương đối: dev thì Vite proxy sang backend (vite.config.ts),
 // còn bản publish backend tự phục vụ frontend nên cùng gốc, không phải sửa gì.
@@ -1518,10 +1518,6 @@ export const thueHtmlHoaDon = async (maHd: string, maDonVi?: string) => {
   return { html: r.data, duongDan: docDuongDan(r.headers) };
 };
 
-// ===== BÁO CÁO TỒN KHO (SPEC-BAO-CAO-TON-KHO) =====
-//
-// Đơn vị và năm KHÔNG truyền lên: backend đọc từ claim trong token (BR-BC-12).
-// Mọi endpoint là GET — màn báo cáo không bao giờ tự ghi (BR-BC-01).
 
 export interface TonKhoTongHopRow {
   maTk: string;
@@ -1583,13 +1579,6 @@ export const layTonKhoChiTiet = (maHang: string, thang: number) =>
 export const layHangAm = (thang?: number) =>
   api.get<HangAmRow[]>("/bao-cao/ton-kho/hang-am", { params: { thang } });
 
-// ===== NHÂN SỰ & HỢP ĐỒNG LAO ĐỘNG =====
-// Hai bảng nằm trong database ĐƠN VỊ-NĂM (database/025_tenant_nhansu_hopdong.sql).
-//
-// maDonVi là TÙY CHỌN: bỏ trống thì backend dùng đơn vị đang đăng nhập. Chỉ MDN_NB
-// mới truyền mã khác để lập hợp đồng hộ khách — đơn vị thường truyền mã khác sẽ bị
-// backend trả 403.
-
 export interface NhanSu {
   id: number;
   maNs: string | null;
@@ -1642,7 +1631,6 @@ export interface HopDong {
   nsdldDiaChi: string | null;
   trangThai: string | null;
   ghiChu: string | null;
-  // Ghép từ NHAN_SU khi đọc — form in cần một lượt là đủ dữ liệu
   hoTen: string | null;
   ngaySinh: string | null;
   soCmnd: string | null;
@@ -1651,30 +1639,20 @@ export interface HopDong {
   chucDanh: string | null;
 }
 
-// Một dòng trên lưới CHỌN ĐƠN VỊ của trang Hợp đồng
 export interface DonViHopDong {
   maDonVi: string;
   tenDonVi: string | null;
   mst: string | null;
   soNhanSu: number;
   soHopDong: number;
-  /** Chưa mở năm làm việc — lưới hiện "chưa mở năm" thay vì số 0. */
   chuaMoNam: boolean;
-  /**
-   * Đã mở năm nhưng database chưa có 4 bảng của module Hợp đồng + Lương.
-   * Đơn vị như vậy bị LOẠI khỏi lưới — vào Quản trị → Mở năm làm việc, tích đơn vị
-   * rồi bấm "Tạo bảng Hợp đồng + Lương".
-   */
   chuaTaoBang?: boolean;
-  /** Chỉ dùng ở frontend: đang chờ kết quả đếm, lưới hiện dấu … thay vì số 0. */
   dangDem?: boolean;
 }
 
-/** Danh sách đơn vị — trả NGAY, chưa có số đếm (soNhanSu/soHopDong = 0). */
 export const hdLuoiDonVi = () =>
   api.get<{ nam: number; dong: DonViHopDong[] }>("/hop-dong/don-vi");
 
-/** Đếm nhân sự + hợp đồng của MỘT đơn vị. Gọi song song cho từng dòng trên lưới. */
 export const hdDemDonVi = (maDonVi: string) =>
   api.get<DonViHopDong>(`/hop-dong/don-vi/${encodeURIComponent(maDonVi)}/dem`);
 
@@ -1691,26 +1669,6 @@ export const nsSua = (id: number, x: Partial<NhanSu>, maDonVi?: string) =>
 export const nsXoa = (id: number, maDonVi?: string) =>
   api.delete<{ message: string }>(`/hop-dong/nhan-su/${id}`, { params: { maDonVi } });
 
-/**
- * NHẬP EXCEL cho đơn vị đang chọn — cửa vào của cả module Hợp đồng lao động.
- *
- * Nhận BỐN loại file, server tự đoán loại rồi đưa đúng bộ đọc:
- *   1. HĐLĐ (mỗi nhân sự một sheet)  -> nhân sự + hợp đồng
- *   2. DS_NV (danh sách nhân sự)     -> nhân sự + hợp đồng dựng từ mức lương
- *   3. Chấm công (sheet ccNN)        -> bảng chấm công
- *   4. Bảng lương (sheet THANG n)    -> bảng thanh toán lương
- *
- * GHI THẲNG vào sổ, khác nút Nhập Excel trong hai màn Chấm công / Bảng lương (trả
- * nháp để soát): ở đây đang nạp DỮ LIỆU GỐC cho đơn vị vừa mở, chưa có gì để đối chiếu.
- *
- * File cả năm (26 sheet) nhập TRỌN mọi tháng có trong file. Người đã có trong sổ
- * (trùng tên) thì bỏ qua — nhập lại cùng file hai lần không nhân đôi nhân sự.
- *
- * ngayCongChuan chỉ dùng cho file BẢNG LƯƠNG (BR-BL-01 — khuôn Excel không có ô đó).
- */
-/** @deprecated Ghi THẲNG vào sổ. Màn Hợp đồng đã chuyển sang hdDocNhap +
- *  hdLuuNhap (đọc nháp -> soát -> Lưu). Giữ endpoint cũ cho tương thích,
- *  không dùng cho màn mới. */
 export const hdNhapExcel = (
   file: File, maDonVi?: string, ngayCongChuan = 26,
 ) => {
@@ -1736,15 +1694,10 @@ export const hdSua = (id: number, x: Partial<HopDong>, maDonVi?: string) =>
 export const hdXoa = (id: number, maDonVi?: string) =>
   api.delete<{ message: string }>(`/hop-dong/${id}`, { params: { maDonVi } });
 
-// ===== CHẤM CÔNG & BẢNG THANH TOÁN LƯƠNG =====
-// Hai bảng nằm trong database ĐƠN VỊ-NĂM (database/026_tenant_chamcong_bangluong.sql).
-// maDonVi tùy chọn, cùng luật với hợp đồng: bỏ trống = đơn vị đang đăng nhập.
-
 export interface ChamCong {
   id: number;
   nhanSuId: number;
   thang: number;
-  /** 31 ký hiệu, index 0 = ngày 1. Rỗng/null = chưa chấm. */
   ngay: (string | null)[];
   tongCong: number | null;
   congThemGio: number | null;
@@ -1795,7 +1748,6 @@ export const ccLuu = (thang: number, ds: ChamCong[], maDonVi?: string) =>
 export const blDanhSach = (thang: number, maDonVi?: string) =>
   api.get<BangLuong[]>("/bang-luong", { params: { thang, maDonVi } });
 
-/** Trả bản NHÁP, chưa ghi DB — kế toán soát rồi mới blLuu. */
 export const blTinh = (thang: number, ngayCongChuan: number, maDonVi?: string) =>
   api.post<BangLuong[]>("/bang-luong/tinh", null,
     { params: { thang, ngayCongChuan, maDonVi } });
@@ -1804,16 +1756,8 @@ export const blLuu = (thang: number, ds: BangLuong[], maDonVi?: string) =>
   api.put<{ message: string; soDong: number }>("/bang-luong", ds,
     { params: { thang, maDonVi } });
 
-// ===== NHẬP TỪ FILE EXCEL =====
-// Đọc ở SERVER (ClosedXML) chứ không ở trình duyệt — cùng lối với bảng kê thuế
-// (thueDocBangKe). Frontend chưa có sheetjs và thêm ~400KB vào bundle chỉ để đọc vài
-// chục dòng là không đáng.
-//
-// Cả hai đường trả bản NHÁP, KHÔNG ghi DB — kế toán soát rồi mới ccLuu / blLuu.
 
-/** Một dòng trong file bị bỏ qua, kèm lý do — hiện thành cảnh báo trên màn. */
 export interface DongBo {
-  /** Số dòng trong file Excel, để kế toán mở file dò đúng chỗ. */
   dong: number;
   hoTen: string | null;
   lyDo: string;
@@ -1822,23 +1766,13 @@ export interface DongBo {
 export interface KetQuaNhap<T> {
   dong: T[];
   bo: DongBo[];
-  /** Sheet đã đọc — file lương có 26 sheet, phải nói rõ lấy sheet nào. */
   sheet: string | null;
-
-  /** Tên đơn vị đọc được ở đầu file (ô A1). */
   tenDonViFile: string | null;
-  /** Mã đơn vị suy từ tên trong file — chỉ để đối chiếu, không dùng mở DB. */
   maDonViFile: string | null;
-  /** Cảnh báo về đơn vị; null = khớp đúng đơn vị đang mở. */
   canhBaoDonVi: string | null;
-  /** False = file của đơn vị khác → chặn Lưu. */
   dungDonVi: boolean;
-  /** File gốc .xls đã tự chuyển sang .xlsx để đọc. */
   daChuyenXls: boolean;
-
-  /** Số nhân sự đã ghi vào sổ — chỉ đường nhập HĐLĐ, đường khác để 0. */
   soNhanSu: number;
-  /** Số hợp đồng đã ghi vào sổ. */
   soHopDong: number;
 }
 
@@ -1850,12 +1784,6 @@ export const ccNhapExcel = (thang: number, file: File, maDonVi?: string) => {
       headers: { "Content-Type": "multipart/form-data" } });
 };
 
-/**
- * Đọc bảng lương từ file. Khác blTinh: lấy NGUYÊN SỐ TRONG FILE, không chạy công thức
- * — người dùng nhập lên là để xem số của bản Excel đang dùng.
- *
- * ngayCongChuan vẫn phải truyền vì khuôn Excel không có ô đó (BR-BL-01, nó là tham số).
- */
 export const blNhapExcel = (
   thang: number, ngayCongChuan: number, file: File, maDonVi?: string,
 ) => {
@@ -1866,15 +1794,6 @@ export const blNhapExcel = (
       headers: { "Content-Type": "multipart/form-data" } });
 };
 
-// ===================== NHẬP EXCEL: ĐỌC NHÁP -> LƯU =====================
-//
-// Hai nhịp thay cho hdNhapExcel ghi thẳng:
-//   hdDocNhap  -> đọc file, trả NHÁP, không chạm DB
-//   hdLuuNhap  -> gửi lại đúng nháp đó, lúc này mới INSERT
-//
-// Nháp nằm ở FE giữa hai lần gọi, server không giữ state — bấm Lưu lúc nào cũng được.
-
-/** Một người trong nháp, kèm các hợp đồng đọc được của người đó. */
 export interface NhapNguoi {
   nhanSu: NhanSu;
   hopDong: HopDong[];
@@ -1890,10 +1809,8 @@ export interface NhapBangLuongThang {
   dong: BangLuong[];
 }
 
-/** Nháp đọc từ MỘT file Excel. Gửi lại y nguyên khi bấm Lưu. */
 export interface NhapNhap {
   tenFile: string;
-  /** HopDong | DanhSachNhanSu | ChamCong | BangLuong | LuongCaNam */
   loai: string;
   sheet: string | null;
   tenDonViFile: string | null;
@@ -1915,7 +1832,6 @@ export interface KetQuaLuuNhap {
   bo: DongBo[];
 }
 
-/** Đọc file ra nháp để soát. KHÔNG ghi vào sổ. */
 export const hdDocNhap = (
   file: File, maDonVi?: string, ngayCongChuan = 26,
 ) => {
@@ -1926,6 +1842,148 @@ export const hdDocNhap = (
       headers: { "Content-Type": "multipart/form-data" } });
 };
 
-/** Ghi nháp đang giữ ở FE vào sổ. Đây là bước DUY NHẤT chạm DB. */
 export const hdLuuNhap = (ds: NhapNhap[], maDonVi?: string) =>
   api.post<KetQuaLuuNhap>("/hop-dong/nhap-excel/luu", ds, { params: { maDonVi } });
+
+// ===== ĐỊNH KHOẢN (nhóm A — chỉ đọc) =====
+//
+// Backend gate theo MÃ ĐƠN VỊ (chỉ MDN_NB), chặt hơn mọi endpoint khác: danh sách đơn
+// vị đến từ tham số nên gate hỏng là đọc được sổ của khách hàng khác.
+// Năm làm việc KHÔNG truyền lên — backend lấy từ claim.
+
+/** Một mặt hàng gốc DUY NHẤT, gom từ nhiều dòng hoá đơn. */
+export interface DkTenHang {
+  maDonVi: string;
+  huong: "V" | "R";
+  tenHang: string;
+  soDong: number;             // bao nhiêu dòng hoá đơn mang tên này
+  dkGoc: string | null;
+  dinhKhoan: string | null;   // ghi_no (V) hoặc ghi_co (R)
+  daXacNhan: boolean;         // good_pred — xong hẳn, không hiện lại nữa
+  daDoan: boolean;            // is_predict — máy đã đoán; mặc định giấu, lọc cặp thì hiện
+  tinCay: number | null;      // proba, sẽ đổi tên pred_conf ở script 025
+}
+
+/** Một dòng hoá đơn thật của mặt hàng đang chọn. */
+export interface DkDongHoaDon {
+  maHd: string;
+  tenHang: string;
+  ghiNo: string | null;
+  ghiCo: string | null;
+  sttLine: number | null;
+  soLuong: number | null;
+  donGia: number | null;
+  tenKh: string | null;
+  tinCay: number | null;
+}
+
+export const dkLayTenHang = (dsMaDonVi: string[], huong?: "V" | "R") =>
+  api.get<DkTenHang[]>("/dinh-khoan/ten-hang",
+    { params: { maDonVi: dsMaDonVi.join(","), huong } });
+
+/** Một tài khoản trong KT2000_Base.DM_TK — dùng cho ô chọn định khoản. */
+export interface DkTaiKhoan {
+  maTk: string;
+  tenTk: string;
+}
+
+export const dkLayDanhMucTk = () =>
+  api.get<DkTaiKhoan[]>("/dinh-khoan/danh-muc-tk");
+
+export const dkLayDongHoaDon = (maDonVi: string, tenHang: string, huong?: "V" | "R") =>
+  api.get<DkDongHoaDon[]>("/dinh-khoan/dong-hoa-don",
+    { params: { maDonVi, tenHang, huong } });
+
+/** Một thay đổi cho MỘT mặt hàng. Sửa định khoản, xác nhận đúng, hoặc cả hai. */
+export interface DkThayDoi {
+  maDonVi: string;
+  huong: "V" | "R";
+  tenHang: string;
+  tkMoi?: string | null;      // rỗng = không sửa định khoản
+  xacNhanDung: boolean;       // true = ghi good_pred = 1
+}
+
+// Ghi theo TÊN HÀNG: một lần sửa ăn cho mọi dòng hoá đơn mang tên đó. Backend tự chụp
+// dk_goc (chỉ một lần, khi cột còn trống) trước khi đè.
+export const dkCapNhat = (ds: DkThayDoi[]) =>
+  api.put<{ message: string; soDong: number }>("/dinh-khoan/cap-nhat", ds);
+
+// ===== NHÓM C — Data Training CHUNG (KT2000_PUB) =====
+
+/** Kết quả một lượt máy đoán. */
+export interface DkKetQuaDoan {
+  message: string;
+  soMatHang: number;      // tên hàng duy nhất đã đưa cho model
+  soDong: number;         // dòng hoá đơn đã ghi nhãn
+  soChac: number;         // đạt ngưỡng 0,70
+  soCanSoi: number;       // dưới ngưỡng — nên soi trước
+  soBoQua: number;        // tên hàng bị danh sách đen gạt ra
+  soGhiChu: number;       // dòng đã đóng vào tài khoản trung tính 154
+  tinCayTb: number;
+  canhBao: string[];      // đơn vị chưa mở sổ, đơn vị ghi hỏng…
+}
+
+// Auto Accounting New: máy tự định khoản TOÀN BỘ mặt hàng chưa ai xác nhận, ghi thẳng
+// vào ghi_no/ghi_co (chụp dk_goc trước). Mặt hàng đã xác nhận đúng thì không đụng tới.
+export const dkAutoNew = (maDonVi: string[], huong?: "V" | "R") =>
+  api.post<DkKetQuaDoan>("/dinh-khoan/auto-new", { maDonVi, huong });
+
+/** Một mặt hàng đẩy về Data Training. */
+export interface DkChot {
+  maDonVi: string;
+  huong: "V" | "R";
+  tenHang: string;
+  label: string;              // tài khoản đã chốt
+  moTa?: string | null;       // giải thích, chỉ cần khi biết trước là ca xung đột
+}
+
+export interface DkKetQuaChot {
+  maDonVi: string;
+  huong: "V" | "R";
+  tenHang: string;
+  label: string;
+  /** NEW · DUPLICATE · CONFLICT · REJECT_BLACKLIST · REJECT_INVALID */
+  trangThai: string;
+  labelCu: string | null;
+  lyDo: string | null;
+  id: number | null;          // dòng DK_DATA_TRAIN vừa thêm (ca CONFLICT cần để giải thích)
+}
+
+export const dkDayTrain = (ds: DkChot[]) =>
+  api.post<{
+    message: string; moi: number; trung: number; xungDot: number; loai: number;
+    chiTiet: DkKetQuaChot[];
+  }>("/dinh-khoan/day-train", ds);
+
+/** Một xung đột đang chờ người dùng viết lý do. Chưa có lý do = không vào model. */
+export interface DkChoGiaiThich {
+  id: number;
+  tenHang: string;
+  huong: "V" | "R";
+  maDonVi: string;
+  label: string;
+  ghiChu: string | null;      // máy ghi: "CONFLICT: was X, now Y"
+  taoLuc: string;
+  taoBoi: string | null;
+}
+
+/** Kết quả một lượt huấn luyện lại model. */
+export interface DkKetQuaTrain {
+  message: string;
+  soMau: number;          // dòng ACTIVE đã đem đi học
+  soLop: number;          // số tài khoản model học được
+  doChinhXac: number;     // đo trên 15% giữ lại
+  giaySo: number;
+  lop: string[];
+}
+
+// Huấn luyện lại model từ Data Training. KHÁC dkAutoNew: cái kia ĐỌC model, cái này GHI ĐÈ
+// model — và nó ảnh hưởng MỌI đơn vị, không riêng đơn vị đang chọn. Mất khoảng một phút.
+export const dkHuanLuyen = () =>
+  api.post<DkKetQuaTrain>("/dinh-khoan/huan-luyen", {}, { timeout: 300_000 });
+
+export const dkLayChoGiaiThich = () =>
+  api.get<DkChoGiaiThich[]>("/dinh-khoan/cho-giai-thich");
+
+export const dkGiaiThich = (id: number, moTa: string) =>
+  api.put<{ message: string }>("/dinh-khoan/giai-thich", { id, moTa });

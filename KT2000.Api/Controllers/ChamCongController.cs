@@ -7,7 +7,7 @@ using KT2000.Api.Services;
 namespace KT2000.Api.Controllers
 {
     // Chấm công + bảng thanh toán lương. Dữ liệu ở database ĐƠN VỊ-NĂM
-    // (database/026_tenant_chamcong_bangluong.sql), xem ChamCongService.
+    // (database/027_tenant_chamcong_bangluong.sql), xem ChamCongService.
     //
     // Gate giống HopDongController (BR-HD-02): đơn vị thường chỉ dùng chính mình,
     // MDN_NB chọn được đơn vị khách để làm hộ, đơn vị nội bộ không có màn này.

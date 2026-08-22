@@ -209,7 +209,10 @@ def main():
     ap.add_argument('--server', default='localhost')
     ap.add_argument('--db', default='KT2000_PUB')
     ap.add_argument('--user', default='sa')
-    ap.add_argument('--password', default=None)
+    # Mật khẩu ưu tiên lấy từ biến môi trường KT2000_PUB_PASSWORD — gõ thẳng vào
+    # dòng lệnh là để lại mật khẩu nguyên văn trong lịch sử shell (cùng bài học với
+    # HDDT_PASSWORD ở bộ tải TCT).
+    ap.add_argument('--password', default=os.environ.get('KT2000_PUB_PASSWORD'))
     ap.add_argument('--driver', default='ODBC Driver 17 for SQL Server')
     args = ap.parse_args()
 

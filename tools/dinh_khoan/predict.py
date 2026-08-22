@@ -17,7 +17,8 @@ CLI:
 INPUT.json (C# ghi, UTF-8):
 {
   "items": [
-    {"id": "TENANT01|12345", "ten": "Vải cotton trắng", "vr": "V", "dv": "TUAN_NGA"},
+    {"id": "TENANT01|12345", "ten": "Vải cotton trắng", "vr": "V", "dv": "TUAN_NGA",
+     "allow": ["152", "641"]},
     ...
   ]
 }
@@ -25,6 +26,10 @@ INPUT.json (C# ghi, UTF-8):
   - ten: tên hàng Unicode (từ cột NVARCHAR của HOA_DON_LINE)
   - vr : 'V' (đầu vào) / 'R' (đầu ra)
   - dv : mã đơn vị
+  - allow (TÙY CHỌN): bộ tài khoản đơn vị này được phép dùng. Có thì model
+    chọn nhãn xác suất cao nhất TRONG bộ đó; thiếu/rỗng thì đoán tự do
+    trong cả 7 nhãn. Dùng để đơn vị thương mại không nhận phải nhãn
+    "thành phẩm" học từ một đơn vị sản xuất nào đó (chốt Trường 20/08).
 
 OUTPUT.json:
 {
@@ -123,11 +128,29 @@ def main():
 
         n_auto = 0
         n_review = 0
+        n_gioi_han = 0
         if features:
             print(f'[predict] Predict batch ({len(features)} items)...')
+            # Vị trí của từng nhãn trong classes_, để lọc theo "allow" cho nhanh.
+            vi_tri = {str(c): j for j, c in enumerate(classes)}
             probas = model.predict_proba(features)
             for i, p in zip(idx_predict, probas):
-                top = int(np.argmax(p))
+                # "allow" (tùy chọn, C# gửi xuống): bộ tài khoản mà ĐƠN VỊ NÀY được phép
+                # dùng. Model là model chung học từ mọi đơn vị, nên không chặn thì một
+                # đơn vị thương mại có ngày nhận nhãn "thành phẩm" học từ đơn vị sản
+                # xuất - sổ của họ không có khái niệm đó.
+                # Thiếu "allow", rỗng, hay toàn nhãn model không biết -> đoán tự do như
+                # cũ. Thà đoán rộng còn hơn không đoán được gì.
+                allow = items[i].get('allow') or []
+                cho_phep = [vi_tri[a] for a in allow if a in vi_tri]
+                if cho_phep:
+                    top = max(cho_phep, key=lambda j: p[j])
+                    n_gioi_han += 1
+                else:
+                    top = int(np.argmax(p))
+                # conf là xác suất THẬT của nhãn đã chọn, KHÔNG chuẩn hóa lại trong bộ
+                # cho phép: conf thấp chính là tín hiệu "model muốn chọn cái khác nhưng
+                # bị chặn" - đó là thứ người dùng cần thấy để soi.
                 conf = float(p[top])
                 is_auto = 1 if conf >= args.threshold else 0
                 n_auto += is_auto
@@ -153,7 +176,7 @@ def main():
         })
 
         print(f'[predict] AUTO: {n_auto} | REVIEW: {n_review} | '
-              f'skip: {len(items) - len(features)} | {elapsed}s')
+              f'skip: {len(items) - len(features)} | gioi han: {n_gioi_han} | {elapsed}s')
         print(f'[predict] Output: {args.output}')
         return 0
 

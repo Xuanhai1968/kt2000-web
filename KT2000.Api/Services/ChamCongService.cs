@@ -1,10 +1,10 @@
-using Microsoft.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 using KT2000.Api.Models;
 
 namespace KT2000.Api.Services
 {
     // Chấm công + bảng thanh toán lương. Hai bảng nằm trong database ĐƠN VỊ-NĂM
-    // (database/026_tenant_chamcong_bangluong.sql).
+    // (database/027_tenant_chamcong_bangluong.sql).
     //
     // Spec: docs/THUE/HOPDONG/SPEC-MAN-HOP-DONG.md
     // Mọi câu SQL tham số hóa 100% (luật #3).

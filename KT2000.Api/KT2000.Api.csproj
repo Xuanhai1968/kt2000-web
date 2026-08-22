@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -24,20 +24,42 @@
          còn ở phiên bản cũ. Thêm bản vá mới thì phải thêm MỘT dòng ở đây VÀ một dòng
          trong mảng CAC_BAN_VA của VaCauTrucService — thiếu một trong hai thì vá không
          chạy mà chẳng báo gì. -->
-    <EmbeddedResource Include="..\database\017_hoa_don_line_loai_thue.sql" LogicalName="KT2000.Api.va_017_loai_thue.sql" />
-    <EmbeddedResource Include="..\database\019_hoa_don_dinh_khoan_kieu.sql" LogicalName="KT2000.Api.va_019_dinh_khoan_kieu.sql" />
-    <EmbeddedResource Include="..\database\020_hoa_don_line_pt_vat_int.sql" LogicalName="KT2000.Api.va_020_pt_vat_int.sql" />
-    <EmbeddedResource Include="..\database\021_in_value_bu_bang.sql" LogicalName="KT2000.Api.va_021_in_value.sql" />
-    <EmbeddedResource Include="..\database\023_bu_loai_thue.sql" LogicalName="KT2000.Api.va_023_bu_loai_thue.sql" />
-    <EmbeddedResource Include="..\database\024_hoa_don_line_4_so_le.sql" LogicalName="KT2000.Api.va_024_4_so_le.sql" />
-    <EmbeddedResource Include="..\database\025_tenant_nhansu_hopdong.sql" LogicalName="KT2000.Api.va_025_nhansu_hopdong.sql" />
-    <EmbeddedResource Include="..\database\026_tenant_chamcong_bangluong.sql" LogicalName="KT2000.Api.va_026_chamcong_bangluong.sql" />
+    <EmbeddedResource Include="..\database\017_hoa_don_line_loai_thue.sql"
+                      LogicalName="KT2000.Api.va_017_loai_thue.sql" />
+    <EmbeddedResource Include="..\database\019_hoa_don_dinh_khoan_kieu.sql"
+                      LogicalName="KT2000.Api.va_019_dinh_khoan_kieu.sql" />
+    <EmbeddedResource Include="..\database\020_hoa_don_line_pt_vat_int.sql"
+                      LogicalName="KT2000.Api.va_020_pt_vat_int.sql" />
+    <EmbeddedResource Include="..\database\021_in_value_bu_bang.sql"
+                      LogicalName="KT2000.Api.va_021_in_value.sql" />
+    <EmbeddedResource Include="..\database\023_bu_loai_thue.sql"
+                      LogicalName="KT2000.Api.va_023_bu_loai_thue.sql" />
+    <EmbeddedResource Include="..\database\024_hoa_don_line_4_so_le.sql"
+                      LogicalName="KT2000.Api.va_024_4_so_le.sql" />
+    <EmbeddedResource Include="..\database\025_hoa_don_line_gia_von_4_so_le.sql"
+                      LogicalName="KT2000.Api.va_025_gia_von.sql" />
+    <EmbeddedResource Include="..\database\026_tenant_nhansu_hopdong.sql"
+                      LogicalName="KT2000.Api.va_026_nhansu_hopdong.sql" />
+    <EmbeddedResource Include="..\database\027_tenant_chamcong_bangluong.sql"
+                      LogicalName="KT2000.Api.va_027_chamcong_bangluong.sql" />
 
     <!-- Bộ tải HĐ của TCT đi kèm bản build: TctFetchService gọi nó bằng Process.Start
          theo đường dẫn <thư mục exe>\tools\. Copy chứ không nhúng, vì python.exe cần
          file thật trên đĩa. Đè được bằng khóa Paths:TctScript nếu muốn để nơi khác. -->
-    <None Include="..\tools\TRA_CUU_HDDT_2_0.py" Link="tools\TRA_CUU_HDDT_2_0.py" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\tools\XML_MAP.xlsx" Link="tools\XML_MAP.xlsx" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\tools\TRA_CUU_HDDT_2_0.py" Link="tools\TRA_CUU_HDDT_2_0.py"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\tools\XML_MAP.xlsx" Link="tools\XML_MAP.xlsx"
+          CopyToOutputDirectory="PreserveNewest" />
+
+    <!-- Bộ đoán định khoản. dk_core.py PHẢI đi kèm: predict.py import nó để dựng đặc
+         trưng, mà đặc trưng lệch một chút là model đoán bậy toàn tập. Giữ đúng cấu trúc
+         thư mục dinh_khoan\ vì predict.py chèn thư mục của chính nó vào sys.path. -->
+    <None Include="..\tools\dinh_khoan\predict.py" Link="tools\dinh_khoan\predict.py"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\tools\dinh_khoan\dk_core.py" Link="tools\dinh_khoan\dk_core.py"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\tools\dinh_khoan\train.py" Link="tools\dinh_khoan\train.py"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

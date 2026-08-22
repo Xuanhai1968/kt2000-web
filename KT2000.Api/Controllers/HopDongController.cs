@@ -7,7 +7,7 @@ using KT2000.Api.Services;
 namespace KT2000.Api.Controllers
 {
     // Nhân sự + hợp đồng lao động. Hai bảng nằm trong database ĐƠN VỊ-NĂM
-    // (database/025_tenant_nhansu_hopdong.sql), xem HopDongService.
+    // (database/026_tenant_nhansu_hopdong.sql), xem HopDongService.
     //
     // BR-HD-02 — AI DÙNG ĐƯỢC (luật #2 — gate bằng claim):
     //   • Đơn vị thường  → chỉ nhân sự CỦA CHÍNH MÌNH. Truyền maDonVi khác là 403.
